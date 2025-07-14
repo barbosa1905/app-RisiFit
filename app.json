@@ -4,27 +4,27 @@
     "slug": "app-RisiFit",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/iconapp.png",
+    "icon": "./assets/logo.jpeg",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/iconapp.png",
+      "image": "./assets/logo.jpeg",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#e7e7e7"
     },
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "iconapp": {
-        "foregroundImage": "./assets/iconapp.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/logo.jpeg",
+        "backgroundColor": "#e7e7e7"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.anonymous.appRisiFit"
     },
     "web": {
-      "favicon": "./assets/faviconapp.png"
+      "favicon": "./assets/logo.jpeg"
     }
     
   }

@@ -10,7 +10,7 @@ import ChatListScreen from './ChatListScreen';
 import ChatRoomScreen from './ChatRoomScreen';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { UnreadContext } from '../../contexts/UnreadContext';
-
+import { Ionicons } from '@expo/vector-icons';
 
 const Tab = createBottomTabNavigator();
 const ChatStack = createNativeStackNavigator();

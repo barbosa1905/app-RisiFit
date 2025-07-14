@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+// screens/ExecucaoTreinoScreen.js
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,85 +10,159 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getUserIdLoggedIn } from '../../services/authService';
+import { salvarTreinoConcluido } from '../../services/userService';
+
 export default function ExecucaoTreinoScreen({ route, navigation }) {
   const { treino } = route.params;
   const [tempo, setTempo] = useState(0);
   const [emExecucao, setEmExecucao] = useState(false);
+  const timerRef = useRef(null);
+
+  // --- Adicionado para Depuração: Verificação de Tipos de Dados ---
+  useEffect(() => {
+    console.log('--- Dados do Treino em ExecucaoTreinoScreen ---');
+    console.log('Objeto treino completo:', treino);
+    console.log('Tipo de treino.nome:', typeof treino.nome, 'Valor:', treino.nome);
+    console.log('Tipo de treino.categoria:', typeof treino.categoria, 'Valor:', treino.categoria);
+    console.log('Tipo de treino.descricao:', typeof treino.descricao, 'Valor:', treino.descricao);
+
+    if (treino.exercicios && Array.isArray(treino.exercicios)) {
+      treino.exercicios.forEach((ex, idx) => {
+        console.log(`Exercício ${idx} - Objeto completo:`, ex);
+        console.log(`Exercício ${idx} - Tipo de ex.nome:`, typeof ex.nome, 'Valor:', ex.nome);
+        console.log(`Exercício ${idx} - Tipo de ex.tipo:`, typeof ex.tipo, 'Valor:', ex.tipo);
+        console.log(`Exercício ${idx} - Tipo de ex.valor:`, typeof ex.valor, 'Valor:', ex.valor);
+      });
+    } else {
+      console.warn('treino.exercicios não é um array ou está vazio:', treino.exercicios);
+    }
+    console.log('-------------------------------------------');
+  }, [treino]);
 
   useEffect(() => {
-    let timer;
     if (emExecucao) {
-      timer = setInterval(() => setTempo((t) => t + 1), 1000);
+      timerRef.current = setInterval(() => setTempo((t) => t + 1), 1000);
+    } else if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
     }
-    return () => clearInterval(timer);
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
   }, [emExecucao]);
 
-  const formatarTempo = (segundos) => {
-    const min = Math.floor(segundos / 60);
-    const seg = segundos % 60;
-    return `${min.toString().padStart(2, '0')}:${seg.toString().padStart(2, '0')}`;
+  const formatarTempo = (totalSegundos) => {
+    const horas = Math.floor(totalSegundos / 3600);
+    const min = Math.floor((totalSegundos % 3600) / 60);
+    const seg = totalSegundos % 60;
+
+    const pad = (num) => String(num).padStart(2, '0');
+
+    return `${pad(horas)}:${pad(min)}:${pad(seg)}`;
   };
 
- const concluirTreino = async () => {
-  setEmExecucao(false);
+  const iniciarTreino = () => {
+    setEmExecucao(true);
+  };
 
-  try {
-    const userId = await getUserIdLoggedIn();
-    const dataTreino = treino.data?.split('T')[0];
+  const pausarTreino = () => {
+    setEmExecucao(false);
+  };
 
-    if (!userId || !dataTreino) {
-      console.warn('❌ userId ou dataTreino está undefined');
-      return;
-    }
+  const resetarTreino = () => {
+    setEmExecucao(false);
+    setTempo(0);
+  };
 
-    const chave = `treinosConcluidos_${userId}`;
-    const dadosSalvos = JSON.parse(await AsyncStorage.getItem(chave)) || {};
+  const concluirTreino = async () => {
+    pausarTreino();
 
-    dadosSalvos[dataTreino] = {
-      nome: treino.nome,
-      categoria: treino.categoria,
-      descricao: treino.descricao,
-      exercicios: treino.exercicios,
-      duracao: formatarTempo(tempo),
-    };
+    Alert.alert(
+      'Concluir Treino',
+      `Deseja realmente concluir o treino "${String(treino.nome)}" com duração de ${formatarTempo(tempo)}?`,
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+          onPress: () => iniciarTreino(),
+        },
+        {
+          text: 'Concluir',
+          onPress: async () => {
+            try {
+              const userId = await getUserIdLoggedIn();
+              if (!userId) {
+                Alert.alert('Erro', 'Utilizador não autenticado.');
+                return;
+              }
 
-    await AsyncStorage.setItem(chave, JSON.stringify(dadosSalvos));
+              const chaveAsyncStorage = `treinosConcluidos_${userId}`;
+              const dadosAtuaisJson = await AsyncStorage.getItem(chaveAsyncStorage);
+              const dadosAtuais = dadosAtuaisJson ? JSON.parse(dadosAtuaisJson) : {};
+              dadosAtuais[String(treino.data).split('T')[0]] = true;
+              await AsyncStorage.setItem(chaveAsyncStorage, JSON.stringify(dadosAtuais));
 
-    console.log('✅ Treino salvo com sucesso!');
-    console.log('🔑 Chave usada:', chave);
-    console.log('📦 Conteúdo salvo:', dadosSalvos[dataTreino]);
-  } catch (error) {
-    console.error('Erro ao salvar treino concluído:', error);
-  }
+              await salvarTreinoConcluido(
+                userId,
+                treino.id,
+                String(treino.nome),
+                String(treino.data),
+                tempo
+              );
 
-  Alert.alert('Treino concluído!', `Duração total: ${formatarTempo(tempo)}`, [
-    {
-      text: 'OK',
-      onPress: () => navigation.goBack(),
-    },
-  ]);
-};
+              Alert.alert('Sucesso', 'Treino concluído e registado!');
+              navigation.goBack();
+            } catch (error) {
+              console.error('Erro ao salvar treino concluído:', error);
+              Alert.alert('Erro', 'Não foi possível registar o treino. Tente novamente.');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.titulo}>{treino.nome}</Text>
-      <Text style={styles.subtitulo}>{treino.categoria}</Text>
-      <Text style={styles.descricao}>{treino.descricao}</Text>
+      <Text style={styles.titulo}>{String(treino.nome)}</Text>
+      <Text style={styles.subtitulo}>{String(treino.categoria)}</Text>
+      <Text style={styles.descricao}>{String(treino.descricao)}</Text>
 
       <View style={styles.tempoContainer}>
         <Text style={styles.tempo}>{formatarTempo(tempo)}</Text>
 
-        <TouchableOpacity
-          style={[
-            styles.botao,
-            { backgroundColor: emExecucao ? '#f87171' : '#2563eb' },
-          ]}
-          onPress={() => setEmExecucao(!emExecucao)}
-        >
-          <Text style={styles.botaoTexto}>
-            {emExecucao ? 'Pausar' : 'Iniciar'}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.buttonRow}>
+          <TouchableOpacity
+            style={[
+              styles.botao,
+              styles.botaoIniciar,
+              emExecucao && styles.botaoDesabilitado,
+            ]}
+            onPress={iniciarTreino}
+            disabled={emExecucao}
+          >
+            <Text style={styles.botaoTexto}>Iniciar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.botao,
+              styles.botaoPausar,
+              !emExecucao && styles.botaoDesabilitado,
+            ]}
+            onPress={pausarTreino}
+            disabled={!emExecucao}
+          >
+            <Text style={styles.botaoTexto}>Pausar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.botao, styles.botaoResetar]}
+            onPress={resetarTreino}
+          >
+            <Text style={styles.botaoTexto}>Reiniciar</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <Text style={styles.exerciciosTitulo}>Exercícios</Text>
@@ -95,11 +170,11 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
       {treino.exercicios && treino.exercicios.length > 0 ? (
         treino.exercicios.map((ex, idx) => (
           <View key={idx} style={styles.exercicioCard}>
-            <Text style={styles.exercicioNome}>{ex.nome}</Text>
+            <Text style={styles.exercicioNome}>{String(ex.nome)}</Text>
             <Text style={styles.exercicioTipo}>
               {ex.tipo === 'reps'
-                ? `${ex.valor} repetições`
-                : `${ex.valor} segundos`}
+                ? `${String(ex.valor)} repetições`
+                : `${String(ex.valor)} segundos`}
             </Text>
           </View>
         ))
@@ -107,7 +182,6 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
         <Text style={styles.semExercicios}>Nenhum exercício cadastrado.</Text>
       )}
 
-      {/* Botão de Concluir Treino */}
       <TouchableOpacity style={styles.botaoConcluir} onPress={concluirTreino}>
         <Text style={styles.botaoTexto}>Concluir Treino</Text>
       </TouchableOpacity>
@@ -150,11 +224,30 @@ const styles = StyleSheet.create({
     color: '#eab308',
     marginBottom: 15,
   },
+  buttonRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+  },
   botao: {
     paddingVertical: 12,
-    paddingHorizontal: 30,
+    paddingHorizontal: 20,
     borderRadius: 10,
     elevation: 3,
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  botaoIniciar: {
+    backgroundColor: '#2563eb',
+  },
+  botaoPausar: {
+    backgroundColor: '#f87171',
+  },
+  botaoResetar: {
+    backgroundColor: '#64748b',
+  },
+  botaoDesabilitado: {
+    opacity: 0.5,
   },
   botaoConcluir: {
     backgroundColor: '#10b981',

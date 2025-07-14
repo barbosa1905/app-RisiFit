@@ -7,36 +7,164 @@ import {
   ScrollView,
   StyleSheet,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { db } from '../../services/firebaseConfig';
-import { doc, setDoc, updateDoc } from 'firebase/firestore';
+import { db, auth } from '../../services/firebaseConfig';
+import { doc, setDoc, updateDoc, getDoc, collection } from 'firebase/firestore';
 import uuid from 'react-native-uuid';
-import { auth } from '../../services/firebaseConfig';
+
+// ============================================================================
+// Conteúdo dos Questionários Pré-definidos
+// ============================================================================
+
+const PAR_Q_PREDEFINIDO_ID = 'PAR-Q_Predefinido';
+const PADRAO_PREDEFINIDO_ID = 'Padrao_Predefinido';
+
+const PAR_Q_PREDEFINIDO_CONTENT = {
+  nome: "Anamnese PAR-Q",
+  descricao: "Questionário de Prontidão para Atividade Física (PAR-Q) - Pré-definido",
+  perguntas: [
+    { id: "parq1", pergunta: "Algum médico já lhe disse que você tem um problema cardíaco e que só deve fazer atividade física recomendada por ele?", tipo: "booleana", opcoes: ["Sim", "Não"] },
+    { id: "parq2", pergunta: "Você sente dor no peito ao fazer atividade física?", tipo: "booleana", opcoes: ["Sim", "Não"] },
+    { id: "parq3", pergunta: "Você já sentiu dor no peito no último mês?", tipo: "booleana", opcoes: ["Sim", "Não"] },
+    { id: "parq4", pergunta: "Você perde o equilíbrio por tontura ou desmaia?", tipo: "booleana", opcoes: ["Sim", "Não"] },
+    { id: "parq5", pergunta: "Você tem algum problema ósseo ou articular que possa piorar com a atividade física?", tipo: "booleana", opcoes: ["Sim", "Não"] },
+    { id: "parq6", pergunta: "Você toma algum medicamento para pressão arterial ou problema cardíaco?", tipo: "booleana", opcoes: ["Sim", "Não"] },
+    { id: "parq7", pergunta: "Você conhece alguma outra razão pela qual não deveria fazer atividade física?", tipo: "booleana", opcoes: ["Sim", "Não"] }
+  ]
+};
+
+const PADRAO_PREDEFINIDO_CONTENT = {
+  nome: "Anamnese Padrão",
+  descricao: "Questionário de saúde e histórico geral - Pré-definido",
+  perguntas: [
+    { id: "padrao1", pergunta: "Qual o seu objetivo principal com o treino?", tipo: "texto" },
+    { id: "padrao2", pergunta: "Você pratica alguma atividade física atualmente? Se sim, qual e com que frequência?", tipo: "texto" },
+    { id: "padrao3", pergunta: "Você tem alguma lesão ou dor crônica?", tipo: "booleana", opcoes: ["Sim", "Não"] },
+    { id: "padrao4", pergunta: "Você tem alguma condição médica (diabetes, hipertensão, asma, etc.)?", tipo: "booleana", opcoes: ["Sim", "Não"] },
+    { id: "padrao5", pergunta: "Você tem alergias?", tipo: "booleana", opcoes: ["Sim", "Não"] },
+    { id: "padrao6", pergunta: "Qual a sua alimentação típica?", tipo: "texto" },
+    { id: "padrao7", pergunta: "Quantas horas você dorme por noite, em média?", tipo: "texto" },
+    { id: "padrao8", pergunta: "Você fuma?", tipo: "booleana", opcoes: ["Sim", "Não"] },
+    { id: "padrao9", pergunta: "Você consome bebidas alcoólicas? Se sim, com que frequência?", tipo: "texto" }
+  ]
+};
+
 export default function CriarQuestionarioScreen() {
   const navigation = useNavigation();
   const route = useRoute();
 
   const questionarioExistente = route.params?.questionario ?? null;
-  const adminId = auth.currentUser?.uid ?? route.params?.adminId ?? null;
+  const [adminId, setAdminId] = useState(auth.currentUser?.uid ?? route.params?.adminId ?? null);
+  const [loadingPredefined, setLoadingPredefined] = useState(true);
 
   const [nome, setNome] = useState('');
   const [perguntas, setPerguntas] = useState([]);
   const [questionarioId, setQuestionarioId] = useState(null);
 
+  // Efeito para obter o adminId se não estiver disponível imediatamente
   useEffect(() => {
-    if (questionarioExistente) {
-      setNome(questionarioExistente.nome);
-      setPerguntas(questionarioExistente.perguntas);
-      setQuestionarioId(questionarioExistente.id);
+    console.log('[CriarQuestionarioScreen] useEffect: Verificando adminId...');
+    if (!adminId) {
+      const unsubscribe = auth.onAuthStateChanged(user => {
+        if (user) {
+          setAdminId(user.uid);
+          console.log('[CriarQuestionarioScreen] adminId definido por onAuthStateChanged:', user.uid);
+        } else {
+          console.log('[CriarQuestionarioScreen] Nenhum usuário autenticado encontrado.');
+        }
+      });
+      return unsubscribe;
+    } else {
+      console.log('[CriarQuestionarioScreen] adminId já disponível:', adminId);
     }
-  }, [questionarioExistente]);
+  }, [adminId]);
+
+  // Efeito para carregar questionário existente e para semear os pré-definidos
+  useEffect(() => {
+    const initializeScreen = async () => {
+      console.log('[CriarQuestionarioScreen] useEffect: Inicializando tela...');
+      if (questionarioExistente) {
+        console.log('[CriarQuestionarioScreen] Editando questionário existente:', questionarioExistente.id);
+        setNome(questionarioExistente.nome);
+        const loadedPerguntas = questionarioExistente.perguntas.map(p => ({
+          ...p,
+          opcoes: p.opcoes || (p.tipo !== 'texto' && p.tipo !== 'booleana' ? [''] : []),
+        }));
+        setPerguntas(loadedPerguntas);
+        setQuestionarioId(questionarioExistente.id);
+        setLoadingPredefined(false);
+      } else {
+        console.log('[CriarQuestionarioScreen] Criando novo questionário. Tentando semear pré-definidos...');
+        if (adminId) {
+          await seedPredefinedQuestionarios();
+          setLoadingPredefined(false);
+        } else {
+          console.log('[CriarQuestionarioScreen] adminId ainda não disponível para semear. Aguardando...');
+        }
+      }
+    };
+
+    initializeScreen();
+  }, [questionarioExistente, adminId]);
+
+  const seedPredefinedQuestionarios = async () => {
+    console.log('[CriarQuestionarioScreen] Iniciando seedPredefinedQuestionarios...');
+    if (!adminId) {
+      console.log('[CriarQuestionarioScreen] Erro: adminId não disponível para semear questionários.');
+      return;
+    }
+
+    const dbInstance = db;
+    const predefinedQuestionarios = [
+      { id: PAR_Q_PREDEFINIDO_ID, content: PAR_Q_PREDEFINIDO_CONTENT },
+      { id: PADRAO_PREDEFINIDO_ID, content: PADRAO_PREDEFINIDO_CONTENT },
+    ];
+
+    for (const pq of predefinedQuestionarios) {
+      const publicDocRef = doc(dbInstance, 'questionariosPublicos', pq.id);
+      const publicDocSnap = await getDoc(publicDocRef);
+
+      if (!publicDocSnap.exists()) {
+        console.log(`[CriarQuestionarioScreen] Semear: Questionário '${pq.content.nome}' (ID: ${pq.id}) NÃO existe. Criando...`);
+        const now = new Date();
+        const dataToSave = {
+          ...pq.content,
+          id: pq.id,
+          criadoEm: now,
+          atualizadoEm: now,
+          criadoPor: 'sistema_predefinido',
+        };
+
+        try {
+          await setDoc(publicDocRef, dataToSave);
+          console.log(`[CriarQuestionarioScreen] Semear: '${pq.content.nome}' criado em 'questionariosPublicos'.`);
+
+          const adminDocRef = doc(dbInstance, 'admins', adminId, 'questionarios', pq.id);
+          await setDoc(adminDocRef, {
+            ...dataToSave,
+            criadoPor: adminId,
+          });
+          console.log(`[CriarQuestionarioScreen] Semear: '${pq.content.nome}' criado na subcoleção do admin (${adminId}).`);
+        } catch (error) {
+          console.error(`[CriarQuestionarioScreen] Erro ao semear '${pq.content.nome}':`, error);
+        }
+      } else {
+        console.log(`[CriarQuestionarioScreen] Semear: Questionário '${pq.content.nome}' (ID: ${pq.id}) JÁ existe. Pulando.`);
+      }
+    }
+    console.log('[CriarQuestionarioScreen] seedPredefinedQuestionarios concluído.');
+  };
 
   const adicionarPergunta = (tipo) => {
-    setPerguntas((prev) => [
-      ...prev,
-      { id: uuid.v4(), pergunta: '', tipo, opcoes: tipo !== 'texto' ? [''] : [] },
-    ]);
+    let novaPergunta = { id: uuid.v4(), pergunta: '', tipo: tipo };
+    if (tipo === 'unica' || tipo === 'multipla') {
+      novaPergunta.opcoes = [''];
+    } else if (tipo === 'booleana') {
+      novaPergunta.opcoes = ['Sim', 'Não'];
+    }
+    setPerguntas((prev) => [...prev, novaPergunta]);
   };
 
   const atualizarPergunta = (index, campo, valor) => {
@@ -53,25 +181,52 @@ export default function CriarQuestionarioScreen() {
 
   const adicionarOpcao = (index) => {
     const novas = [...perguntas];
-    novas[index].opcoes.push('');
+    if (novas[index].opcoes) {
+      novas[index].opcoes.push('');
+    } else {
+      novas[index].opcoes = [''];
+    }
     setPerguntas(novas);
   };
 
   const removerPergunta = (index) => {
-    const novas = [...perguntas];
-    novas.splice(index, 1);
-    setPerguntas(novas);
+    Alert.alert(
+      'Confirmar Exclusão',
+      'Tem certeza que deseja remover esta pergunta?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Remover',
+          onPress: () => {
+            const novas = [...perguntas];
+            novas.splice(index, 1);
+            setPerguntas(novas);
+          },
+          style: 'destructive',
+        },
+      ],
+      { cancelable: true }
+    );
   };
 
   const removerOpcao = (perguntaIndex, opcaoIndex) => {
     const novas = [...perguntas];
-    novas[perguntaIndex].opcoes.splice(opcaoIndex, 1);
-    setPerguntas(novas);
+    if (novas[perguntaIndex].opcoes && novas[perguntaIndex].opcoes.length > 1) {
+      novas[perguntaIndex].opcoes.splice(opcaoIndex, 1);
+      setPerguntas(novas);
+    } else {
+      Alert.alert('Erro', 'Uma pergunta de escolha deve ter pelo menos uma opção.');
+    }
   };
 
   const validarCampos = () => {
     if (!nome.trim()) {
       Alert.alert('Erro', 'O nome do questionário é obrigatório.');
+      return false;
+    }
+
+    if (perguntas.length === 0) {
+      Alert.alert('Erro', 'O questionário deve ter pelo menos uma pergunta.');
       return false;
     }
 
@@ -82,16 +237,13 @@ export default function CriarQuestionarioScreen() {
         return false;
       }
 
-      if (p.tipo !== 'texto') {
-        for (let j = 0; j < p.opcoes.length; j++) {
-          if (!p.opcoes[j].trim()) {
-            Alert.alert('Erro', `A opção ${j + 1} da pergunta ${i + 1} está vazia.`);
-            return false;
-          }
+      if (p.tipo === 'unica' || p.tipo === 'multipla') {
+        if (!p.opcoes || p.opcoes.length === 0 || p.opcoes.some(op => !op.trim())) {
+          Alert.alert('Erro', `A pergunta ${i + 1} precisa de pelo menos uma opção preenchida.`);
+          return false;
         }
       }
     }
-
     return true;
   };
 
@@ -99,57 +251,53 @@ export default function CriarQuestionarioScreen() {
     if (!validarCampos()) return;
 
     if (!adminId) {
-      Alert.alert('Erro', 'ID do administrador não encontrado.');
+      Alert.alert('Erro', 'ID do administrador não encontrado. Tente novamente.');
       return;
     }
 
     try {
       const data = {
-        nome,
-        perguntas,
+        nome: nome.trim(),
+        perguntas: perguntas.map(p => ({
+          id: p.id,
+          pergunta: p.pergunta.trim(),
+          tipo: p.tipo,
+          ...(p.tipo === 'unica' || p.tipo === 'multipla' || p.tipo === 'booleana' ? { opcoes: p.opcoes.filter(Boolean).map(op => op.trim()) } : {}),
+        })),
         atualizadoEm: new Date(),
       };
 
-      if (questionarioId) {
-  // Atualiza no admin
-  await updateDoc(doc(db, 'admins', adminId, 'questionarios', questionarioId), data);
+      const id = questionarioId || uuid.v4();
 
-  // Atualiza na coleção pública também
-  await setDoc(doc(db, 'questionariosPublicos', questionarioId), {
-    ...data,
-    id: questionarioId,
-    criadoPor: adminId,
-  });
+      await setDoc(doc(db, 'admins', adminId, 'questionarios', id), {
+        ...data,
+        id,
+        criadoEm: questionarioExistente ? questionarioExistente.criadoEm : new Date(),
+      });
 
-  Alert.alert('Sucesso', 'Questionário atualizado!');
-} else {
-  const id = uuid.v4();
+      await setDoc(doc(db, 'questionariosPublicos', id), {
+        ...data,
+        id,
+        criadoEm: questionarioExistente ? questionarioExistente.criadoEm : new Date(),
+        criadoPor: adminId,
+      });
 
-  // Cria no admin
-  await setDoc(doc(db, 'admins', adminId, 'questionarios', id), {
-    ...data,
-    id,
-    criadoEm: new Date(),
-  });
-
-  // Cria na coleção pública
-  await setDoc(doc(db, 'questionariosPublicos', id), {
-    ...data,
-    id,
-    criadoEm: new Date(),
-    criadoPor: adminId,
-  });
-
-  Alert.alert('Sucesso', 'Questionário criado!');
-}
-
-
+      Alert.alert('Sucesso', `Questionário ${questionarioId ? 'atualizado' : 'criado'}!`);
       navigation.goBack();
     } catch (error) {
-      console.error(error);
+      console.error('Erro ao salvar questionário:', error);
       Alert.alert('Erro', 'Não foi possível salvar o questionário.');
     }
   };
+
+  if (loadingPredefined) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#d0a956" />
+        <Text style={styles.loadingText}>Configurando questionários pré-definidos...</Text>
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container}>
@@ -176,7 +324,7 @@ export default function CriarQuestionarioScreen() {
             onChangeText={(text) => atualizarPergunta(index, 'pergunta', text)}
           />
 
-          {p.tipo !== 'texto' && (
+          {(p.tipo === 'unica' || p.tipo === 'multipla') && (
             <>
               {p.opcoes.map((op, idx) => (
                 <View key={idx} style={styles.opcaoContainer}>
@@ -198,7 +346,7 @@ export default function CriarQuestionarioScreen() {
           )}
 
           <Text style={styles.tipo}>
-            Tipo: {p.tipo === 'texto' ? 'Resposta livre' : p.tipo === 'multipla' ? 'Múltipla escolha' : 'Escolha única'}
+            Tipo: {p.tipo === 'texto' ? 'Resposta livre' : p.tipo === 'unica' ? 'Escolha única' : p.tipo === 'multipla' ? 'Múltipla escolha' : 'Sim/Não'}
           </Text>
 
           <TouchableOpacity onPress={() => removerPergunta(index)}>
@@ -210,6 +358,9 @@ export default function CriarQuestionarioScreen() {
       <View style={styles.botoesContainer}>
         <TouchableOpacity onPress={() => adicionarPergunta('texto')} style={styles.botao}>
           <Text style={styles.botaoTexto}>+ Pergunta (resposta livre)</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => adicionarPergunta('booleana')} style={styles.botao}>
+          <Text style={styles.botaoTexto}>+ Pergunta (Sim/Não)</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => adicionarPergunta('unica')} style={styles.botao}>
           <Text style={styles.botaoTexto}>+ Pergunta (escolha única)</Text>
@@ -230,6 +381,17 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     backgroundColor: '#f9fafb',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#333',
   },
   titulo: {
     fontSize: 22,

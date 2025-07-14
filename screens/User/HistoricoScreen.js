@@ -5,107 +5,216 @@ import {
   ScrollView,
   StyleSheet,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { format, parseISO, isValid } from 'date-fns';
-import { getUserIdLoggedIn } from '../../services/authService';
+import { format, parse, isValid, parseISO } from 'date-fns'; 
+import { pt } from 'date-fns/locale'; 
+import { enUS } from 'date-fns/locale'; 
+
+// Importações do Firebase
+import { getFirestore, collection, query, where, getDocs } from 'firebase/firestore'; 
+import { getUserIdLoggedIn } from '../../services/authService'; 
 
 export default function HistoricoScreen() {
-  const [historico, setHistorico] = useState({});
+  const [historico, setHistorico] = useState([]); 
   const [loading, setLoading] = useState(true);
   const [filtroMes, setFiltroMes] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('');
 
+  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+  const formatDuration = (totalSegundos) => {
+    if (typeof totalSegundos !== 'number' || isNaN(totalSegundos)) return 'N/A';
+    const horas = Math.floor(totalSegundos / 3600);
+    const min = Math.floor((totalSegundos % 3600) / 60);
+    const seg = totalSegundos % 60;
+
+    const pad = (num) => String(num).padStart(2, '0');
+
+    return `${pad(horas)}:${pad(min)}:${pad(seg)}`;
+  };
+
+  // Função para parsear datas, agora com suporte a Firestore Timestamp
+  const parseFlexibleDate = (dateValue) => {
+    // Se for um objeto Timestamp do Firestore
+    if (dateValue && typeof dateValue === 'object' && dateValue.seconds !== undefined && dateValue.nanoseconds !== undefined) {
+        // Converte o Timestamp para um objeto Date JavaScript
+        const date = new Date(dateValue.seconds * 1000 + dateValue.nanoseconds / 1000000);
+        if (isValid(date)) {
+            return date;
+        }
+    }
+
+    // Se for uma string (para dados antigos ou se o formato de gravação mudar novamente)
+    if (typeof dateValue === 'string') {
+        // Tentar parsear como ISO string primeiro
+        const isoParsed = parseISO(dateValue);
+        if (isValid(isoParsed)) {
+            return isoParsed;
+        }
+
+        // Tentar parsear o formato "Month Day, Year at HH:MM:SS AM/PM UTC+X" (inglês)
+        let cleanedEnglishDateString = dateValue.replace(/ UTC[+-]\d+/g, '').replace(/ (AM|PM)/g, ' $1').trim();
+        const englishFormatsToTry = [
+            "MMMM dd, yyyy 'at' h:mm:ss a", 
+            "MMMM dd, yyyy 'at' H:mm:ss",   
+        ];
+        for (let formatStr of englishFormatsToTry) {
+            try {
+                const parsedDate = parse(cleanedEnglishDateString, formatStr, new Date(), { locale: enUS });
+                if (isValid(parsedDate)) {
+                    return parsedDate;
+                }
+            } catch (e) { /* continue trying */ }
+        }
+
+        // Tentar parsear o formato português antigo
+        let cleanedPortugueseDateString = dateValue.replace(/min/g, '').split(' UTC')[0].trim();
+        const portugueseFormatsToTry = [
+            "dd 'de' MMMM 'de' yyyy 'às' H'h'ss's'", 
+            "dd 'de' MMMM 'de' yyyy 'às' H'h'mm's'", 
+            "dd 'de' MMMM 'de' yyyy 'às' H'h'mm'min'ss's'", 
+            "dd/MM/yyyy HH:mm:ss",          
+        ];
+        for (let formatStr of portugueseFormatsToTry) {
+            try {
+                const parsedDate = parse(cleanedPortugueseDateString, formatStr, new Date(), { locale: pt });
+                if (isValid(parsedDate)) {
+                    return parsedDate;
+                }
+            } catch (e) { /* continue trying */ }
+        }
+    }
+
+    console.warn('Não foi possível parsear a data com nenhum formato:', dateValue);
+    return null; 
+  };
+
   useEffect(() => {
-    const carregarHistorico = async () => {
+    const carregarHistoricoDoFirestore = async () => {
+      setLoading(true);
+      console.log('--- Iniciando carregamento do histórico do Firestore ---');
       try {
-        const userId = await getUserIdLoggedIn();
-        if (!userId) {
-          console.warn('Usuário não autenticado');
+        const userIdFromAuth = await getUserIdLoggedIn(); 
+        console.log('UserID obtido de getUserIdLoggedIn():', userIdFromAuth); 
+
+        if (!userIdFromAuth) {
+          console.warn('Usuário não autenticado. Não é possível carregar o histórico.');
+          setLoading(false);
           return;
         }
 
-        const chave = `treinosConcluidos_${userId}`;
-        const dados = await AsyncStorage.getItem(chave);
+        const db = getFirestore();
 
-        if (dados) {
-          setHistorico(JSON.parse(dados));
-          console.log('📥 Histórico carregado para:', chave);
-        } else {
-          setHistorico({});
-          console.log('📭 Nenhum histórico encontrado para:', chave);
+        const collectionName = 'historicoTreinos'; // Nome da coleção sem acento
+        const historicoRef = collection(db, collectionName); 
+        console.log('Caminho da coleção Firestore sendo usado:', historicoRef.path);
+        
+        const userIdFieldName = 'userId'; // Nome do campo do UserID em minúsculas
+        
+        const q = query(historicoRef, where(userIdFieldName, '==', userIdFromAuth)); 
+        console.log(`Query Firestore criada: Coleção '${collectionName}', Campo '${userIdFieldName}' == '${userIdFromAuth}'`); 
+
+        const querySnapshot = await getDocs(q);
+        const treinosConcluidosArray = [];
+        console.log('Número de documentos encontrados pela query:', querySnapshot.size);
+
+        if (querySnapshot.empty) {
+          console.log('Nenhum documento encontrado para o UserID de consulta especificado.');
         }
+
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          console.log('Dados brutos do documento Firestore (para ID:', doc.id, '):', data); 
+
+          // Passa o objeto Timestamp diretamente para parseFlexibleDate
+          const dataConclusaoParsed = parseFlexibleDate(data.dataConclusao);
+          const dataOriginalTreinoParsed = parseFlexibleDate(data.dataOriginalTreino);
+          
+          if (dataConclusaoParsed && isValid(dataConclusaoParsed)) {
+            treinosConcluidosArray.push({ 
+              id: doc.id, 
+              nome: data.nomeTreino || data.nome || 'Treino sem nome', 
+              categoria: data.categoria || 'N/A', 
+              descricao: data.descricao || 'Sem descrição', 
+              exercicios: data.exercicios || [], 
+              duracaoSegundos: data.duracao || data.duracaoSegundos || 0, // duracao é um número direto
+              dataConclusao: dataConclusaoParsed.toISOString(), 
+              dataOriginalTreino: dataOriginalTreinoParsed ? dataOriginalTreinoParsed.toISOString() : null, 
+              userId: data[userIdFieldName], 
+              treinoId: data.treinoId || data['ID do treino'], 
+            });
+          } else {
+             console.warn("Documento de histórico ignorado (data inválida ou não parseável):", doc.id, data);
+          }
+        });
+
+        treinosConcluidosArray.sort((a, b) => new Date(b.dataConclusao) - new Date(a.dataConclusao));
+
+        setHistorico(treinosConcluidosArray);
+        console.log('📥 Histórico carregado do Firestore com sucesso. Total de treinos processados e exibidos:', treinosConcluidosArray.length);
       } catch (error) {
-        console.error('Erro ao carregar histórico:', error);
+        console.error('❌ Erro fatal ao carregar histórico do Firestore:', error);
+        Alert.alert('Erro', 'Falha ao carregar histórico de treinos. Verifique a sua conexão ou tente novamente.');
       } finally {
         setLoading(false);
+        console.log('--- Fim do carregamento do histórico do Firestore ---');
       }
     };
 
-    carregarHistorico();
-  }, []);
+    carregarHistoricoDoFirestore();
+  }, [appId]); 
 
-  const datasOrdenadas = Object.keys(historico)
-    .filter((data) => isValid(parseISO(data)))
-    .sort((a, b) => new Date(b) - new Date(a));
-
-  const treinosFiltrados = datasOrdenadas.filter((data) => {
-    const treino = historico[data];
-    const dataObj = parseISO(data);
+  const treinosFiltrados = historico.filter((treino) => {
+    if (!treino.dataConclusao || typeof treino.dataConclusao !== 'string') {
+      return false;
+    }
+    const dataObj = parseISO(treino.dataConclusao); 
 
     const condicaoMes = !filtroMes || format(dataObj, 'yyyy-MM') === filtroMes;
     const condicaoCategoria =
       !filtroCategoria ||
-      treino.categoria?.toLowerCase() === filtroCategoria.toLowerCase();
+      String(treino.categoria || '').toLowerCase() === filtroCategoria.toLowerCase();
 
     return condicaoMes && condicaoCategoria;
   });
 
-  const somarDuracoes = (treinos) => {
+  const somarDuracoes = (treinosArray) => {
     let totalSegundos = 0;
-
-    treinos.forEach((data) => {
-      const duracao = historico[data]?.duracao;
-      if (duracao) {
-        const [min, seg] = duracao.split(':').map(Number);
-        totalSegundos += min * 60 + seg;
+    treinosArray.forEach((treino) => {
+      if (typeof treino.duracaoSegundos === 'number' && !isNaN(treino.duracaoSegundos)) {
+        totalSegundos += treino.duracaoSegundos;
       }
     });
-
-    const totalMin = Math.floor(totalSegundos / 60);
-    const totalSeg = totalSegundos % 60;
-
-    return `${totalMin.toString().padStart(2, '0')}:${totalSeg
-      .toString()
-      .padStart(2, '0')}`;
+    return formatDuration(totalSegundos);
   };
 
   const totalTreinos = treinosFiltrados.length;
   const tempoTotal = somarDuracoes(treinosFiltrados);
 
   const mesesDisponiveis = [
-    ...new Set(datasOrdenadas.map((data) => format(parseISO(data), 'yyyy-MM'))),
-  ];
+    ...new Set(historico.map((treino) => format(parseISO(treino.dataConclusao), 'yyyy-MM'))),
+  ].sort((a, b) => new Date(a) - new Date(b)); 
 
   const categoriasDisponiveis = [
     ...new Set(
-      datasOrdenadas.map((data) => historico[data].categoria).filter(Boolean)
+      historico.map((treino) => treino.categoria).filter(Boolean)
     ),
-  ];
+  ].sort(); 
 
   const getCategoriaColor = (categoria) => {
-    switch (categoria?.toLowerCase()) {
+    switch (String(categoria || '').toLowerCase()) {
       case 'força':
-        return '#7c3aed'; // roxo (mantive)
+        return '#7c3aed';
       case 'cardio':
-        return '#10b981'; // verde (mantive)
+        return '#10b981';
       case 'flexibilidade':
-        return '#f59e0b'; // amarelo (mantive)
+        return '#f59e0b';
       case 'hiit':
-        return '#ef4444'; // vermelho (mantive)
+        return '#ef4444';
       default:
-        return '#d0a956'; // dourado substitui azul
+        return '#d0a956';
     }
   };
 
@@ -113,7 +222,6 @@ export default function HistoricoScreen() {
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Histórico de Treinos</Text>
 
-      {/* Estatísticas */}
       <View style={styles.estatisticasBox}>
         <View style={styles.estatisticaItem}>
           <Text style={styles.estatisticaIcon}>📅</Text>
@@ -129,7 +237,6 @@ export default function HistoricoScreen() {
         </View>
       </View>
 
-      {/* Filtros */}
       <View style={styles.filtrosContainer}>
         <View style={styles.filtroBox}>
           <Text style={styles.filtroLabel}>Mês:</Text>
@@ -143,7 +250,7 @@ export default function HistoricoScreen() {
             {mesesDisponiveis.map((mes) => (
               <Picker.Item
                 key={mes}
-                label={format(parseISO(mes + '-01'), 'MMMM yyyy')}
+                label={format(parseISO(mes + '-01'), 'MMMM yyyy', { locale: pt })} 
                 value={mes}
               />
             ))}
@@ -166,7 +273,7 @@ export default function HistoricoScreen() {
         </View>
       </View>
 
-      {loading && <ActivityIndicator size="large" color="#d0a956" />}
+      {loading && <ActivityIndicator size="large" color="#d0a956" style={{ marginTop: 20 }} />}
 
       {!loading && treinosFiltrados.length === 0 && (
         <Text style={styles.semDados}>
@@ -175,28 +282,27 @@ export default function HistoricoScreen() {
       )}
 
       {!loading &&
-        treinosFiltrados.map((data) => {
-          const treino = historico[data];
+        treinosFiltrados.map((treino) => {
           const corCategoria = getCategoriaColor(treino.categoria);
           return (
             <View
-              key={data}
+              key={treino.id} 
               style={[styles.card, { borderLeftColor: corCategoria }]}
             >
-              <Text style={styles.data}>{format(parseISO(data), 'dd/MM/yyyy')}</Text>
-              <Text style={styles.nome}>{treino.nome || 'Treino sem nome'}</Text>
+              <Text style={styles.data}>{format(parseISO(treino.dataConclusao), 'dd/MM/yyyy HH:mm')}</Text>
+              <Text style={styles.nome}>{String(treino.nome || treino.nomeTreino)}</Text> 
               <Text style={styles.categoria}>
-                Categoria: {treino.categoria || 'N/A'}
+                Categoria: {String(treino.categoria || 'N/A')}
               </Text>
-              <Text style={styles.descricao}>{treino.descricao || 'Sem descrição'}</Text>
-              <Text style={styles.duracao}>Duração: {treino.duracao || '00:00'}</Text>
+              <Text style={styles.descricao}>{String(treino.descricao || 'Sem descrição')}</Text>
+              <Text style={styles.duracao}>Duração: {formatDuration(treino.duracaoSegundos)}</Text> 
 
               {Array.isArray(treino.exercicios) && treino.exercicios.length > 0 && (
                 <>
                   <Text style={styles.exerciciosTitulo}>Exercícios:</Text>
                   {treino.exercicios.map((ex, idx) => (
                     <Text key={idx} style={styles.exercicio}>
-                      • {ex.nome} — {ex.tipo === 'reps' ? 'Repetições' : 'Tempo'}: {ex.valor}
+                      • {String(ex.nome)} — {ex.tipo === 'reps' ? 'Repetições' : 'Tempo'}: {String(ex.valor)}
                     </Text>
                   ))}
                 </>
@@ -212,6 +318,7 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     backgroundColor: '#f9fafb',
+    minHeight: '100%',
   },
   title: {
     fontSize: 26,
@@ -265,6 +372,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontStyle: 'italic',
     color: '#6b7280',
+    marginTop: 20,
   },
   card: {
     backgroundColor: '#ffffff',
@@ -310,11 +418,6 @@ const styles = StyleSheet.create({
     color: '#5f4b00',
     marginTop: 6,
     marginBottom: 4,
-  },
-  exercicio: {
-    marginLeft: 10,
-    color: '#7a6a00',
-    fontSize: 13,
   },
   exercicio: {
     marginLeft: 10,

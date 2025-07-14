@@ -13,12 +13,13 @@ import { Calendar } from 'react-native-calendars';
 import {
   buscarTreinosDoUser,
   buscarAvaliacoesAgendaDoUser,
+  // buscarTreinosConcluidosDoUser, // <-- Removido, não é necessário para AsyncStorage
 } from '../../services/userService';
 import { format, parseISO } from 'date-fns';
 import { getUserIdLoggedIn } from '../../services/authService';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // <-- Re-importado
 import { ThemeContext } from '../ThemeContext'; 
 
 const frasesMotivacionais = [
@@ -58,12 +59,14 @@ export default function TreinosScreen() {
   const [treinosDoDia, setTreinosDoDia] = useState([]);
   const [avaliacoesDoDia, setAvaliacoesDoDia] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [treinosConcluidos, setTreinosConcluidos] = useState({});
+  // Revertido para usar um objeto simples para chaves de data (YYYY-MM-DD)
+  const [treinosConcluidos, setTreinosConcluidos] = useState({}); 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const navigation = useNavigation();
   const [fraseMotivacional, setFraseMotivacional] = useState('');
   const { colors, toggleTheme, theme } = useContext(ThemeContext);
 
+  // Esta função agora busca do AsyncStorage
   const carregarTreinosConcluidos = async () => {
     try {
       const userId = await getUserIdLoggedIn();
@@ -72,47 +75,53 @@ export default function TreinosScreen() {
       const chave = `treinosConcluidos_${userId}`;
       const dados = await AsyncStorage.getItem(chave);
       setTreinosConcluidos(dados ? JSON.parse(dados) : {});
+      console.log('✅ Treinos concluídos carregados do AsyncStorage.');
     } catch (error) {
-      console.error('Erro ao carregar treinos concluídos:', error);
+      console.error('Erro ao carregar treinos concluídos do AsyncStorage:', error);
+      Alert.alert('Erro', 'Falha ao carregar histórico de treinos concluídos.');
     }
   };
 
-  useEffect(() => {
-    carregarTreinosConcluidos();
-  }, []);
-
+  // Use useFocusEffect para recarregar todos os dados quando a tela for focada
   useFocusEffect(
     React.useCallback(() => {
-      carregarTreinosConcluidos();
-    }, [])
-  );
+      async function reloadAllData() {
+        setLoading(true);
+        let userId = null;
+        try {
+          userId = await getUserIdLoggedIn();
+          if (!userId) {
+            Alert.alert('Erro', 'Usuário não autenticado');
+            setLoading(false);
+            return;
+          }
 
-  useEffect(() => {
-    async function carregarDados() {
-      setLoading(true);
-      try {
-        const userId = await getUserIdLoggedIn();
-        if (!userId) {
-          Alert.alert('Erro', 'Usuário não autenticado');
+          console.log('--- Início do Recarregamento de Dados do Utilizador (useFocusEffect) ---');
+          console.log('UserID logado (TreinosScreen - useFocusEffect):', userId);
+
+          // Carrega treinos e avaliações em paralelo
+          const [treinosCarregados, avaliacoesCarregadas] = await Promise.all([
+            buscarTreinosDoUser(userId),
+            buscarAvaliacoesAgendaDoUser(userId)
+          ]);
+
+          setTreinos(treinosCarregados);
+          setAvaliacoes(avaliacoesCarregadas);
+          await carregarTreinosConcluidos(); // Carrega do AsyncStorage
+
+          console.log('✅ Todos os dados recarregados com sucesso.');
+
+        } catch (error) {
+          console.error('❌ ERRO NO RECARREGAMENTO DE DADOS (useFocusEffect):', error);
+          Alert.alert('Erro', `Não foi possível recarregar os dados: ${error.message || 'Erro desconhecido.'}`);
+        } finally {
           setLoading(false);
-          return;
+          console.log('--- Fim do Recarregamento de Dados do Utilizador ---');
         }
-
-        const dadosTreinos = await buscarTreinosDoUser(userId);
-        const dadosAvaliacoesAgenda = await buscarAvaliacoesAgendaDoUser(userId);
-
-        setTreinos(dadosTreinos);
-        setAvaliacoes(dadosAvaliacoesAgenda);
-      } catch (error) {
-        console.error('Erro ao carregar dados:', error);
-        Alert.alert('Erro', 'Erro ao carregar treinos ou avaliações.');
-      } finally {
-        setLoading(false);
       }
-    }
-
-    carregarDados();
-  }, []);
+      reloadAllData();
+    }, []) // Array de dependências vazio para executar apenas quando a tela for focada
+  );
 
   useEffect(() => {
     const indexAleatorio = Math.floor(Math.random() * frasesMotivacionais.length);
@@ -122,54 +131,74 @@ export default function TreinosScreen() {
   useEffect(() => {
     const marcacoes = {};
 
+    // Marcação de Treinos
     treinos.forEach((treino) => {
       if (typeof treino.data === 'string' && treino.data.includes('T')) {
-        const dataStr = treino.data.split('T')[0];
-        const isConcluido = Boolean(treinosConcluidos[dataStr]);
+        const dataStr = treino.data.split('T')[0]; // Pega apenas a parte da data (YYYY-MM-DD)
+        // Usa o estado 'treinosConcluidos' do AsyncStorage
+        const isConcluido = Boolean(treinosConcluidos[dataStr]); 
+
         marcacoes[dataStr] = {
+          ...marcacoes[dataStr], 
           customStyles: {
             container: {
-              backgroundColor: isConcluido ? '#d1fae5' : '#e0e7ff',
+              backgroundColor: isConcluido ? '#d1fae5' : '#e0e7ff', 
               borderRadius: 8,
+              ...marcacoes[dataStr]?.customStyles?.container
             },
             text: {
-              color: isConcluido ? '#065f46' : '#1e3a8a',
+              color: isConcluido ? '#065f46' : '#1e3a8a', 
               fontWeight: 'bold',
+              ...marcacoes[dataStr]?.customStyles?.text
             },
           },
         };
       }
     });
 
+    // Marcação de Avaliações
     avaliacoes.forEach((avaliacao) => {
-      if (avaliacao.data) {
+      if (avaliacao.data && typeof avaliacao.data === 'string') {
         const dataStr = avaliacao.data;
         marcacoes[dataStr] = {
+          ...marcacoes[dataStr], 
           customStyles: {
             container: {
-              backgroundColor: '#fde68a',
+              backgroundColor: '#fde68a', 
               borderRadius: 8,
+              ...marcacoes[dataStr]?.customStyles?.container 
             },
             text: {
-              color: '#92400e',
+              color: '#92400e', 
               fontWeight: 'bold',
+              ...marcacoes[dataStr]?.customStyles?.text 
             },
           },
         };
       }
     });
 
+    // Marcação da data selecionada (sobrepõe as outras para destaque)
     if (selectedDate) {
       marcacoes[selectedDate] = {
+        ...marcacoes[selectedDate], 
         customStyles: {
-          container: { backgroundColor: '#facc15', borderRadius: 8 },
-          text: { color: '#78350f', fontWeight: 'bold' },
+          container: { 
+            backgroundColor: '#facc15', 
+            borderRadius: 8,
+            ...marcacoes[selectedDate]?.customStyles?.container 
+          },
+          text: { 
+            color: '#78350f', 
+            fontWeight: 'bold',
+            ...marcacoes[selectedDate]?.customStyles?.text 
+          },
         },
       };
     }
 
     setMarkedDates(marcacoes);
-  }, [treinos, treinosConcluidos, avaliacoes, selectedDate]);
+  }, [treinos, treinosConcluidos, avaliacoes, selectedDate]); // Depende de treinosConcluidos
 
   useEffect(() => {
     if (selectedDate) {
@@ -221,45 +250,56 @@ export default function TreinosScreen() {
     }
   };
 
+  // Função auxiliar para formatar a duração em hh:mm:ss (ainda pode ser útil para exibição)
+  const formatDuration = (seconds) => {
+    if (typeof seconds !== 'number' || isNaN(seconds)) return 'N/A';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return [h, m, s]
+      .map(v => v < 10 ? '0' + v : v)
+      .filter((v, i) => v !== '00' || i > 0) 
+      .join(':');
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.container} bounces>
       <Text style={styles.title}>Meus Treinos</Text>
 
       <Text style={styles.fraseMotivacional}>{fraseMotivacional}</Text>
 
-     {/* BARRA DE PROGRESSO DE TREINOS CONCLUÍDOS - ESTILO DIFERENTE */}
-<View style={{ marginHorizontal: 20, marginBottom: 20 }}>
-  <Text style={{ fontWeight: '700', marginBottom: 8, color: '#333', fontSize: 16 }}>
-    Treinos concluídos: {Object.keys(treinosConcluidos).length} / {treinos.length}
-  </Text>
+      {/* BARRA DE PROGRESSO DE TREINOS CONCLUÍDOS */}
+      <View style={{ marginHorizontal: 20, marginBottom: 20 }}>
+        <Text style={{ fontWeight: '700', marginBottom: 8, color: '#333', fontSize: 16 }}>
+          Treinos concluídos: {Object.keys(treinosConcluidos).length} / {treinos.length}
+        </Text>
 
-  <View
-    style={{
-      height: 20,
-      backgroundColor: '#222',
-      borderRadius: 12,
-      overflow: 'hidden',
-      shadowColor: '#d0a956',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.7,
-      shadowRadius: 6,
-      elevation: 5,
-    }}
-  >
-    <View
-      style={{
-        height: '100%',
-        backgroundColor: '#fbbf24',
-        width:
-          treinos.length > 0
-            ? `${((Object.keys(treinosConcluidos).length / treinos.length) * 100).toFixed(0)}%`
-            : '0%',
-        borderRadius: 12,
-        transition: 'width 0.3s ease-in-out',
-      }}
-    />
-  </View>
-</View>
+        <View
+          style={{
+            height: 20,
+            backgroundColor: '#222',
+            borderRadius: 12,
+            overflow: 'hidden',
+            shadowColor: '#d0a956',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.7,
+            shadowRadius: 6,
+            elevation: 5,
+          }}
+        >
+          <View
+            style={{
+              height: '100%',
+              backgroundColor: '#fbbf24',
+              width:
+                treinos.length > 0
+                  ? `${((Object.keys(treinosConcluidos).length / treinos.length) * 100).toFixed(0)}%`
+                  : '0%',
+              borderRadius: 12,
+            }}
+          />
+        </View>
+      </View>
 
       {loading ? (
         <ActivityIndicator size="large" color="#d0a956" style={{ marginVertical: 20 }} />
@@ -294,51 +334,69 @@ export default function TreinosScreen() {
                   <Text style={styles.noTreinos}>Nenhum registo para este dia.</Text>
                 )}
 
-                {treinosDoDia.map((treino) => (
-                  <View key={treino.id} style={styles.treinoBox}>
-                    <View style={styles.treinoHeader}>
-                      {getIconByCategoria(treino.categoria)}
-                      <Text style={styles.treinoNome}>
-                        {treino.nome}{' '}
-                        {Boolean(treinosConcluidos[treino.data.split('T')[0]]) && (
-                          <AnimatedCheckIcon />
-                        )}
+                {treinosDoDia.map((treino) => {
+                  // Agora verificamos pelo ID do treino e pela data original
+                  // treinosConcluidos agora usa a data formatada como chave
+                  const isConcluido = Boolean(treinosConcluidos[treino.data.split('T')[0]]);
+                  // Se a duração era guardada no AsyncStorage, teria que ser recuperada daqui.
+                  // Como a sua versão antiga do AsyncStorage guardava apenas um boolean, não temos duração.
+                  // Se precisar, teremos que ajustar o formato no AsyncStorage.
+                  const duracaoTreino = null; // Não disponível se AsyncStorage só guarda boolean
+
+                  return (
+                    <View key={treino.id} style={[styles.treinoBox, isConcluido && styles.treinoConcluidoBox]}>
+                      <View style={styles.treinoHeader}>
+                        {getIconByCategoria(treino.categoria)}
+                        <Text style={[styles.treinoNome, isConcluido && styles.treinoNomeConcluido]}>
+                          {treino.nome}{' '}
+                          {isConcluido && (
+                            <AnimatedCheckIcon />
+                          )}
+                        </Text>
+                      </View>
+                      <Text style={styles.treinoCategoria}>
+                        Categoria: {treino.categoria}
                       </Text>
+                      <Text style={styles.treinoDescricao}>{treino.descricao}</Text>
+
+                      {treino.exercicios?.length > 0 && (
+                        <>
+                          <Text style={styles.exerciciosTitle}>Exercícios:</Text>
+                          {treino.exercicios.map((ex, idx) => (
+                            <Text key={idx} style={styles.exercicioItem}>
+                              • {ex.nome} — {ex.tipo === 'reps' ? 'Repetições' : 'Tempo'}: {ex.valor}
+                            </Text>
+                          ))}
+                        </>
+                      )}
+
+                      <Text style={styles.treinoHora}>
+                        Hora:{' '}
+                        {new Date(treino.data).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </Text>
+
+                      {isConcluido && duracaoTreino && ( // A duração não estará disponível com seu formato antigo de AsyncStorage
+                        <Text style={styles.treinoDuracao}>
+                          Duração: {formatDuration(duracaoTreino)}
+                        </Text>
+                      )}
+
+                      {/* O botão "Iniciar Treino" só aparece se o treino NÃO estiver concluído */}
+                      {!isConcluido && (
+                        <TouchableOpacity
+                          style={styles.btnIniciar}
+                          // IMPORTANTE: Nome da tela de navegação consistente
+                          onPress={() => navigation.navigate('ExecucaoTreinoScreen', { treino })} 
+                        >
+                          <Text style={styles.btnIniciarText}>Iniciar Treino</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
-                    <Text style={styles.treinoCategoria}>
-                      Categoria: {treino.categoria}
-                    </Text>
-                    <Text style={styles.treinoDescricao}>{treino.descricao}</Text>
-
-                    {treino.exercicios?.length > 0 && (
-                      <>
-                        <Text style={styles.exerciciosTitle}>Exercícios:</Text>
-                        {treino.exercicios.map((ex, idx) => (
-                          <Text key={idx} style={styles.exercicioItem}>
-                            • {ex.nome} — {ex.tipo === 'reps' ? 'Repetições' : 'Tempo'}: {ex.valor}
-                          </Text>
-                        ))}
-                      </>
-                    )}
-
-                    <Text style={styles.treinoHora}>
-                      Hora:{' '}
-                      {new Date(treino.data).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </Text>
-
-                    {!Boolean(treinosConcluidos[treino.data.split('T')[0]]) && (
-                      <TouchableOpacity
-                        style={styles.btnIniciar}
-                        onPress={() => navigation.navigate('ExecucaoTreino', { treino })}
-                      >
-                        <Text style={styles.btnIniciarText}>Iniciar Treino</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                ))}
+                  );
+                })}
 
                 {avaliacoesDoDia.map((avaliacao) => (
                   <View
@@ -420,6 +478,10 @@ const styles = StyleSheet.create({
     borderColor: '#000',
     borderWidth: 3,
   },
+  treinoConcluidoBox: {
+    borderColor: '#10b981', // Borda verde para treinos concluídos
+    backgroundColor: '#e6ffe6', // Fundo mais claro para treinos concluídos
+  },
   treinoHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -430,6 +492,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginLeft: 8,
     color: '#1e293b',
+  },
+  treinoNomeConcluido: {
+    color: '#065f46', // Cor do texto para treinos concluídos
   },
   treinoCategoria: {
     fontWeight: '700',
@@ -456,6 +521,12 @@ const styles = StyleSheet.create({
   treinoHora: {
     fontSize: 14,
     color: '#334155',
+    marginTop: 5,
+  },
+  treinoDuracao: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#065f46',
     marginTop: 5,
   },
   btnIniciar: {

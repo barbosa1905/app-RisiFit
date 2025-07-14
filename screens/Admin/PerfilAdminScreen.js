@@ -9,86 +9,60 @@ import {
   Image,
 } from 'react-native';
 import { useUser } from '../../contexts/UserContext';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db, storage, auth } from '../../services/firebaseConfig';
+import { doc, getDoc } from 'firebase/firestore';
+import { db, auth } from '../../services/firebaseConfig';
 import { signOut } from 'firebase/auth';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import * as ImagePicker from 'expo-image-picker';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import CriarQuestionarioScreen from './CriarQuestionarioScreen';
-export default function PerfilAdminScreen() {
 
+export default function PerfilAdminScreen() {
   const { user } = useUser();
   const [adminData, setAdminData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
   const navigation = useNavigation();
-  const [fotoPerfil, setFotoPerfil] = useState(null);
 
-  useFocusEffect(
-    useCallback(() => {
-      const fetchAdminData = async () => {
-        try {
-          setLoading(true);
-          const refDoc = doc(db, 'users', user.uid);
-          const snapshot = await getDoc(refDoc);
-          if (snapshot.exists()) {
-            const data = snapshot.data();
-            setAdminData(data);
-            setFotoPerfil(data.fotoPerfil || null);
-          }
-        } catch (error) {
-          console.error('Erro ao carregar dados do admin:', error);
-        } finally {
-          setLoading(false);
-        }
-      };
+  const DEFAULT_AVATAR = require('../../assets/default-avatar.png');
 
-      if (user?.uid) {
-        fetchAdminData();
+  const fetchAdminData = useCallback(() => {
+    async function getData() {
+      if (!user?.uid) {
+        setLoading(false);
+        return;
       }
-    }, [user?.uid])
-  );
+      try {
+        setLoading(true);
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+          const data = userDocSnap.data();
+          setAdminData(data);
+        } else {
+          Alert.alert('Erro', 'Dados do administrador não encontrados.');
+        }
+      } catch (error) {
+        console.error('Erro ao carregar dados do admin:', error);
+        Alert.alert('Erro', 'Não foi possível carregar os dados do perfil.');
+      } finally {
+        setLoading(false);
+      }
+    }
 
- const handleSelecionarFoto = async () => {
-     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-     if (status !== 'granted') {
-       Alert.alert('Permissão negada', 'Precisamos de acesso à galeria para selecionar uma imagem.');
-       return;
-     }
- 
-     const result = await ImagePicker.launchImageLibraryAsync({
-       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-       allowsEditing: true,
-       aspect: [1, 1],
-       quality: 1,
-     });
- 
-     if (!result.canceled) {
-       setFotoPerfil(result.assets[0].uri);
-     }
-   };
- 
+    getData();
+  }, [user?.uid]);
+
+  useFocusEffect(fetchAdminData);
 
   const handleLogout = () => {
-  Alert.alert(
-    'Terminar sessão',
-    'Tens a certeza que queres sair?',
-    [
-      {
-        text: 'Cancelar',
-        style: 'cancel',
-      },
-      {
-        text: 'Sair',
-        style: 'destructive',
-        onPress: () => {
-          // Executa o logout de forma assíncrona
-          const performLogout = async () => {
+    Alert.alert(
+      'Terminar Sessão',
+      'Tem a certeza que quer sair?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Sair',
+          style: 'destructive',
+          onPress: async () => {
             try {
               await signOut(auth);
-
-              // Redefine a navegação e envia o utilizador para a tela de login
               navigation.reset({
                 index: 0,
                 routes: [{ name: 'Login' }],
@@ -100,16 +74,12 @@ export default function PerfilAdminScreen() {
                 'Ocorreu um problema ao terminar a sessão. Tente novamente.'
               );
             }
-          };
-
-          performLogout();
+          },
         },
-      },
-    ],
-    { cancelable: false }
-  );
-};
-
+      ],
+      { cancelable: false }
+    );
+  };
 
   const irParaCadastroCliente = () => {
     navigation.navigate('CadastroCliente', { adminId: user.uid });
@@ -119,77 +89,60 @@ export default function PerfilAdminScreen() {
     navigation.navigate('EditarPerfilAdmin');
   };
 
-  const handleAbrirQuestionario = () => {
-    navigation.navigate('SalvarQuestionario');
-  };
-
   if (loading) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#d0a956" />
-        <Text style={{ marginTop: 10 }}>A carregar dados do administrador...</Text>
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#b38600" />
+        <Text style={styles.loadingText}>A carregar dados do administrador...</Text>
       </View>
     );
   }
 
   if (!adminData) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.nome}>Administrador não encontrado</Text>
+      <View style={styles.loadingContainer}>
+        <Text style={styles.errorText}>Administrador não encontrado ou erro ao carregar.</Text>
+        <TouchableOpacity onPress={fetchAdminData} style={styles.retryButton}>
+          <Text style={styles.retryButtonText}>Tentar Novamente</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <TouchableOpacity onPress={handleSelecionarFoto} style={styles.avatarContainer}>
-        {uploading ? (
-          <ActivityIndicator size="large" color="#d0a956" />
-        ) : (
-          <Image
-            source={
-              fotoPerfil
-                ? { uri: fotoPerfil }
-                : require('../../assets/default-avatar.png')
-            }
-            style={styles.avatar}
-          />
-        )}
-        <Text style={styles.trocarFotoTexto}>📷 Trocar Foto</Text>
-      </TouchableOpacity>
+      <View style={styles.avatarContainer}>
+        <Image
+          source={DEFAULT_AVATAR}
+          style={styles.avatar}
+        />
+      </View>
 
       <Text style={styles.nome}>{adminData.nome || 'Sem nome'}</Text>
-      <Text style={styles.info}>Email: {user.email}</Text>
-      <Text style={styles.info}>ID: {user.uid}</Text>
-      <Text style={styles.info}>Função: {adminData.role || 'admin'}</Text>
+      <Text style={styles.info}>Email: {user?.email || 'N/A'}</Text>
+      <Text style={styles.info}>ID: {user?.uid || 'N/A'}</Text>
+      <Text style={styles.info}>Função: {adminData.role || 'Admin'}</Text>
 
-      <TouchableOpacity style={styles.botao} onPress={irParaCadastroCliente}>
-        <Text style={styles.botaoTexto}>➕ Cadastrar Novo Cliente</Text>
-      </TouchableOpacity>
+      <View style={styles.buttonGroup}>
+        <TouchableOpacity style={styles.botao} onPress={irParaCadastroCliente}>
+          <Text style={styles.botaoTexto}>➕ Cadastrar Novo Cliente</Text>
+        </TouchableOpacity>
 
-      <TouchableOpacity
-        style={styles.botao}
-        onPress={() => navigation.navigate('CriarAvaliacao')}
-      >
-        <Text style={styles.botaoTexto}>📝 Criar Nova Avaliação</Text>
-      </TouchableOpacity>
+        <TouchableOpacity style={styles.botao} onPress={() => navigation.navigate('CriarAvaliacao')}>
+          <Text style={styles.botaoTexto}>📝 Criar Nova Avaliação</Text>
+        </TouchableOpacity>
 
-      <TouchableOpacity style={styles.botao} onPress={handleEditarPerfil}>
-        <Text style={styles.botaoTexto}>✏️ Editar Perfil</Text>
-      </TouchableOpacity>
+        <TouchableOpacity style={styles.botao} onPress={handleEditarPerfil}>
+          <Text style={styles.botaoTexto}>✏️ Editar Perfil</Text>
+        </TouchableOpacity>
 
-    
+        <TouchableOpacity style={styles.botao} onPress={() => navigation.navigate('ListarQuestionarios')}>
+          <Text style={styles.botaoTexto}>🛠️ Gerir Questionários</Text>
+        </TouchableOpacity>
+      </View>
 
-<TouchableOpacity
-  style={styles.botao}
-  onPress={() => navigation.navigate('ListarQuestionarios')}
->
-  <Text style={styles.botaoTexto}>🛠️ Questionários</Text>
-</TouchableOpacity>
-      
-
-      <TouchableOpacity style={[styles.botao, styles.logout]} onPress={handleLogout}>
-        <Text style={[styles.botaoTexto, { color: '#000' }]}>🚪 Terminar Sessão</Text>
+      <TouchableOpacity style={[styles.botao, styles.logoutButton]} onPress={handleLogout}>
+        <Text style={[styles.botaoTexto, styles.logoutButtonText]}>🚪 Terminar Sessão</Text>
       </TouchableOpacity>
     </View>
   );
@@ -198,66 +151,96 @@ export default function PerfilAdminScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
-    backgroundColor: '#fff8e1', // tom creme suave
+    padding: 15, // Reduz o padding geral
+    backgroundColor: '#FBF8F1',
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FBF8F1',
+  },
+  loadingText: {
+    marginTop: 8, // Reduz a margem
+    color: '#6B5A00',
+    fontSize: 15, // Fonte ligeiramente menor
+  },
+  errorText: {
+    fontSize: 16, // Fonte ligeiramente menor
+    color: '#D13E3E',
+    marginBottom: 10, // Reduz a margem
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: '#D0A956',
+    paddingVertical: 8, // Reduz o padding
+    paddingHorizontal: 16, // Reduz o padding
+    borderRadius: 6, // Raio menor
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15, // Fonte ligeiramente menor
+    fontWeight: 'bold',
   },
   avatarContainer: {
     alignItems: 'center',
-    marginVertical: 20,
+    marginVertical: 15, // Reduz a margem vertical
   },
   avatar: {
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    borderWidth: 3,
-    borderColor: '#b38600', // dourado escuro
-    shadowColor: '#b38600',
-    shadowOffset: { width: 0, height: 4 },
+    width: 120, // Avatar menor
+    height: 120, // Avatar menor
+    borderRadius: 60, // Ajusta o raio para ser um círculo
+    borderWidth: 3, // Borda mais fina
+    borderColor: '#D0A956',
+    shadowColor: '#A17F00',
+    shadowOffset: { width: 0, height: 3 }, // Sombra menos proeminente
     shadowOpacity: 0.3,
     shadowRadius: 6,
     elevation: 6,
   },
-  trocarFotoTexto: {
-    marginTop: 10,
-    color: '#8c6d00', // dourado médio
-    fontWeight: '600',
-    fontSize: 14,
-  },
   nome: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: '#4b3b00', // marrom escuro para bom contraste
-    marginTop: 10,
-    marginBottom: 6,
+    fontSize: 24, // Nome menor
+    fontWeight: '800',
+    color: '#4B3B00',
+    marginTop: 8, // Margem menor
+    marginBottom: 5, // Margem menor
     textAlign: 'center',
   },
   info: {
-    fontSize: 16,
-    color: '#6b5a00', // dourado escuro suave
-    marginBottom: 4,
+    fontSize: 15, // Info menor
+    color: '#6B5A00',
+    marginBottom: 3, // Margem menor
     textAlign: 'center',
+  },
+  buttonGroup: {
+    width: '100%',
+    marginTop: 15, // Margem menor
   },
   botao: {
     width: '100%',
-    marginTop: 12,
-    backgroundColor: '#d0a956', // dourado principal
-    paddingVertical: 14,
-    borderRadius: 12,
+    marginTop: 10, // Margem entre botões menor
+    backgroundColor: '#D0A956',
+    paddingVertical: 12, // Padding vertical do botão menor
+    borderRadius: 10, // Raio menor
     alignItems: 'center',
-    shadowColor: '#a17f00',
+    shadowColor: '#A17F00',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.4,
-    shadowRadius: 6,
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
     elevation: 5,
   },
   botaoTexto: {
     fontWeight: '700',
-    fontSize: 16,
-    color: '#fff8dc', // branco creme para contraste no botão
+    fontSize: 16, // Texto do botão menor
+    color: '#FFFFFF',
   },
-  logout: {
-    marginTop: 25,
-    backgroundColor: '#a35400', // tom laranja escuro para logout (alerta suave)
+  logoutButton: {
+    marginTop: 25, // Margem maior, mas reduzida da original
+    backgroundColor: '#A35400',
+  },
+  logoutButtonText: {
+    color: '#FFECB3',
   },
 });
