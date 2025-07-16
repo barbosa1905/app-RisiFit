@@ -7,21 +7,48 @@ import {
   Alert,
   TouchableOpacity,
   ActivityIndicator,
-  Animated,
+  Animated, // Importado Animated
+  Platform,
 } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import {
-  buscarTreinosDoUser,
+  buscarTodosTreinosDoUser,
   buscarAvaliacoesAgendaDoUser,
-  // buscarTreinosConcluidosDoUser, // <-- Removido, não é necessário para AsyncStorage
 } from '../../services/userService';
-import { format, parseISO } from 'date-fns';
+import {
+  format,
+  parseISO,
+  startOfWeek,
+  endOfWeek,
+  isWithinInterval,
+  isToday,
+  isPast,
+  isFuture,
+} from 'date-fns';
 import { getUserIdLoggedIn } from '../../services/authService';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // <-- Re-importado
-import { ThemeContext } from '../ThemeContext'; 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ThemeContext } from '../ThemeContext';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../services/firebaseConfig';
 
+// Definição das cores para os diferentes status
+const STATUS_COLORS = {
+  completed: '#4CAF50',       // Verde para concluído
+  missed: '#FF5252',          // Vermelho para perdido
+  todayPending: '#2196F3',    // Azul para hoje pendente
+  scheduledFuture: '#FFC107', // Amarelo/Laranja para futuro agendado
+  noTraining: '#BDBDBD',      // Cinza claro para sem treino
+  defaultBorder: '#BDBDBD',   // Borda padrão para círculos vazios
+  defaultText: '#555',        // Cor de texto padrão
+  selectedDay: '#facc15',     // Amarelo para dia selecionado
+  selectedDayText: '#78350f', // Laranja escuro para texto do dia selecionado
+  evaluation: '#fde68a',      // Amarelo claro para avaliação
+  evaluationText: '#92400e',  // Laranja escuro para texto da avaliação
+};
+
+// Frases motivacionais com emojis
 const frasesMotivacionais = [
   '🏋️‍♂️ Cada treino te aproxima do teu objetivo!',
   '🔥 Não pares até te orgulhares!',
@@ -45,11 +72,14 @@ const AnimatedCheckIcon = () => {
   }, []);
 
   return (
-    <Animated.View style={{ opacity: fadeCheck, marginLeft: 6 }}>
+    <Animated.Text style={{ opacity: fadeCheck, marginLeft: 6 }}>
       <MaterialCommunityIcons name="check-circle" size={20} color="#10b981" />
-    </Animated.View>
+    </Animated.Text>
   );
 };
+
+// Altura da barra fixa do cabeçalho (AJUSTADA PARA A FRASE)
+const FIXED_HEADER_HEIGHT = Platform.OS === 'android' ? 120 : 110;
 
 export default function TreinosScreen() {
   const [treinos, setTreinos] = useState([]);
@@ -59,14 +89,20 @@ export default function TreinosScreen() {
   const [treinosDoDia, setTreinosDoDia] = useState([]);
   const [avaliacoesDoDia, setAvaliacoesDoDia] = useState([]);
   const [loading, setLoading] = useState(false);
-  // Revertido para usar um objeto simples para chaves de data (YYYY-MM-DD)
-  const [treinosConcluidos, setTreinosConcluidos] = useState({}); 
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [treinosConcluidos, setTreinosConcluidos] = useState({});
+  const fadeAnim = useRef(new Animated.Value(0)).current; // Para a lista de treinos do dia
   const navigation = useNavigation();
   const [fraseMotivacional, setFraseMotivacional] = useState('');
+  const fadeAnimPhrase = useRef(new Animated.Value(0)).current; // NOVO: Para a animação da frase
   const { colors, toggleTheme, theme } = useContext(ThemeContext);
 
-  // Esta função agora busca do AsyncStorage
+  const [userName, setUserName] = useState('');
+  const [userInitial, setUserInitial] = useState('');
+
+  const [treinosTotalSemana, setTreinosTotalSemana] = useState(0);
+  const [treinosConcluidosSemana, setTreinosConcluidosSemana] = useState(0);
+
+  // carregarTreinosConcluidos agora lida com o objeto de duração
   const carregarTreinosConcluidos = async () => {
     try {
       const userId = await getUserIdLoggedIn();
@@ -74,15 +110,38 @@ export default function TreinosScreen() {
 
       const chave = `treinosConcluidos_${userId}`;
       const dados = await AsyncStorage.getItem(chave);
-      setTreinosConcluidos(dados ? JSON.parse(dados) : {});
-      console.log('✅ Treinos concluídos carregados do AsyncStorage.');
+      let loadedRawData = dados ? JSON.parse(dados) : {};
+
+      const processedConcluidos = {};
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      for (const dateString in loadedRawData) {
+        const treinoDate = parseISO(dateString);
+        if (!isNaN(treinoDate.getTime()) && (isPast(treinoDate) || isToday(treinoDate))) {
+          // Se for um booleano (formato antigo), converte para objeto com duração 0
+          if (typeof loadedRawData[dateString] === 'boolean') {
+            processedConcluidos[dateString] = { completed: loadedRawData[dateString], duration: 0 };
+          } else if (typeof loadedRawData[dateString] === 'object' && loadedRawData[dateString] !== null) {
+            // Se já for um objeto, garante que 'completed' e 'duration' existem
+            processedConcluidos[dateString] = {
+              completed: loadedRawData[dateString].completed || false,
+              duration: loadedRawData[dateString].duration || 0,
+            };
+          }
+        } else {
+          console.log(`🗑️ Removendo treino concluído futuro/inválido do AsyncStorage (TreinosScreen): ${dateString}`);
+        }
+      }
+
+      setTreinosConcluidos(processedConcluidos);
+      console.log('✅ Treinos concluídos carregados e FILTRADOS do AsyncStorage (TreinosScreen):', processedConcluidos);
     } catch (error) {
-      console.error('Erro ao carregar treinos concluídos do AsyncStorage:', error);
+      console.error('Erro ao carregar treinos concluídos do AsyncStorage (TreinosScreen):', error);
       Alert.alert('Erro', 'Falha ao carregar histórico de treinos concluídos.');
     }
   };
 
-  // Use useFocusEffect para recarregar todos os dados quando a tela for focada
   useFocusEffect(
     React.useCallback(() => {
       async function reloadAllData() {
@@ -99,18 +158,51 @@ export default function TreinosScreen() {
           console.log('--- Início do Recarregamento de Dados do Utilizador (useFocusEffect) ---');
           console.log('UserID logado (TreinosScreen - useFocusEffect):', userId);
 
-          // Carrega treinos e avaliações em paralelo
+          const userDocRef = doc(db, 'users', userId);
+          const userDocSnap = await getDoc(userDocRef);
+          if (userDocSnap.exists()) {
+            const userData = userDocSnap.data();
+            setUserName(userData.name || 'Utilizador');
+            setUserInitial(userData.name ? userData.name.charAt(0).toUpperCase() : 'U');
+          } else {
+            setUserName('Utilizador');
+            setUserInitial('U');
+          }
+
           const [treinosCarregados, avaliacoesCarregadas] = await Promise.all([
-            buscarTreinosDoUser(userId),
+            buscarTodosTreinosDoUser(userId),
             buscarAvaliacoesAgendaDoUser(userId)
           ]);
 
-          setTreinos(treinosCarregados);
-          setAvaliacoes(avaliacoesCarregadas);
-          await carregarTreinosConcluidos(); // Carrega do AsyncStorage
+          // Lógica de Deduplicação AQUI (garante que IDs de documentos são únicos)
+          const uniqueTreinosMap = new Map();
+          treinosCarregados.forEach(treino => {
+            if (treino.id) {
+              uniqueTreinosMap.set(treino.id, treino);
+            }
+          });
+          const finalTreinos = Array.from(uniqueTreinosMap.values());
+          console.log(`Dados de Treinos Carregados: ${treinosCarregados.length}, Após Deduplicação: ${finalTreinos.length}`);
+
+
+          const uniqueAvaliacoesMap = new Map();
+          avaliacoesCarregadas.forEach(avaliacao => {
+            if (avaliacao.id) {
+              uniqueAvaliacoesMap.set(avaliacao.id, avaliacao);
+            }
+          });
+          const finalAvaliacoes = Array.from(uniqueAvaliacoesMap.values());
+          console.log(`Dados de Avaliações Carregadas: ${avaliacoesCarregadas.length}, Após Deduplicação: ${finalAvaliacoes.length}`);
+          // Fim da Lógica de Deduplicação
+
+          setTreinos(finalTreinos);
+          setAvaliacoes(finalAvaliacoes);
+          await carregarTreinosConcluidos();
 
           console.log('✅ Todos os dados recarregados com sucesso.');
-
+          console.log('Dados de Treinos FINAIS (para TreinosScreen):', finalTreinos.map(t => ({ id: t.id, data: t.data, nome: t.nome })));
+          console.log('Dados de Avaliações FINAIS (para TreinosScreen):', finalAvaliacoes.map(a => ({ id: a.id, data: a.data })));
+          
         } catch (error) {
           console.error('❌ ERRO NO RECARREGAMENTO DE DADOS (useFocusEffect):', error);
           Alert.alert('Erro', `Não foi possível recarregar os dados: ${error.message || 'Erro desconhecido.'}`);
@@ -120,85 +212,240 @@ export default function TreinosScreen() {
         }
       }
       reloadAllData();
-    }, []) // Array de dependências vazio para executar apenas quando a tela for focada
+    }, [])
   );
 
+  // Efeito para rotacionar as frases motivacionais com animação
   useEffect(() => {
-    const indexAleatorio = Math.floor(Math.random() * frasesMotivacionais.length);
-    setFraseMotivacional(frasesMotivacionais[indexAleatorio]);
-  }, []);
+    let phraseIndex = 0;
+
+    const animatePhraseChange = () => {
+      Animated.timing(fadeAnimPhrase, {
+        toValue: 0, // Fade out
+        duration: 500,
+        useNativeDriver: true,
+      }).start(() => {
+        // Após o fade out, atualiza a frase e faz fade in
+        phraseIndex = (phraseIndex + 1) % frasesMotivacionais.length;
+        setFraseMotivacional(frasesMotivacionais[phraseIndex]);
+        Animated.timing(fadeAnimPhrase, {
+          toValue: 1, // Fade in
+          duration: 500,
+          useNativeDriver: true,
+        }).start();
+      });
+    };
+
+    // Define a frase inicial
+    setFraseMotivacional(frasesMotivacionais[phraseIndex]);
+    Animated.timing(fadeAnimPhrase, { toValue: 1, duration: 500, useNativeDriver: true }).start(); // Fade in initial phrase
+
+    const intervalId = setInterval(animatePhraseChange, 7000); // Muda a cada 7 segundos (incluindo tempo de animação)
+
+    return () => clearInterval(intervalId); // Limpa o intervalo ao desmontar o componente
+  }, []); // Dependência vazia para rodar apenas uma vez na montagem
+
+  useEffect(() => {
+    const today = new Date();
+    const startOfCurrentWeek = startOfWeek(today, { weekStartsOn: 1 });
+    const endOfCurrentWeek = endOfWeek(today, { weekStartsOn: 1 });
+
+    const weeklyTreinos = treinos.filter(treino => {
+      if (typeof treino.data === 'string' && treino.data.includes('T')) {
+        const treinoDate = parseISO(treino.data);
+        return isWithinInterval(treinoDate, { start: startOfCurrentWeek, end: endOfCurrentWeek });
+      }
+      return false;
+    });
+
+    let weeklyConcluidoCount = 0;
+    weeklyTreinos.forEach(treino => {
+      const dataStr = treino.data.split('T')[0];
+      // Verifica se o objeto de conclusão existe e se está marcado como concluído
+      if (treinosConcluidos[dataStr] && treinosConcluidos[dataStr].completed) {
+        weeklyConcluidoCount++;
+      }
+    });
+
+    setTreinosTotalSemana(weeklyTreinos.length);
+    setTreinosConcluidosSemana(weeklyConcluidoCount);
+  }, [treinos, treinosConcluidos]);
+
 
   useEffect(() => {
     const marcacoes = {};
+    const todayFormatted = format(new Date(), 'yyyy-MM-dd');
 
-    // Marcação de Treinos
+    console.log('\n--- Gerando Marcações para o Calendário (TreinosScreen) ---');
+    console.log('Treinos a serem processados:', treinos.map(t => ({ id: t.id, data: t.data, nome: t.nome })));
+    console.log('Avaliações a serem processadas:', avaliacoes.map(a => ({ id: a.id, data: a.data })));
+    console.log('Status de Treinos Concluidos (para marcação):', treinosConcluidos);
+    console.log('Data de Hoje Formatada para Comparação:', todayFormatted);
+
+
     treinos.forEach((treino) => {
       if (typeof treino.data === 'string' && treino.data.includes('T')) {
-        const dataStr = treino.data.split('T')[0]; // Pega apenas a parte da data (YYYY-MM-DD)
-        // Usa o estado 'treinosConcluidos' do AsyncStorage
-        const isConcluido = Boolean(treinosConcluidos[dataStr]); 
+        const dataStr = treino.data.split('T')[0];
+        const treinoDate = parseISO(treino.data);
+
+        if (isNaN(treinoDate.getTime())) {
+            console.warn(`⚠️ Data de treino inválida para parseISO: ${treino.data} (ID: ${treino.id})`);
+            return;
+        }
+
+        const treinoDateLocalStartOfDay = new Date(treinoDate.getFullYear(), treinoDate.getMonth(), treinoDate.getDate());
+        const todayLocalStartOfDay = new Date();
+        todayLocalStartOfDay.setHours(0, 0, 0, 0);
+
+        // Acessa o objeto de conclusão para verificar o status
+        const completionDetails = treinosConcluidos[dataStr];
+        const isConcluido = completionDetails ? completionDetails.completed : false;
+
+        const isTodayDate = format(treinoDateLocalStartOfDay, 'yyyy-MM-dd') === format(todayLocalStartOfDay, 'yyyy-MM-dd');
+        const isPastDate = treinoDateLocalStartOfDay < todayLocalStartOfDay;
+        const isFutureDate = treinoDateLocalStartOfDay > todayLocalStartOfDay;
+
+        console.log(`[Marcação Treino] Data: ${dataStr}, Nome: ${treino.nome}, Concluido: ${isConcluido}, Hoje (str): ${isTodayDate}, Passado (date-fns): ${isPastDate}, Futuro (date-fns): ${isFutureDate}`);
+        console.log(`    -> Status Calculado para ${dataStr}: Hoje: ${isTodayDate}, Passado: ${isPastDate}, Futuro: ${isFutureDate}`);
+
+
+        const defaultDayStyle = {
+            container: {
+                backgroundColor: 'transparent',
+                borderRadius: 8,
+                borderColor: STATUS_COLORS.defaultBorder,
+                borderWidth: 1,
+            },
+            text: {
+                color: STATUS_COLORS.defaultText,
+                fontWeight: 'bold',
+            },
+        };
+
+        if (!marcacoes[dataStr]) {
+            marcacoes[dataStr] = {
+                dots: [],
+                marked: true,
+                customStyles: defaultDayStyle,
+            };
+        } else {
+            marcacoes[dataStr] = {
+                ...marcacoes[dataStr],
+                dots: marcacoes[dataStr]?.dots || [],
+                marked: true,
+                customStyles: {
+                    container: { ...marcacoes[dataStr].customStyles?.container, ...defaultDayStyle.container },
+                    text: { ...marcacoes[dataStr].customStyles?.text, ...defaultDayStyle.text },
+                },
+            };
+        }
+
+
+        if (isConcluido) {
+          marcacoes[dataStr].customStyles.container.backgroundColor = STATUS_COLORS.completed;
+          marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.completed;
+          marcacoes[dataStr].customStyles.text.color = '#FFFFFF';
+          if (!marcacoes[dataStr].dots.some(dot => dot.key === 'concluido')) {
+            marcacoes[dataStr].dots.push({ key: 'concluido', color: STATUS_COLORS.completed });
+          }
+          console.log(`    -> Treino ${dataStr}: Concluido (Verde)`);
+        } else if (isTodayDate) {
+          marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.todayPending;
+          marcacoes[dataStr].customStyles.container.borderWidth = 2;
+          marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.todayPending;
+          if (!marcacoes[dataStr].dots.some(dot => dot.key === 'today')) {
+            marcacoes[dataStr].dots.push({ key: 'today', color: STATUS_COLORS.todayPending });
+          }
+          console.log(`    -> Treino ${dataStr}: Hoje Pendente (Borda Azul)`);
+        } else if (isFutureDate) {
+          marcacoes[dataStr].customStyles.container.backgroundColor = STATUS_COLORS.scheduledFuture; // Fundo amarelo/laranja sólido
+          marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.scheduledFuture;
+          marcacoes[dataStr].customStyles.container.borderWidth = 1;
+          marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.selectedDayText; // Texto laranja escuro para contraste
+          if (!marcacoes[dataStr].dots.some(dot => dot.key === 'scheduled')) {
+            marcacoes[dataStr].dots.push({ key: 'scheduled', color: STATUS_COLORS.selectedDayText });
+          }
+          console.log(`    -> Treino ${dataStr}: Futuro Agendado (Fundo Amarelo/Laranja Sólido / Borda Amarelo/Laranja / Texto Laranja Escuro)`);
+        } else if (isPastDate) {
+            marcacoes[dataStr].customStyles.container.backgroundColor = '#FFEBEE';
+            marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.missed;
+            marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.missed;
+            marcacoes[dataStr].customStyles.container.borderWidth = 1;
+            if (!marcacoes[dataStr].dots.some(dot => dot.key === 'missed')) {
+                marcacoes[dataStr].dots.push({ key: 'missed', color: STATUS_COLORS.missed });
+            }
+            console.log(`    -> Treino ${dataStr}: Perdido (Fundo Vermelho Claro/Texto Vermelho)`);
+        }
+      } else {
+        console.warn(`⚠️ Treino com formato de data inválido ou ausente: ${treino.data} (ID: ${treino.id})`);
+      }
+    });
+
+    avaliacoes.forEach((avaliacao) => {
+      if (avaliacao.data && typeof avaliacao.data === 'string') {
+        const dataStr = avaliacao.data;
+        
+        const avaliacaoDate = parseISO(avaliacao.data);
+        if (isNaN(avaliacaoDate.getTime())) {
+            console.warn(`⚠️ Data de avaliação inválida para parseISO: ${avaliacao.data} (ID: ${avaliacao.id})`);
+            return;
+        }
+
+        console.log(`[Marcação Avaliação] Data: ${dataStr}, ID: ${avaliacao.id}`);
 
         marcacoes[dataStr] = {
-          ...marcacoes[dataStr], 
+          ...marcacoes[dataStr],
+          dots: marcacoes[dataStr]?.dots || [],
+          marked: true,
           customStyles: {
             container: {
-              backgroundColor: isConcluido ? '#d1fae5' : '#e0e7ff', 
+              backgroundColor: STATUS_COLORS.evaluation,
               borderRadius: 8,
+              borderColor: STATUS_COLORS.evaluationText,
+              borderWidth: 1,
               ...marcacoes[dataStr]?.customStyles?.container
             },
             text: {
-              color: isConcluido ? '#065f46' : '#1e3a8a', 
+              color: STATUS_COLORS.evaluationText,
               fontWeight: 'bold',
               ...marcacoes[dataStr]?.customStyles?.text
             },
           },
         };
+        if (!marcacoes[dataStr].dots.some(dot => dot.key === 'avaliacao')) {
+          marcacoes[dataStr].dots.push({ key: 'avaliacao', color: STATUS_COLORS.evaluationText });
+        }
+        console.log(`    -> Avaliação ${dataStr}: Marcada (Amarelo Claro)`);
+      } else {
+        console.warn(`⚠️ Avaliação com formato de data inválido ou ausente: ${avaliacao.data} (ID: ${avaliacao.id})`);
       }
     });
 
-    // Marcação de Avaliações
-    avaliacoes.forEach((avaliacao) => {
-      if (avaliacao.data && typeof avaliacao.data === 'string') {
-        const dataStr = avaliacao.data;
-        marcacoes[dataStr] = {
-          ...marcacoes[dataStr], 
-          customStyles: {
-            container: {
-              backgroundColor: '#fde68a', 
-              borderRadius: 8,
-              ...marcacoes[dataStr]?.customStyles?.container 
-            },
-            text: {
-              color: '#92400e', 
-              fontWeight: 'bold',
-              ...marcacoes[dataStr]?.customStyles?.text 
-            },
-          },
-        };
-      }
-    });
-
-    // Marcação da data selecionada (sobrepõe as outras para destaque)
     if (selectedDate) {
+      console.log(`[Marcação Calendário] Dia Selecionado: ${selectedDate}`);
       marcacoes[selectedDate] = {
-        ...marcacoes[selectedDate], 
+        ...marcacoes[selectedDate],
         customStyles: {
-          container: { 
-            backgroundColor: '#facc15', 
+          container: {
+            backgroundColor: STATUS_COLORS.selectedDay,
             borderRadius: 8,
-            ...marcacoes[selectedDate]?.customStyles?.container 
+            borderColor: STATUS_COLORS.selectedDayText,
+            borderWidth: 2,
+            ...marcacoes[selectedDate]?.customStyles?.container
           },
-          text: { 
-            color: '#78350f', 
+          text: {
+            color: STATUS_COLORS.selectedDayText,
             fontWeight: 'bold',
-            ...marcacoes[selectedDate]?.customStyles?.text 
+            ...marcacoes[selectedDate]?.customStyles?.text
           },
         },
       };
     }
 
     setMarkedDates(marcacoes);
-  }, [treinos, treinosConcluidos, avaliacoes, selectedDate]); // Depende de treinosConcluidos
+    console.log('--- Fim da Geração de Marcações ---');
+    console.log('Objeto markedDates final:', JSON.stringify(marcacoes, null, 2));
+  }, [treinos, treinosConcluidos, avaliacoes, selectedDate]);
 
   useEffect(() => {
     if (selectedDate) {
@@ -225,6 +472,10 @@ export default function TreinosScreen() {
 
     setTreinosDoDia(treinosDia);
     setAvaliacoesDoDia(avaliacoesDia);
+
+    console.log(`Dia selecionado: ${day.dateString}`);
+    console.log(`Treinos para ${day.dateString}:`, treinosDia.map(t => ({ id: t.id, nome: t.nome, data: t.data })));
+    console.log(`Avaliações para ${day.dateString}:`, avaliacoesDia.map(a => ({ id: a.id, data: a.data })));
   };
 
   const limparSelecao = () => {
@@ -250,208 +501,308 @@ export default function TreinosScreen() {
     }
   };
 
-  // Função auxiliar para formatar a duração em hh:mm:ss (ainda pode ser útil para exibição)
   const formatDuration = (seconds) => {
-    if (typeof seconds !== 'number' || isNaN(seconds)) return 'N/A';
+    if (typeof seconds !== 'number' || isNaN(seconds) || seconds === 0) return 'N/A';
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
     return [h, m, s]
       .map(v => v < 10 ? '0' + v : v)
-      .filter((v, i) => v !== '00' || i > 0) 
+      .filter((v, i) => v !== '00' || i > 0)
       .join(':');
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container} bounces>
-      <Text style={styles.title}>Meus Treinos</Text>
-
-      <Text style={styles.fraseMotivacional}>{fraseMotivacional}</Text>
-
-      {/* BARRA DE PROGRESSO DE TREINOS CONCLUÍDOS */}
-      <View style={{ marginHorizontal: 20, marginBottom: 20 }}>
-        <Text style={{ fontWeight: '700', marginBottom: 8, color: '#333', fontSize: 16 }}>
-          Treinos concluídos: {Object.keys(treinosConcluidos).length} / {treinos.length}
-        </Text>
-
-        <View
-          style={{
-            height: 20,
-            backgroundColor: '#222',
-            borderRadius: 12,
-            overflow: 'hidden',
-            shadowColor: '#d0a956',
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.7,
-            shadowRadius: 6,
-            elevation: 5,
-          }}
-        >
-          <View
-            style={{
-              height: '100%',
-              backgroundColor: '#fbbf24',
-              width:
-                treinos.length > 0
-                  ? `${((Object.keys(treinosConcluidos).length / treinos.length) * 100).toFixed(0)}%`
-                  : '0%',
-              borderRadius: 12,
-            }}
-          />
+    <View style={styles.fullScreenContainer}>
+      <View style={styles.fixedHeader}>
+        <View style={styles.headerContentRow}> 
+          <View style={styles.headerUserInfo}>
+            <View style={styles.headerAvatar}>
+              <Text style={styles.headerAvatarText}>{userInitial}</Text>
+            </View>
+            <Text style={styles.headerUserName}>{userName}</Text>
+          </View>
+          <Text style={styles.headerAppName}>RisiFit</Text>
         </View>
+        <Animated.Text style={[styles.motivationalPhraseTextFixed, { opacity: fadeAnimPhrase }]}>
+          {fraseMotivacional}
+        </Animated.Text>
       </View>
 
-      {loading ? (
-        <ActivityIndicator size="large" color="#d0a956" style={{ marginVertical: 20 }} />
-      ) : (
-        <>
-          <Calendar
-            onDayPress={onDayPress}
-            markedDates={markedDates}
-            markingType={'custom'}
-            theme={{
-              selectedDayBackgroundColor: '#d0a956',
-              todayTextColor: '#d0a956',
-              arrowColor: '#d0a956',
-              textSectionTitleColor: '#000',
-              monthTextColor: '#000',
-            }}
-            style={styles.calendar}
-          />
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollViewContent}>
 
-          {selectedDate ? (
-            <>
-              <TouchableOpacity style={styles.btnLimpar} onPress={limparSelecao}>
-                <Text style={styles.btnLimparText}>Limpar seleção</Text>
-              </TouchableOpacity>
+        <View style={styles.progressBarContainer}>
+          <Text style={styles.progressText}>
+            Treinos concluídos esta semana: {treinosConcluidosSemana} / {treinosTotalSemana}
+          </Text>
 
-              <Animated.View style={{ opacity: fadeAnim }}>
-                <Text style={styles.subTitle}>
-                  Registos em {format(parseISO(selectedDate), 'dd/MM/yyyy')}:
-                </Text>
+          <View style={styles.progressBarBackground}>
+            <View
+              style={[
+                styles.progressBarFill,
+                {
+                  width:
+                    treinosTotalSemana > 0
+                      ? `${((treinosConcluidosSemana / treinosTotalSemana) * 100).toFixed(0)}%`
+                      : '0%',
+                },
+              ]}
+            />
+          </View>
+        </View>
 
-                {treinosDoDia.length === 0 && avaliacoesDoDia.length === 0 && (
-                  <Text style={styles.noTreinos}>Nenhum registo para este dia.</Text>
-                )}
+        {loading ? (
+          <ActivityIndicator size="large" color="#d0a956" style={{ marginVertical: 20 }} />
+        ) : (
+          <>
+            <Calendar
+              onDayPress={onDayPress}
+              markedDates={markedDates}
+              markingType={'custom'}
+              theme={{
+                selectedDayBackgroundColor: STATUS_COLORS.selectedDay,
+                todayTextColor: STATUS_COLORS.todayPending,
+                arrowColor: STATUS_COLORS.defaultText,
+                textSectionTitleColor: STATUS_COLORS.defaultText,
+                monthTextColor: STATUS_COLORS.defaultText,
+                textDayFontWeight: '500',
+                textMonthFontWeight: 'bold',
+                textDayHeaderFontWeight: 'bold',
+              }}
+              style={styles.calendar}
+            />
 
-                {treinosDoDia.map((treino) => {
-                  // Agora verificamos pelo ID do treino e pela data original
-                  // treinosConcluidos agora usa a data formatada como chave
-                  const isConcluido = Boolean(treinosConcluidos[treino.data.split('T')[0]]);
-                  // Se a duração era guardada no AsyncStorage, teria que ser recuperada daqui.
-                  // Como a sua versão antiga do AsyncStorage guardava apenas um boolean, não temos duração.
-                  // Se precisar, teremos que ajustar o formato no AsyncStorage.
-                  const duracaoTreino = null; // Não disponível se AsyncStorage só guarda boolean
+            {selectedDate ? (
+              <>
+                <TouchableOpacity style={styles.btnLimpar} onPress={limparSelecao}>
+                  <Text style={styles.btnLimparText}>Limpar seleção</Text>
+                </TouchableOpacity>
 
-                  return (
-                    <View key={treino.id} style={[styles.treinoBox, isConcluido && styles.treinoConcluidoBox]}>
-                      <View style={styles.treinoHeader}>
-                        {getIconByCategoria(treino.categoria)}
-                        <Text style={[styles.treinoNome, isConcluido && styles.treinoNomeConcluido]}>
-                          {treino.nome}{' '}
-                          {isConcluido && (
-                            <AnimatedCheckIcon />
-                          )}
+                <Animated.View style={{ opacity: fadeAnim }}>
+                  <Text style={styles.subTitle}>
+                    Registos em {format(parseISO(selectedDate), 'dd/MM/yyyy')}:
+                  </Text>
+
+                  {treinosDoDia.length === 0 && avaliacoesDoDia.length === 0 && (
+                    <Text style={styles.noTreinos}>Nenhum registo para este dia.</Text>
+                  )}
+
+                  {treinosDoDia.map((treino) => {
+                    const completionDetails = treinosConcluidos[treino.data.split('T')[0]];
+                    const isConcluido = completionDetails ? completionDetails.completed : false;
+                    const duracaoTreino = completionDetails ? completionDetails.duration : null;
+
+                    const treinoDateTime = parseISO(treino.data);
+                    const now = new Date();
+                    const isFutureTrainingSession = treinoDateTime > now; 
+
+                    return (
+                      <View key={treino.id} style={[styles.treinoBox, isConcluido && styles.treinoConcluidoBox]}>
+                        <View style={styles.treinoHeader}>
+                          {getIconByCategoria(treino.categoria)}
+                          <Text style={[styles.treinoNome, isConcluido && styles.treinoNomeConcluido]}>
+                            {treino.nome}
+                            {isConcluido && (
+                              <Text>
+                                {' '}
+                                <AnimatedCheckIcon />
+                              </Text>
+                            )}
+                            {!isConcluido && isFutureTrainingSession && (
+                              <MaterialCommunityIcons name="calendar-clock" size={18} color={STATUS_COLORS.scheduledFuture} style={{ marginLeft: 5 }} />
+                            )}
+                          </Text>
+                        </View>
+                        <Text style={styles.treinoCategoria}>
+                          Categoria: {treino.categoria}
                         </Text>
+                        
+                        {!isFutureTrainingSession && (
+                          <>
+                            <Text style={styles.treinoDescricao}>{treino.descricao}</Text>
+                            {treino.exercicios?.length > 0 && (
+                              <>
+                                <Text style={styles.exerciciosTitle}>Exercícios:</Text>
+                                {treino.exercicios.map((ex, idx) => (
+                                  <Text key={idx} style={styles.exercicioItem}>
+                                    • {ex.nome} — {ex.tipo === 'reps' ? 'Repetições' : 'Tempo'}: {ex.valor}
+                                  </Text>
+                                ))}
+                              </>
+                            )}
+                          </>
+                        )}
+
+                        <Text style={styles.treinoHora}>
+                          Hora:{' '}
+                          {new Date(treino.data).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </Text>
+
+                        {isConcluido && (duracaoTreino !== null && duracaoTreino !== 0) && (
+                          <Text style={styles.treinoDuracao}>
+                            Duração: {formatDuration(duracaoTreino)}
+                          </Text>
+                        )}
+
+                        {!isConcluido && !isFutureTrainingSession && (
+                          <TouchableOpacity
+                            style={styles.btnIniciar}
+                            onPress={() => navigation.navigate('ExecucaoTreinoScreen', { treino })}
+                          >
+                            <Text style={styles.btnIniciarText}>Iniciar Treino</Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
-                      <Text style={styles.treinoCategoria}>
-                        Categoria: {treino.categoria}
+                    );
+                  })}
+
+                  {avaliacoesDoDia.map((avaliacao) => (
+                    <View
+                      key={avaliacao.id}
+                      style={[styles.treinoBox, { borderColor: STATUS_COLORS.evaluationText }]}
+                    >
+                      <Text style={[styles.treinoNome, { color: STATUS_COLORS.evaluationText }]}>
+                        📋 Avaliação Física
                       </Text>
-                      <Text style={styles.treinoDescricao}>{treino.descricao}</Text>
-
-                      {treino.exercicios?.length > 0 && (
-                        <>
-                          <Text style={styles.exerciciosTitle}>Exercícios:</Text>
-                          {treino.exercicios.map((ex, idx) => (
-                            <Text key={idx} style={styles.exercicioItem}>
-                              • {ex.nome} — {ex.tipo === 'reps' ? 'Repetições' : 'Tempo'}: {ex.valor}
-                            </Text>
-                          ))}
-                        </>
-                      )}
-
+                      <Text style={styles.treinoDescricao}>
+                        {avaliacao.texto || avaliacao.observacoes || 'Sem detalhes.'}
+                      </Text>
                       <Text style={styles.treinoHora}>
-                        Hora:{' '}
-                        {new Date(treino.data).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                        Hora: {avaliacao.hora || 'Não informada'}
                       </Text>
-
-                      {isConcluido && duracaoTreino && ( // A duração não estará disponível com seu formato antigo de AsyncStorage
-                        <Text style={styles.treinoDuracao}>
-                          Duração: {formatDuration(duracaoTreino)}
-                        </Text>
-                      )}
-
-                      {/* O botão "Iniciar Treino" só aparece se o treino NÃO estiver concluído */}
-                      {!isConcluido && (
-                        <TouchableOpacity
-                          style={styles.btnIniciar}
-                          // IMPORTANTE: Nome da tela de navegação consistente
-                          onPress={() => navigation.navigate('ExecucaoTreinoScreen', { treino })} 
-                        >
-                          <Text style={styles.btnIniciarText}>Iniciar Treino</Text>
-                        </TouchableOpacity>
-                      )}
                     </View>
-                  );
-                })}
-
-                {avaliacoesDoDia.map((avaliacao) => (
-                  <View
-                    key={avaliacao.id}
-                    style={[styles.treinoBox, { borderColor: '#fbbf24' }]}
-                  >
-                    <Text style={[styles.treinoNome, { color: '#92400e' }]}>
-                      📋 Avaliação Física
-                    </Text>
-                    <Text style={styles.treinoDescricao}>
-                      {avaliacao.texto || avaliacao.observacoes || 'Sem detalhes.'}
-                    </Text>
-                    <Text style={styles.treinoHora}>
-                      Hora: {avaliacao.hora || 'Não informada'}
-                    </Text>
-                  </View>
-                ))}
-              </Animated.View>
-            </>
-          ) : (
-            <Text style={styles.selecioneData}>
-              Selecione uma data no calendário para ver os registos.
-            </Text>
-          )}
-        </>
-      )}
-    </ScrollView>
+                  ))}
+                </Animated.View>
+              </>
+            ) : (
+              <Text style={styles.selecioneData}>
+                Selecione uma data no calendário para ver os registos.
+              </Text>
+            )}
+          </>
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 20,
+  fullScreenContainer: {
+    flex: 1,
     backgroundColor: '#f9fafb',
-    paddingBottom: 50,
-    minHeight: '100%',
+  },
+  // ESTILO DA BARRA FIXA (ALTURA E LAYOUT AJUSTADOS)
+  fixedHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: FIXED_HEADER_HEIGHT, // Altura ajustada
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 40 : 20,
+    backgroundColor: '#007bff',
+    flexDirection: 'column', // Alterado para coluna para empilhar conteúdo
+    alignItems: 'flex-start', // Alinha o conteúdo ao início (esquerda)
+    justifyContent: 'flex-start', // Alinha o conteúdo ao topo
+    borderBottomLeftRadius: 15,
+    borderBottomRightRadius: 15,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    zIndex: 10,
+  },
+  headerContentRow: { // NOVO: Linha para organizar avatar/nome e appName
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%', // Ocupa a largura total do cabeçalho
+    marginBottom: 5, // Espaçamento entre esta linha e a frase motivacional
+  },
+  headerUserInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  headerAvatarText: {
+    color: '#007bff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  headerUserName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  headerAppName: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  motivationalPhraseTextFixed: { // NOVO: Estilo para a frase motivacional na barra fixa
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.8)',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    width: '100%', // Garante que a frase ocupe a largura total para centralização
+    // Não precisa de marginTop aqui, pois o marginBottom de headerContentRow já dá espaçamento
+  },
+  // Ajuste para o conteúdo da ScrollView para começar abaixo do cabeçalho fixo
+  scrollViewContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    backgroundColor: '#f9fafb',
+    paddingTop: FIXED_HEADER_HEIGHT + 15, // Ajuste do padding de acordo com a nova altura
+  },
+  scrollView: {
+    flex: 1,
   },
   calendar: {
     borderRadius: 8,
     elevation: 3,
     marginBottom: 25,
+    backgroundColor: '#fff',
   },
-  title: {
-    fontSize: 28,
+  // O estilo 'fraseMotivacional' original foi removido pois a frase agora está no cabeçalho fixo
+  // fraseMotivacional: { ... },
+  progressBarContainer: {
+    marginHorizontal: 0,
+    marginBottom: 20,
+    marginTop: 10,
+  },
+  progressText: {
     fontWeight: '700',
-    color: '#d0a956',
-    marginBottom: 15,
-    textAlign: 'center',
+    marginBottom: 8,
+    color: '#333',
+    fontSize: 16,
   },
-  fraseMotivacional: {
-    fontSize: 18,
-    fontStyle: 'italic',
-    color: '#4b5563',
-    textAlign: 'center',
-    marginBottom: 15,
+  progressBarBackground: {
+    height: 20,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 12,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#fbbf24',
+    borderRadius: 12,
   },
   subTitle: {
     fontSize: 20,
@@ -463,6 +814,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     color: '#6b7280',
     textAlign: 'center',
+    marginTop: 10,
   },
   selecioneData: {
     textAlign: 'center',
@@ -475,12 +827,17 @@ const styles = StyleSheet.create({
     padding: 18,
     borderRadius: 12,
     marginBottom: 18,
-    borderColor: '#000',
-    borderWidth: 3,
+    borderColor: '#e5e7eb',
+    borderWidth: 1,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
   },
   treinoConcluidoBox: {
-    borderColor: '#10b981', // Borda verde para treinos concluídos
-    backgroundColor: '#e6ffe6', // Fundo mais claro para treinos concluídos
+    borderColor: STATUS_COLORS.completed,
+    backgroundColor: '#d1fae5',
   },
   treinoHeader: {
     flexDirection: 'row',
@@ -494,7 +851,7 @@ const styles = StyleSheet.create({
     color: '#1e293b',
   },
   treinoNomeConcluido: {
-    color: '#065f46', // Cor do texto para treinos concluídos
+    color: STATUS_COLORS.completed,
   },
   treinoCategoria: {
     fontWeight: '700',
@@ -544,10 +901,27 @@ const styles = StyleSheet.create({
   btnLimpar: {
     alignSelf: 'center',
     marginVertical: 12,
+    backgroundColor: '#fef3c7',
+    paddingVertical: 8,
+    paddingHorizontal: 15,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: STATUS_COLORS.selectedDay,
   },
   btnLimparText: {
-    color: '#d0a956',
+    color: STATUS_COLORS.selectedDayText,
     fontWeight: '600',
+    fontSize: 15,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+  },
+  loadingText: {
+    marginTop: 10,
     fontSize: 16,
+    color: '#6b7280',
   },
 });

@@ -5,7 +5,7 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
+  Alert, // Já importado, mas reforço o uso
   Platform,
   ScrollView,
   Switch,
@@ -14,7 +14,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc, collection, getDocs } from 'firebase/firestore';
-import { auth, db } from '../../services/firebaseConfig';
+import { auth, db } from '../../services/firebaseConfig'; // Verifique o caminho para firebaseConfig
 import { Picker } from '@react-native-picker/picker';
 
 // Lista abrangente de códigos de país (mantida do último update)
@@ -31,7 +31,7 @@ const countryCodes = [
   { label: '🇦🇿 Azerbaijão (+994)', value: '+994' },
   { label: '🇧🇸 Bahamas (+1-242)', value: '+1-242' },
   { label: '🇧🇭 Barém (+973)', value: '+973' },
-  { label: '🇧🇩 Bangladesh (+880)', value: '+880' },
+  { label: '�🇩 Bangladesh (+880)', value: '+880' },
   { label: '🇧🇧 Barbados (+1-246)', value: '+1-246' },
   { label: '🇧🇾 Bielorrússia (+375)', value: '+375' },
   { label: '🇧🇪 Bélgica (+32)', value: '+32' },
@@ -80,7 +80,7 @@ const countryCodes = [
   { label: '🇫🇷 França (+33)', value: '+33' },
   { label: '🇬🇦 Gabão (+241)', value: '+241' },
   { label: '🇬🇲 Gâmbia (+220)', value: '+220' },
-  { label: '�🇪 Geórgia (+995)', value: '+995' },
+  { label: '🇬🇪 Geórgia (+995)', value: '+995' },
   { label: '🇩🇪 Alemanha (+49)', value: '+49' },
   { label: '🇬🇭 Gana (+233)', value: '+233' },
   { label: '🇬🇷 Grécia (+30)', value: '+30' },
@@ -216,11 +216,11 @@ export default function RegistoClienteScreen({ navigation }) {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [genero, setGenero] = useState(null);
   const [grupo, setGrupo] = useState(null);
-  const [enviarAcesso, setEnviarAcesso] = useState(true);
+  const [enviarAcesso, setEnviarAcesso] = useState(true); // Estado para o switch de envio de acesso
   const [enviarAnamnese, setEnviarAnamnese] = useState(null);
   const [tipoAnamneseId, setTipoAnamneseId] = useState(null);
   const [availableQuestionarios, setAvailableQuestionarios] = useState([]);
-  const [loadingQuestionarios, setLoadingQuestionarios] = useState(true); // Novo estado de loading
+  const [loadingQuestionarios, setLoadingQuestionarios] = useState(true);
 
   useEffect(() => {
     const fetchQuestionarios = async () => {
@@ -292,18 +292,61 @@ export default function RegistoClienteScreen({ navigation }) {
         dataNascimento: dataNascimento ? formatDate(dataNascimento) : '',
         genero: genero,
         grupo: grupo,
-        enviarAcesso: enviarAcesso,
+        enviarAcesso: enviarAcesso, // Salva o estado do switch no Firestore
         enviarAnamnese: enviarAnamnese,
         tipoAnamneseId: enviarAnamnese === 'Sim' ? tipoAnamneseId : null,
         adminId: adminId,
         criadoEm: new Date().toISOString(),
       });
 
-      Alert.alert('Sucesso', 'Cliente registado com sucesso!');
-      navigation.goBack();
+      // =====================================================================
+      // INÍCIO DA NOVA LÓGICA: CHAMADA AO SERVIDOR BACKEND PARA ENVIO DE E-MAIL
+      // =====================================================================
+      if (enviarAcesso) {
+        // ATENÇÃO: Para testes em dispositivo físico, 'localhost' não funcionará.
+        // Use o IP da sua máquina de desenvolvimento (ex: 'http://192.168.1.100:3000')
+        // Em produção, use o URL do seu servidor backend hospedado (ex: 'https://api.seusite.com')
+        const backendApiUrl = 'http://192.168.1.223:3000';
+
+        try {
+          const response = await fetch(`${backendApiUrl}/register-and-send-email`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              email: email,
+              password: senha, // ATENÇÃO: Enviar a senha assim por HTTP não é seguro!
+                               // Considere enviar uma senha temporária gerada pelo backend,
+                               // ou um link de redefinição de senha.
+              clientName: nome
+            })
+          });
+
+          const data = await response.json();
+
+          if (response.ok) {
+            Alert.alert('Sucesso', 'Cliente registado e email de acesso enviado com sucesso!');
+            console.log('Email enviado com sucesso via backend:', data.message);
+          } else {
+            Alert.alert('Erro no Envio de Email', `Falha ao enviar email de acesso: ${data.message || 'Erro desconhecido'}`);
+            console.error('Erro ao enviar email via backend:', data.message, data.error);
+          }
+        } catch (emailError) {
+          Alert.alert('Erro de Conexão', 'Não foi possível conectar ao servidor de email. Verifique sua conexão ou o status do servidor.');
+          console.error('Erro de rede ao chamar o backend de email:', emailError);
+        }
+      } else {
+        Alert.alert('Sucesso', 'Cliente registado com sucesso!');
+      }
+      // =====================================================================
+      // FIM DA NOVA LÓGICA
+      // =====================================================================
+
+      navigation.goBack(); // Volta para a tela anterior após o registo (e tentativa de envio de email)
     } catch (error) {
-      console.error('Erro ao registar cliente:', error);
-      Alert.alert('Erro', error.message);
+      console.error('Erro ao registar cliente no Firebase:', error);
+      Alert.alert('Erro no Registo', error.message);
     }
   };
 

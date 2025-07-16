@@ -333,7 +333,7 @@ export default function HomeScreen() {
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Resumo Rápido</Text>
                     <View style={styles.statsContainer}>
-                        <StatItem value={stats.newClients} label="Novos Clientes" icon="person-add-outline" />
+                        <StatItem value={stats.newClients} label="Meus Clientes" icon="person-add-outline" />
                         <StatItem value={stats.trainingsToday} label="Treinos Hoje" icon="barbell-outline" />
                         <StatItem value={stats.unreadMessages} label="Mensagens Novas" icon="chatbubbles-outline" isUnread={stats.unreadMessages > 0} />
                         <StatItem value={stats.pendingEvaluations} label="Aval. Pendentes" icon="document-text-outline" />
@@ -352,7 +352,7 @@ export default function HomeScreen() {
                         <ActionButton icon="person-add-outline" text="Novo Cliente" onPress={() => navigation.navigate('CadastroCliente')} />
                         <ActionButton icon="clipboard-outline" text="Criar Avaliação" onPress={() => navigation.navigate('CriarAvaliacao')} />
                         <ActionButton icon="calendar-outline" text="Ver Agenda" onPress={() => navigation.navigate('Agenda')} />
-                        <ActionButton icon="people-outline" text="Gerir Clientes" onPress={() => navigation.navigate('GerirClientes')} />
+                        <ActionButton icon="people-outline" text="Gerir Clientes" onPress={() => navigation.navigate('Clientes')} />
                         <ActionButton icon="chatbubbles-outline" text="Chat Online" onPress={() => navigation.navigate('Chat Online')} />
                         {/* NOVO BOTÃO PARA O HISTÓRICO DE TREINOS CONCLUÍDOS */}
                         <ActionButton icon="checkmark-done-circle-outline" text="Histórico Treinos" onPress={() => navigation.navigate('CompletedTrainingsHistory')} />

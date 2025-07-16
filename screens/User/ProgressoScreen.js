@@ -7,10 +7,11 @@ import {
   Dimensions,
   StyleSheet,
   ActivityIndicator,
+  Platform, // Importado para Platform.OS
 } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { AntDesign } from '@expo/vector-icons';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore'; // Adicionado doc, getDoc
 import { auth, db } from '../../services/firebaseConfig';
 import Animated, { Layout, FadeIn, FadeOut } from 'react-native-reanimated';
 
@@ -45,15 +46,35 @@ const categorias = {
 
 const formatDate = (date) => new Date(date).toLocaleDateString();
 
+// Altura da barra fixa do cabeçalho
+const FIXED_HEADER_HEIGHT = Platform.OS === 'android' ? 90 : 80;
+
 const ProgressoScreen = () => {
   const [avaliacoes, setAvaliacoes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCategorias, setExpandedCategorias] = useState({});
+  const [userName, setUserName] = useState(''); // Estado para o nome do utilizador
+  const [userInitial, setUserInitial] = useState(''); // Estado para a inicial do utilizador
 
   useEffect(() => {
-    const fetchAvaliacoes = async () => {
+    const fetchUserDataAndAvaliacoes = async () => {
       setLoading(true);
       try {
+        // 1. Buscar dados do utilizador para o cabeçalho
+        if (auth.currentUser) {
+          const userDocRef = doc(db, 'users', auth.currentUser.uid);
+          const userDocSnap = await getDoc(userDocRef);
+          if (userDocSnap.exists()) {
+            const userData = userDocSnap.data();
+            setUserName(userData.name || 'Utilizador');
+            setUserInitial(userData.name ? userData.name.charAt(0).toUpperCase() : 'U');
+          } else {
+            setUserName('Utilizador');
+            setUserInitial('U');
+          }
+        }
+
+        // 2. Buscar avaliações
         const q = query(
           collection(db, 'avaliacoesFisicas'),
           where('clienteId', '==', auth.currentUser.uid)
@@ -78,13 +99,13 @@ const ProgressoScreen = () => {
 
         setAvaliacoes(dados);
       } catch (error) {
-        console.error('Erro ao buscar avaliações:', error);
+        console.error('Erro ao buscar dados ou avaliações:', error);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchAvaliacoes();
+    fetchUserDataAndAvaliacoes();
   }, []);
 
   const avaliacoesProcessadas = useMemo(() => {
@@ -205,35 +226,109 @@ const ProgressoScreen = () => {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Progresso Físico</Text>
+    <View style={styles.fullScreenContainer}>
+      {/* Cabeçalho Fixo (Barra Fixa) */}
+      <View style={styles.fixedHeader}>
+        <View style={styles.headerUserInfo}>
+          <View style={styles.headerAvatar}>
+            <Text style={styles.headerAvatarText}>{userInitial}</Text>
+          </View>
+          <Text style={styles.headerUserName}>{userName}</Text>
+        </View>
+        <Text style={styles.headerAppName}>RisiFit</Text>
+      </View>
 
-      {loading ? (
-        <ActivityIndicator size="large" color="#d0a956" style={{ marginTop: 40 }} />
-      ) : avaliacoesProcessadas.length === 0 ? (
-        <Text style={{ textAlign: 'center', color: '#6b7280', fontStyle: 'italic' }}>
-          Nenhuma avaliação disponível.
-        </Text>
-      ) : (
-        Object.entries(categorias).map(([categoria, itens]) => (
-          <CategoriaSection
-            key={categoria}
-            categoria={categoria}
-            itens={itens}
-            expanded={expandedCategorias[categoria]}
-            toggle={toggleCategoria}
-            avaliacoes={avaliacoesProcessadas}
-          />
-        ))
-      )}
-    </ScrollView>
+      <ScrollView contentContainerStyle={styles.scrollViewContent}>
+        <Text style={styles.title}>Progresso Físico</Text>
+
+        {loading ? (
+          <ActivityIndicator size="large" color="#d0a956" style={{ marginTop: 40 }} />
+        ) : avaliacoesProcessadas.length === 0 ? (
+          <Text style={{ textAlign: 'center', color: '#6b7280', fontStyle: 'italic' }}>
+            Nenhuma avaliação disponível.
+          </Text>
+        ) : (
+          Object.entries(categorias).map(([categoria, itens]) => (
+            <CategoriaSection
+              key={categoria}
+              categoria={categoria}
+              itens={itens}
+              expanded={expandedCategorias[categoria]}
+              toggle={toggleCategoria}
+              avaliacoes={avaliacoesProcessadas}
+            />
+          ))
+        )}
+      </ScrollView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 20,
-    paddingBottom: 60,
+  fullScreenContainer: {
+    flex: 1,
+    backgroundColor: '#f9fafb',
+  },
+  // ESTILO DA BARRA FIXA
+  fixedHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: FIXED_HEADER_HEIGHT,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 40 : 20, // Ajuste para Android para status bar
+    backgroundColor: '#007bff', // Cor de fundo azul
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomLeftRadius: 15, // Arredondamento nas bordas inferiores
+    borderBottomRightRadius: 15,
+    elevation: 5, // Sombra para Android
+    shadowColor: '#000', // Sombra para iOS
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    zIndex: 10, // Garante que fique acima do conteúdo que rola
+  },
+  headerUserInfo: { // Estilo para agrupar avatar e nome do user
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerAvatar: { // Estilo para o avatar na barra fixa
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  headerAvatarText: { // Estilo para o texto do avatar na barra fixa
+    color: '#007bff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  headerUserName: { // Estilo para o nome do user na barra fixa
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  headerAppName: { // Estilo para o nome da app na barra fixa
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff', // Cor do texto da app
+  },
+  // Ajuste para o conteúdo da ScrollView para começar abaixo do cabeçalho fixo
+  scrollViewContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 60, // Mantenha o paddingBottom original
+    backgroundColor: '#f9fafb',
+    paddingTop: FIXED_HEADER_HEIGHT + 20, // Adiciona padding para o cabeçalho fixo + um pouco mais
+  },
+  container: { // O estilo 'container' original foi ajustado para ser o contentContainerStyle da ScrollView
+    // padding: 20, // Já definido em scrollViewContent
+    // paddingBottom: 60, // Já definido em scrollViewContent
     backgroundColor: '#f9fafb',
   },
   title: {
@@ -242,6 +337,7 @@ const styles = StyleSheet.create({
     marginBottom: 30,
     color: '#000',
     textAlign: 'center',
+    marginTop: 0, // Removido marginTop extra, já que paddingTop do scrollViewContent já lida com isso
   },
   categoryContainer: {
     marginBottom: 28,

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebaseConfig';
-import { MaterialIcons } from '@expo/vector-icons'; // se usar Expo, ou troque o pacote de ícones
+import { MaterialIcons } from '@expo/vector-icons'; // Certifique-se de que este pacote está instalado no seu projeto Expo
 
 export default function FichaClienteScreen({ route }) {
   const { clienteId } = route.params;
@@ -32,7 +32,7 @@ export default function FichaClienteScreen({ route }) {
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#22c55e" />
+        <ActivityIndicator size="large" color="#d0a956" />
       </View>
     );
   }
@@ -45,17 +45,37 @@ export default function FichaClienteScreen({ route }) {
     );
   }
 
-  // Função para formatar data (caso esteja em Timestamp do Firestore)
+  // Função para formatar data (caso esteja em Timestamp do Firestore ou ISO string)
   const formatarData = (data) => {
     if (!data) return 'Não informado';
-    if (data.seconds) return new Date(data.seconds * 1000).toLocaleDateString();
+    // Se for um objeto Timestamp do Firestore
+    if (data.seconds) {
+      return new Date(data.seconds * 1000).toLocaleDateString('pt-PT');
+    }
+    // Se for uma string ISO (como criadoEm)
+    if (typeof data === 'string' && data.includes('T') && data.includes('Z')) {
+      return new Date(data).toLocaleDateString('pt-PT');
+    }
+    // Se já estiver no formato DD/MM/YYYY (como dataNascimento)
     return data;
+  };
+
+  // Função para exibir Sim/Não ou ícone para booleanos/strings
+  const formatarSimNao = (valor) => {
+    if (valor === true || valor === 'Sim') {
+      return <MaterialIcons name="check-circle" size={20} color="#22c55e" />;
+    }
+    if (valor === false || valor === 'Não') {
+      return <MaterialIcons name="cancel" size={20} color="#ef4444" />;
+    }
+    return <Text style={styles.value}>Não informado</Text>;
   };
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Ficha do Cliente</Text>
 
+      {/* Nome Completo */}
       <View style={styles.card}>
         <View style={styles.item}>
           <MaterialIcons name="person" size={24} color="#d0a956" />
@@ -64,6 +84,7 @@ export default function FichaClienteScreen({ route }) {
         <Text style={styles.value}>{cliente.name || 'Não informado'}</Text>
       </View>
 
+      {/* E-mail */}
       <View style={styles.card}>
         <View style={styles.item}>
           <MaterialIcons name="email" size={24} color="#d0a956" />
@@ -72,14 +93,16 @@ export default function FichaClienteScreen({ route }) {
         <Text style={styles.value}>{cliente.email || 'Não informado'}</Text>
       </View>
 
+      {/* Telefone Completo (Atualizado para usar 'telefoneCompleto') */}
       <View style={styles.card}>
         <View style={styles.item}>
           <MaterialIcons name="phone" size={24} color="#d0a956" />
           <Text style={styles.label}>Telefone</Text>
         </View>
-        <Text style={styles.value}>{cliente.telefone || 'Não informado'}</Text>
+        <Text style={styles.value}>{cliente.telefoneCompleto || 'Não informado'}</Text>
       </View>
 
+      {/* Data de Nascimento */}
       <View style={styles.card}>
         <View style={styles.item}>
           <MaterialIcons name="cake" size={24} color="#d0a956" />
@@ -87,6 +110,67 @@ export default function FichaClienteScreen({ route }) {
         </View>
         <Text style={styles.value}>{formatarData(cliente.dataNascimento)}</Text>
       </View>
+
+      {/* Gênero */}
+      <View style={styles.card}>
+        <View style={styles.item}>
+          <MaterialIcons name="wc" size={24} color="#d0a956" />
+          <Text style={styles.label}>Gênero</Text>
+        </View>
+        <Text style={styles.value}>{cliente.genero || 'Não informado'}</Text>
+      </View>
+
+      {/* Grupo */}
+      <View style={styles.card}>
+        <View style={styles.item}>
+          <MaterialIcons name="group" size={24} color="#d0a956" />
+          <Text style={styles.label}>Grupo</Text>
+        </View>
+        <Text style={styles.value}>{cliente.grupo || 'Não informado'}</Text>
+      </View>
+
+      {/* Criado Em */}
+      <View style={styles.card}>
+        <View style={styles.item}>
+          <MaterialIcons name="event" size={24} color="#d0a956" />
+          <Text style={styles.label}>Criado Em</Text>
+        </View>
+        <Text style={styles.value}>{formatarData(cliente.criadoEm)}</Text>
+      </View>
+
+      {/* Enviar Informações de Acesso */}
+      <View style={styles.card}>
+        <View style={styles.item}>
+          <MaterialIcons name="mail" size={24} color="#d0a956" />
+          <Text style={styles.label}>Enviar Acesso por Email</Text>
+        </View>
+        <View style={styles.valueContainer}>
+          {formatarSimNao(cliente.enviarAcesso)}
+        </View>
+      </View>
+
+      {/* Enviar Anamnese */}
+      <View style={styles.card}>
+        <View style={styles.item}>
+          <MaterialIcons name="assignment" size={24} color="#d0a956" />
+          <Text style={styles.label}>Enviar Anamnese</Text>
+        </View>
+        <View style={styles.valueContainer}>
+          {formatarSimNao(cliente.enviarAnamnese)}
+        </View>
+      </View>
+
+      {/* Tipo de Anamnese (condicional) */}
+      {cliente.enviarAnamnese === 'Sim' && cliente.tipoAnamneseId && (
+        <View style={styles.card}>
+          <View style={styles.item}>
+            <MaterialIcons name="description" size={24} color="#d0a956" />
+            <Text style={styles.label}>Tipo de Anamnese</Text>
+          </View>
+          <Text style={styles.value}>{cliente.tipoAnamneseId || 'Não informado'}</Text>
+        </View>
+      )}
+
     </ScrollView>
   );
 }
@@ -94,7 +178,7 @@ export default function FichaClienteScreen({ route }) {
 const styles = StyleSheet.create({
   container: {
     padding: 20,
-    backgroundColor: '#d0a956',
+    backgroundColor: '#f9fafb', // Cor de fundo mais neutra para o container
     flexGrow: 1,
   },
   center: {
@@ -135,10 +219,13 @@ const styles = StyleSheet.create({
   value: {
     fontSize: 17,
     color: '#374151',
-    paddingLeft: 32,
+    paddingLeft: 32, // Alinha o valor abaixo do ícone
+  },
+  valueContainer: {
+    paddingLeft: 32, // Alinha o ícone de Sim/Não
   },
   errorText: {
     fontSize: 18,
-    color: '#111827',
+    color: '#ef4444', // Cor de erro
   },
 });

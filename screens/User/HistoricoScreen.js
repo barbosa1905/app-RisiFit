@@ -6,6 +6,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  Platform, // Importado para Platform.OS
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import { format, parse, isValid, parseISO } from 'date-fns'; 
@@ -13,14 +14,21 @@ import { pt } from 'date-fns/locale';
 import { enUS } from 'date-fns/locale'; 
 
 // Importações do Firebase
-import { getFirestore, collection, query, where, getDocs } from 'firebase/firestore'; 
+import { getFirestore, collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore'; // Adicionado doc, getDoc
 import { getUserIdLoggedIn } from '../../services/authService'; 
+import { auth } from '../../services/firebaseConfig'; // Importar auth para obter o currentUser
+
+// Altura da barra fixa do cabeçalho
+const FIXED_HEADER_HEIGHT = Platform.OS === 'android' ? 90 : 80;
 
 export default function HistoricoScreen() {
   const [historico, setHistorico] = useState([]); 
   const [loading, setLoading] = useState(true);
   const [filtroMes, setFiltroMes] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('');
+
+  const [userName, setUserName] = useState(''); // Estado para o nome do utilizador
+  const [userInitial, setUserInitial] = useState(''); // Estado para a inicial do utilizador
 
   const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
@@ -105,10 +113,25 @@ export default function HistoricoScreen() {
           return;
         }
 
-        const db = getFirestore();
+        const dbFirestore = getFirestore(); // Renomeado para evitar conflito com 'db' importado
+
+        // 1. Buscar dados do utilizador logado para o cabeçalho
+        if (auth.currentUser) {
+          const userDocRef = doc(dbFirestore, 'users', auth.currentUser.uid);
+          const userDocSnap = await getDoc(userDocRef);
+          if (userDocSnap.exists()) {
+            const userData = userDocSnap.data();
+            setUserName(userData.name || 'Utilizador');
+            setUserInitial(userData.name ? userData.name.charAt(0).toUpperCase() : 'U');
+          } else {
+            setUserName('Utilizador');
+            setUserInitial('U');
+          }
+        }
+
 
         const collectionName = 'historicoTreinos'; // Nome da coleção sem acento
-        const historicoRef = collection(db, collectionName); 
+        const historicoRef = collection(dbFirestore, collectionName); 
         console.log('Caminho da coleção Firestore sendo usado:', historicoRef.path);
         
         const userIdFieldName = 'userId'; // Nome do campo do UserID em minúsculas
@@ -146,7 +169,7 @@ export default function HistoricoScreen() {
               treinoId: data.treinoId || data['ID do treino'], 
             });
           } else {
-             console.warn("Documento de histórico ignorado (data inválida ou não parseável):", doc.id, data);
+              console.warn("Documento de histórico ignorado (data inválida ou não parseável):", doc.id, data);
           }
         });
 
@@ -219,106 +242,180 @@ export default function HistoricoScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Histórico de Treinos</Text>
-
-      <View style={styles.estatisticasBox}>
-        <View style={styles.estatisticaItem}>
-          <Text style={styles.estatisticaIcon}>📅</Text>
-          <Text style={styles.estatisticaTexto}>
-            <Text style={styles.valor}>{totalTreinos}</Text> treinos concluídos
-          </Text>
+    <View style={styles.fullScreenContainer}> 
+      
+      <View style={styles.fixedHeader}>
+        <View style={styles.headerUserInfo}>
+          <View style={styles.headerAvatar}>
+            <Text style={styles.headerAvatarText}>{userInitial}</Text>
+          </View>
+          <Text style={styles.headerUserName}>{userName}</Text>
         </View>
-        <View style={styles.estatisticaItem}>
-          <Text style={styles.estatisticaIcon}>⏱️</Text>
-          <Text style={styles.estatisticaTexto}>
-            <Text style={styles.valor}>{tempoTotal}</Text> acumulado
-          </Text>
-        </View>
+        <Text style={styles.headerAppName}>RisiFit</Text>
       </View>
 
-      <View style={styles.filtrosContainer}>
-        <View style={styles.filtroBox}>
-          <Text style={styles.filtroLabel}>Mês:</Text>
-          <Picker
-            selectedValue={filtroMes}
-            onValueChange={(value) => setFiltroMes(value)}
-            style={styles.picker}
-            dropdownIconColor="#d0a956"
-          >
-            <Picker.Item label="Todos" value="" />
-            {mesesDisponiveis.map((mes) => (
-              <Picker.Item
-                key={mes}
-                label={format(parseISO(mes + '-01'), 'MMMM yyyy', { locale: pt })} 
-                value={mes}
-              />
-            ))}
-          </Picker>
+      <ScrollView contentContainerStyle={styles.scrollViewContent}>
+        <Text style={styles.title}>Histórico de Treinos</Text>
+
+        <View style={styles.estatisticasBox}>
+          <View style={styles.estatisticaItem}>
+            <Text style={styles.estatisticaIcon}>📅</Text>
+            <Text style={styles.estatisticaTexto}>
+              <Text style={styles.valor}>{totalTreinos}</Text> treinos concluídos
+            </Text>
+          </View>
+          <View style={styles.estatisticaItem}>
+            <Text style={styles.estatisticaIcon}>⏱️</Text>
+            <Text style={styles.estatisticaTexto}>
+              <Text style={styles.valor}>{tempoTotal}</Text> acumulado
+            </Text>
+          </View>
         </View>
 
-        <View style={styles.filtroBox}>
-          <Text style={styles.filtroLabel}>Categoria:</Text>
-          <Picker
-            selectedValue={filtroCategoria}
-            onValueChange={(value) => setFiltroCategoria(value)}
-            style={styles.picker}
-            dropdownIconColor="#d0a956"
-          >
-            <Picker.Item label="Todas" value="" />
-            {categoriasDisponiveis.map((cat) => (
-              <Picker.Item key={cat} label={cat} value={cat} />
-            ))}
-          </Picker>
-        </View>
-      </View>
-
-      {loading && <ActivityIndicator size="large" color="#d0a956" style={{ marginTop: 20 }} />}
-
-      {!loading && treinosFiltrados.length === 0 && (
-        <Text style={styles.semDados}>
-          Nenhum treino encontrado com os filtros selecionados.
-        </Text>
-      )}
-
-      {!loading &&
-        treinosFiltrados.map((treino) => {
-          const corCategoria = getCategoriaColor(treino.categoria);
-          return (
-            <View
-              key={treino.id} 
-              style={[styles.card, { borderLeftColor: corCategoria }]}
+        <View style={styles.filtrosContainer}>
+          <View style={styles.filtroBox}>
+            <Text style={styles.filtroLabel}>Mês:</Text>
+            <Picker
+              selectedValue={filtroMes}
+              onValueChange={(value) => setFiltroMes(value)}
+              style={styles.picker}
+              dropdownIconColor="#d0a956"
             >
-              <Text style={styles.data}>{format(parseISO(treino.dataConclusao), 'dd/MM/yyyy HH:mm')}</Text>
-              <Text style={styles.nome}>{String(treino.nome || treino.nomeTreino)}</Text> 
-              <Text style={styles.categoria}>
-                Categoria: {String(treino.categoria || 'N/A')}
-              </Text>
-              <Text style={styles.descricao}>{String(treino.descricao || 'Sem descrição')}</Text>
-              <Text style={styles.duracao}>Duração: {formatDuration(treino.duracaoSegundos)}</Text> 
+              <Picker.Item label="Todos" value="" />
+              {mesesDisponiveis.map((mes) => (
+                <Picker.Item
+                  key={mes}
+                  label={format(parseISO(mes + '-01'), 'MMMM yyyy', { locale: pt })} 
+                  value={mes}
+                />
+              ))}
+            </Picker>
+          </View>
 
-              {Array.isArray(treino.exercicios) && treino.exercicios.length > 0 && (
-                <>
-                  <Text style={styles.exerciciosTitulo}>Exercícios:</Text>
-                  {treino.exercicios.map((ex, idx) => (
-                    <Text key={idx} style={styles.exercicio}>
-                      • {String(ex.nome)} — {ex.tipo === 'reps' ? 'Repetições' : 'Tempo'}: {String(ex.valor)}
-                    </Text>
-                  ))}
-                </>
-              )}
-            </View>
-          );
-        })}
-    </ScrollView>
+          <View style={styles.filtroBox}>
+            <Text style={styles.filtroLabel}>Categoria:</Text>
+            <Picker
+              selectedValue={filtroCategoria}
+              onValueChange={(value) => setFiltroCategoria(value)}
+              style={styles.picker}
+              dropdownIconColor="#d0a956"
+            >
+              <Picker.Item label="Todas" value="" />
+              {categoriasDisponiveis.map((cat) => (
+                <Picker.Item key={cat} label={cat} value={cat} />
+              ))}
+            </Picker>
+          </View>
+        </View>
+
+        {loading && <ActivityIndicator size="large" color="#d0a956" style={{ marginTop: 20 }} />}
+
+        {!loading && treinosFiltrados.length === 0 && (
+          <Text style={styles.semDados}>
+            Nenhum treino encontrado com os filtros selecionados.
+          </Text>
+        )}
+
+        {!loading &&
+          treinosFiltrados.map((treino) => {
+            const corCategoria = getCategoriaColor(treino.categoria);
+            return (
+              <View
+                key={treino.id} 
+                style={[styles.card, { borderLeftColor: corCategoria }]}
+              >
+                <Text style={styles.data}>{format(parseISO(treino.dataConclusao), 'dd/MM/yyyy HH:mm')}</Text>
+                <Text style={styles.nome}>{String(treino.nome || treino.nomeTreino)}</Text> 
+                <Text style={styles.categoria}>
+                  Categoria: {String(treino.categoria || 'N/A')}
+                </Text>
+                <Text style={styles.descricao}>{String(treino.descricao || 'Sem descrição')}</Text>
+                <Text style={styles.duracao}>Duração: {formatDuration(treino.duracaoSegundos)}</Text> 
+
+                {Array.isArray(treino.exercicios) && treino.exercicios.length > 0 && (
+                  <>
+                    <Text style={styles.exerciciosTitulo}>Exercícios:</Text>
+                    {treino.exercicios.map((ex, idx) => (
+                      <Text key={idx} style={styles.exercicio}>
+                        • {String(ex.nome)} — {ex.tipo === 'reps' ? 'Repetições' : 'Tempo'}: {String(ex.valor)}
+                      </Text>
+                    ))}
+                  </>
+                )}
+              </View>
+            );
+          })}
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 20,
+  fullScreenContainer: { // NOVO: Container principal para a tela inteira
+    flex: 1,
     backgroundColor: '#f9fafb',
-    minHeight: '100%',
+  },
+  // ESTILO DA BARRA FIXA
+  fixedHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: FIXED_HEADER_HEIGHT,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 40 : 20, // Ajuste para Android para status bar
+    backgroundColor: '#007bff', // Cor de fundo azul
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomLeftRadius: 15, // Arredondamento nas bordas inferiores
+    borderBottomRightRadius: 15,
+    elevation: 5, // Sombra para Android
+    shadowColor: '#000', // Sombra para iOS
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    zIndex: 10, // Garante que fique acima do conteúdo que rola
+  },
+  headerUserInfo: { // Estilo para agrupar avatar e nome do user
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerAvatar: { // Estilo para o avatar na barra fixa
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  headerAvatarText: { // Estilo para o texto do avatar na barra fixa
+    color: '#007bff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  headerUserName: { // Estilo para o nome do user na barra fixa
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  headerAppName: { // Estilo para o nome da app na barra fixa
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff', // Cor do texto da app
+  },
+  // Ajuste para o conteúdo da ScrollView para começar abaixo do cabeçalho fixo
+  scrollViewContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 60, // Mantenha o paddingBottom original
+    backgroundColor: '#f9fafb',
+    paddingTop: FIXED_HEADER_HEIGHT + 20, // Adiciona padding para o cabeçalho fixo + um pouco mais
+  },
+  container: { // Este estilo será ajustado para ser o contentContainerStyle da ScrollView
+    // padding: 20, // Já definido em scrollViewContent
+    // backgroundColor: '#f9fafb', // Já definido em fullScreenContainer
+    minHeight: '100%', // Pode ser removido se flex:1 for suficiente no fullScreenContainer
   },
   title: {
     fontSize: 26,
@@ -326,6 +423,7 @@ const styles = StyleSheet.create({
     color: '#d0a956',
     marginBottom: 20,
     textAlign: 'center',
+    marginTop: 0, // Removido marginTop extra, já que paddingTop do scrollViewContent já lida com isso
   },
   estatisticasBox: {
     backgroundColor: '#fff9e6',

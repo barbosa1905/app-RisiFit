@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useContext } from 'react';
+import React, { useState, useCallback, useContext, useEffect } from 'react'; // Adicionado useEffect
 import {
-  View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet
+  View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Platform // Adicionado Platform
 } from 'react-native';
 import { db, auth } from '../../services/firebaseConfig';
 import {
@@ -10,11 +10,15 @@ import {
   getDocs,
   addDoc,
   serverTimestamp,
-  onSnapshot
+  onSnapshot,
+  doc, getDoc // Adicionado doc, getDoc para buscar dados do user
 } from 'firebase/firestore';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import moment from 'moment';
 import { UnreadContext } from '../../contexts/UnreadContext';
+
+// Altura da barra fixa do cabeçalho
+const FIXED_HEADER_HEIGHT = Platform.OS === 'android' ? 90 : 80;
 
 export default function CreateChatScreen() {
   const [users, setUsers] = useState([]);
@@ -23,6 +27,9 @@ export default function CreateChatScreen() {
   const navigation = useNavigation();
   const { setUnreadCount } = useContext(UnreadContext);
 
+  const [userName, setUserName] = useState(''); // Estado para o nome do utilizador
+  const [userInitial, setUserInitial] = useState(''); // Estado para a inicial do utilizador
+
   useFocusEffect(
     useCallback(() => {
       let unsubscribers = [];
@@ -30,6 +37,21 @@ export default function CreateChatScreen() {
 
       const fetchAdminsAndChats = async () => {
         try {
+          // 1. Buscar dados do utilizador logado para o cabeçalho
+          if (auth.currentUser) {
+            const userDocRef = doc(db, 'users', auth.currentUser.uid);
+            const userDocSnap = await getDoc(userDocRef);
+            if (userDocSnap.exists()) {
+              const userData = userDocSnap.data();
+              setUserName(userData.name || 'Utilizador');
+              setUserInitial(userData.name ? userData.name.charAt(0).toUpperCase() : 'U');
+            } else {
+              setUserName('Utilizador');
+              setUserInitial('U');
+            }
+          }
+
+          // 2. Buscar administradores
           const q = query(collection(db, 'users'), where('role', '==', 'admin'));
           const querySnapshot = await getDocs(q);
           const usersList = querySnapshot.docs
@@ -99,7 +121,7 @@ export default function CreateChatScreen() {
             }
           });
         } catch (error) {
-          console.error('Erro ao buscar usuários:', error);
+          console.error('Erro ao buscar usuários ou dados do usuário:', error);
         } finally {
           setLoading(false);
         }
@@ -162,6 +184,7 @@ export default function CreateChatScreen() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#d0a956" />
+        <Text style={styles.loadingText}>A carregar dados...</Text>
       </View>
     );
   }
@@ -169,8 +192,18 @@ export default function CreateChatScreen() {
   const ItemSeparator = () => <View style={styles.separator} />;
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Escolha um administrador para iniciar o chat:</Text>
+    <View style={styles.fullScreenContainer}> 
+      {/* Cabeçalho Fixo (Barra Fixa) */}
+      <View style={styles.fixedHeader}>
+        <View style={styles.headerUserInfo}>
+          <View style={styles.headerAvatar}>
+            <Text style={styles.headerAvatarText}>{userInitial}</Text>
+          </View>
+          <Text style={styles.headerUserName}>{userName}</Text>
+        </View>
+        <Text style={styles.headerAppName}>RisiFit</Text>
+      </View>
+
       <FlatList
         data={users}
         keyExtractor={item => item.uid}
@@ -221,10 +254,13 @@ export default function CreateChatScreen() {
           );
         }}
         ItemSeparatorComponent={ItemSeparator}
+        ListHeaderComponent={ // Adicionado ListHeaderComponent para o título
+          <Text style={styles.title}>Escolha um administrador para iniciar o chat:</Text>
+        }
         ListEmptyComponent={
           <Text style={styles.emptyText}>Nenhum administrador encontrado.</Text>
         }
-        contentContainerStyle={users.length === 0 && styles.emptyContainer}
+        contentContainerStyle={styles.flatListContentContainer} 
         showsVerticalScrollIndicator={false}
       />
     </View>
@@ -232,11 +268,71 @@ export default function CreateChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
+  fullScreenContainer: { // NOVO: Container principal para a tela inteira
     flex: 1,
     backgroundColor: '#fafafa',
+  },
+  // ESTILO DA BARRA FIXA
+  fixedHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: FIXED_HEADER_HEIGHT,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 40 : 20, // Ajuste para Android para status bar
+    backgroundColor: '#007bff', // Cor de fundo azul
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomLeftRadius: 15, // Arredondamento nas bordas inferiores
+    borderBottomRightRadius: 15,
+    elevation: 5, // Sombra para Android
+    shadowColor: '#000', // Sombra para iOS
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    zIndex: 10, // Garante que fique acima do conteúdo que rola
+  },
+  headerUserInfo: { // Estilo para agrupar avatar e nome do user
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerAvatar: { // Estilo para o avatar na barra fixa
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  headerAvatarText: { // Estilo para o texto do avatar na barra fixa
+    color: '#007bff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  headerUserName: { // Estilo para o nome do user na barra fixa
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  headerAppName: { // Estilo para o nome da app na barra fixa
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff', // Cor do texto da app
+  },
+  // NOVO: Estilo para o contentContainerStyle da FlatList
+  flatListContentContainer: {
     paddingHorizontal: 24,
-    paddingTop: 30,
+    paddingTop: FIXED_HEADER_HEIGHT + 20, // Ajusta o padding para começar abaixo do cabeçalho fixo
+    paddingBottom: 20, // Mantém um padding inferior
+  },
+  container: { // Este estilo será removido ou ajustado, pois fullScreenContainer será o principal
+    // flex: 1, // Já em fullScreenContainer
+    // backgroundColor: '#fafafa', // Já em fullScreenContainer
+    // paddingHorizontal: 24, // Movido para flatListContentContainer
+    // paddingTop: 30, // Movido para flatListContentContainer
   },
   title: {
     fontSize: 24,
@@ -244,6 +340,7 @@ const styles = StyleSheet.create({
     marginBottom: 25,
     color: '#1a1a1a',
     textAlign: 'center',
+    marginTop: 0, // Removido marginTop extra, já que paddingTop do flatListContentContainer já lida com isso
   },
   userItem: {
     flexDirection: 'row',
@@ -335,24 +432,22 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 60,
   },
-  emptyContainer: {
+  emptyContainer: { // Ajustado para centralizar o texto vazio na tela, considerando o cabeçalho
     flexGrow: 1,
     justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: FIXED_HEADER_HEIGHT, // Garante que o conteúdo vazio não fique por baixo do header
   },
-  loadingContainer: {
+  loadingContainer: { // Ajustado para centralizar o loading na tela, considerando o cabeçalho
     flex: 1,
     justifyContent: 'center',
-    alignItems: 'center'    
-
-
-
-
-
-
+    alignItems: 'center',
+    backgroundColor: '#fafafa',
+    paddingTop: FIXED_HEADER_HEIGHT, // Garante que o loading não fique por baixo do header
+  },
+  loadingText: { // Adicionado estilo para o texto de loading
+    marginTop: 10,
+    fontSize: 16,
+    color: '#6b7280',
   },
 });
-
-
-
-
-
