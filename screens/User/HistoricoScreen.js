@@ -6,7 +6,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
-  Platform, // Importado para Platform.OS
+  Platform,
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import { format, parse, isValid, parseISO } from 'date-fns'; 
@@ -14,12 +14,35 @@ import { pt } from 'date-fns/locale';
 import { enUS } from 'date-fns/locale'; 
 
 // Importações do Firebase
-import { getFirestore, collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore'; // Adicionado doc, getDoc
+import { getFirestore, collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore'; 
 import { getUserIdLoggedIn } from '../../services/authService'; 
-import { auth } from '../../services/firebaseConfig'; // Importar auth para obter o currentUser
+import { auth } from '../../services/firebaseConfig'; 
 
 // Altura da barra fixa do cabeçalho
 const FIXED_HEADER_HEIGHT = Platform.OS === 'android' ? 90 : 80;
+
+// Novas cores
+const COLORS = {
+  primary: '#d4ac54',      // color1
+  lightPrimary: '#e0c892',   // color2
+  darkPrimary: '#69511a',    // color3
+  neutralGray: '#767676',    // color4
+  lightGray: '#bdbdbd',      // color5
+  white: '#fff',
+  black: '#1a1a1a',          // Um preto mais genérico, pode ser ajustado
+  background: '#f9fafb',     // Fundo geral
+  cardBackground: '#ffffff', // Fundo dos cards
+  borderLight: '#e5e7eb',    // Borda clara
+  textLight: '#6b7280',      // Texto cinza claro
+  textDark: '#4b3e00',       // Texto escuro (usado para nome, valor)
+  pickerText: '#735c00',     // Texto do picker
+  pickerBackground: '#fff',  // Fundo do picker
+  // Cores para categorias (mantidas as originais, pois são específicas)
+  force: '#7c3aed',
+  cardio: '#10b981',
+  flexibility: '#f59e0b',
+  hiit: '#ef4444',
+};
 
 export default function HistoricoScreen() {
   const [historico, setHistorico] = useState([]); 
@@ -27,8 +50,8 @@ export default function HistoricoScreen() {
   const [filtroMes, setFiltroMes] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('');
 
-  const [userName, setUserName] = useState(''); // Estado para o nome do utilizador
-  const [userInitial, setUserInitial] = useState(''); // Estado para a inicial do utilizador
+  const [userName, setUserName] = useState(''); 
+  const [userInitial, setUserInitial] = useState(''); 
 
   const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
@@ -43,26 +66,20 @@ export default function HistoricoScreen() {
     return `${pad(horas)}:${pad(min)}:${pad(seg)}`;
   };
 
-  // Função para parsear datas, agora com suporte a Firestore Timestamp
   const parseFlexibleDate = (dateValue) => {
-    // Se for um objeto Timestamp do Firestore
     if (dateValue && typeof dateValue === 'object' && dateValue.seconds !== undefined && dateValue.nanoseconds !== undefined) {
-        // Converte o Timestamp para um objeto Date JavaScript
         const date = new Date(dateValue.seconds * 1000 + dateValue.nanoseconds / 1000000);
         if (isValid(date)) {
             return date;
         }
     }
 
-    // Se for uma string (para dados antigos ou se o formato de gravação mudar novamente)
     if (typeof dateValue === 'string') {
-        // Tentar parsear como ISO string primeiro
         const isoParsed = parseISO(dateValue);
         if (isValid(isoParsed)) {
             return isoParsed;
         }
 
-        // Tentar parsear o formato "Month Day, Year at HH:MM:SS AM/PM UTC+X" (inglês)
         let cleanedEnglishDateString = dateValue.replace(/ UTC[+-]\d+/g, '').replace(/ (AM|PM)/g, ' $1').trim();
         const englishFormatsToTry = [
             "MMMM dd, yyyy 'at' h:mm:ss a", 
@@ -77,7 +94,6 @@ export default function HistoricoScreen() {
             } catch (e) { /* continue trying */ }
         }
 
-        // Tentar parsear o formato português antigo
         let cleanedPortugueseDateString = dateValue.replace(/min/g, '').split(' UTC')[0].trim();
         const portugueseFormatsToTry = [
             "dd 'de' MMMM 'de' yyyy 'às' H'h'ss's'", 
@@ -113,7 +129,7 @@ export default function HistoricoScreen() {
           return;
         }
 
-        const dbFirestore = getFirestore(); // Renomeado para evitar conflito com 'db' importado
+        const dbFirestore = getFirestore(); 
 
         // 1. Buscar dados do utilizador logado para o cabeçalho
         if (auth.currentUser) {
@@ -129,12 +145,11 @@ export default function HistoricoScreen() {
           }
         }
 
-
-        const collectionName = 'historicoTreinos'; // Nome da coleção sem acento
+        const collectionName = 'historicoTreinos'; 
         const historicoRef = collection(dbFirestore, collectionName); 
         console.log('Caminho da coleção Firestore sendo usado:', historicoRef.path);
         
-        const userIdFieldName = 'userId'; // Nome do campo do UserID em minúsculas
+        const userIdFieldName = 'userId'; 
         
         const q = query(historicoRef, where(userIdFieldName, '==', userIdFromAuth)); 
         console.log(`Query Firestore criada: Coleção '${collectionName}', Campo '${userIdFieldName}' == '${userIdFromAuth}'`); 
@@ -151,7 +166,6 @@ export default function HistoricoScreen() {
           const data = doc.data();
           console.log('Dados brutos do documento Firestore (para ID:', doc.id, '):', data); 
 
-          // Passa o objeto Timestamp diretamente para parseFlexibleDate
           const dataConclusaoParsed = parseFlexibleDate(data.dataConclusao);
           const dataOriginalTreinoParsed = parseFlexibleDate(data.dataOriginalTreino);
           
@@ -162,7 +176,7 @@ export default function HistoricoScreen() {
               categoria: data.categoria || 'N/A', 
               descricao: data.descricao || 'Sem descrição', 
               exercicios: data.exercicios || [], 
-              duracaoSegundos: data.duracao || data.duracaoSegundos || 0, // duracao é um número direto
+              duracaoSegundos: data.duracao || data.duracaoSegundos || 0, 
               dataConclusao: dataConclusaoParsed.toISOString(), 
               dataOriginalTreino: dataOriginalTreinoParsed ? dataOriginalTreinoParsed.toISOString() : null, 
               userId: data[userIdFieldName], 
@@ -229,15 +243,15 @@ export default function HistoricoScreen() {
   const getCategoriaColor = (categoria) => {
     switch (String(categoria || '').toLowerCase()) {
       case 'força':
-        return '#7c3aed';
+        return COLORS.force;
       case 'cardio':
-        return '#10b981';
+        return COLORS.cardio;
       case 'flexibilidade':
-        return '#f59e0b';
+        return COLORS.flexibility;
       case 'hiit':
-        return '#ef4444';
+        return COLORS.hiit;
       default:
-        return '#d0a956';
+        return COLORS.primary; // Cor padrão da nova paleta
     }
   };
 
@@ -279,7 +293,7 @@ export default function HistoricoScreen() {
               selectedValue={filtroMes}
               onValueChange={(value) => setFiltroMes(value)}
               style={styles.picker}
-              dropdownIconColor="#d0a956"
+              dropdownIconColor={COLORS.primary} // Cor do ícone do picker
             >
               <Picker.Item label="Todos" value="" />
               {mesesDisponiveis.map((mes) => (
@@ -298,7 +312,7 @@ export default function HistoricoScreen() {
               selectedValue={filtroCategoria}
               onValueChange={(value) => setFiltroCategoria(value)}
               style={styles.picker}
-              dropdownIconColor="#d0a956"
+              dropdownIconColor={COLORS.primary} // Cor do ícone do picker
             >
               <Picker.Item label="Todas" value="" />
               {categoriasDisponiveis.map((cat) => (
@@ -308,7 +322,7 @@ export default function HistoricoScreen() {
           </View>
         </View>
 
-        {loading && <ActivityIndicator size="large" color="#d0a956" style={{ marginTop: 20 }} />}
+        {loading && <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 20 }} />}
 
         {!loading && treinosFiltrados.length === 0 && (
           <Text style={styles.semDados}>
@@ -351,11 +365,10 @@ export default function HistoricoScreen() {
 }
 
 const styles = StyleSheet.create({
-  fullScreenContainer: { // NOVO: Container principal para a tela inteira
+  fullScreenContainer: { 
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: COLORS.background,
   },
-  // ESTILO DA BARRA FIXA
   fixedHeader: {
     position: 'absolute',
     top: 0,
@@ -363,74 +376,71 @@ const styles = StyleSheet.create({
     right: 0,
     height: FIXED_HEADER_HEIGHT,
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'android' ? 40 : 20, // Ajuste para Android para status bar
-    backgroundColor: '#007bff', // Cor de fundo azul
+    paddingTop: Platform.OS === 'android' ? 40 : 20,
+    backgroundColor: COLORS.primary, // color1
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderBottomLeftRadius: 15, // Arredondamento nas bordas inferiores
+    borderBottomLeftRadius: 15,
     borderBottomRightRadius: 15,
-    elevation: 5, // Sombra para Android
-    shadowColor: '#000', // Sombra para iOS
+    elevation: 5,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
     shadowRadius: 5,
-    zIndex: 10, // Garante que fique acima do conteúdo que rola
+    zIndex: 10,
   },
-  headerUserInfo: { // Estilo para agrupar avatar e nome do user
+  headerUserInfo: { 
     flexDirection: 'row',
     alignItems: 'center',
   },
-  headerAvatar: { // Estilo para o avatar na barra fixa
+  headerAvatar: { 
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
   },
-  headerAvatarText: { // Estilo para o texto do avatar na barra fixa
-    color: '#007bff',
+  headerAvatarText: { 
+    color: COLORS.primary, // color1
     fontSize: 18,
     fontWeight: 'bold',
   },
-  headerUserName: { // Estilo para o nome do user na barra fixa
+  headerUserName: { 
     fontSize: 18,
     fontWeight: '600',
-    color: '#fff',
+    color: COLORS.white,
   },
-  headerAppName: { // Estilo para o nome da app na barra fixa
+  headerAppName: { 
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#fff', // Cor do texto da app
+    color: COLORS.white,
   },
-  // Ajuste para o conteúdo da ScrollView para começar abaixo do cabeçalho fixo
   scrollViewContent: {
     paddingHorizontal: 20,
-    paddingBottom: 60, // Mantenha o paddingBottom original
-    backgroundColor: '#f9fafb',
-    paddingTop: FIXED_HEADER_HEIGHT + 20, // Adiciona padding para o cabeçalho fixo + um pouco mais
+    paddingBottom: 60,
+    backgroundColor: COLORS.background,
+    paddingTop: FIXED_HEADER_HEIGHT + 20,
   },
-  container: { // Este estilo será ajustado para ser o contentContainerStyle da ScrollView
-    // padding: 20, // Já definido em scrollViewContent
-    // backgroundColor: '#f9fafb', // Já definido em fullScreenContainer
-    minHeight: '100%', // Pode ser removido se flex:1 for suficiente no fullScreenContainer
+  container: { // Este estilo não é mais usado diretamente como container principal
+    minHeight: '100%',
   },
   title: {
     fontSize: 26,
     fontWeight: 'bold',
-    color: '#d0a956',
+    color: COLORS.primary, // color1
     marginBottom: 20,
     textAlign: 'center',
-    marginTop: 0, // Removido marginTop extra, já que paddingTop do scrollViewContent já lida com isso
+    marginTop: 0,
   },
   estatisticasBox: {
-    backgroundColor: '#fff9e6',
+    backgroundColor: COLORS.lightPrimary, // color2
     padding: 16,
     borderRadius: 12,
     marginBottom: 20,
-    borderColor: '#f2d88f',
+    borderColor: COLORS.primary, // color1
     borderWidth: 1,
   },
   estatisticaItem: {
@@ -444,11 +454,11 @@ const styles = StyleSheet.create({
   },
   estatisticaTexto: {
     fontSize: 16,
-    color: '#735c00',
+    color: COLORS.darkPrimary, // color3
   },
   valor: {
     fontWeight: 'bold',
-    color: '#3f2e00',
+    color: COLORS.darkPrimary, // color3
   },
   filtrosContainer: {
     marginBottom: 20,
@@ -458,22 +468,22 @@ const styles = StyleSheet.create({
   },
   filtroLabel: {
     fontWeight: '600',
-    color: '#735c00',
+    color: COLORS.darkPrimary, // color3
     marginBottom: 4,
   },
   picker: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.pickerBackground,
     borderRadius: 8,
-    color: '#735c00',
+    color: COLORS.pickerText, // color3
   },
   semDados: {
     textAlign: 'center',
     fontStyle: 'italic',
-    color: '#6b7280',
+    color: COLORS.neutralGray, // color4
     marginTop: 20,
   },
   card: {
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.cardBackground,
     padding: 16,
     borderRadius: 12,
     marginBottom: 16,
@@ -486,40 +496,40 @@ const styles = StyleSheet.create({
   },
   data: {
     fontSize: 14,
-    color: '#d0a956',
+    color: COLORS.primary, // color1
     marginBottom: 2,
   },
   nome: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#4b3e00',
+    color: COLORS.darkPrimary, // color3
     marginBottom: 4,
   },
   categoria: {
     fontSize: 14,
-    color: '#a38600',
+    color: COLORS.darkPrimary, // color3 (original era a38600, que é um tom de marrom/dourado)
     marginBottom: 4,
   },
   descricao: {
     fontSize: 14,
-    color: '#7a6a00',
+    color: COLORS.neutralGray, // color4 (original era 7a6a00, que é um tom de marrom/dourado)
     marginBottom: 6,
   },
   duracao: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#b77900',
+    color: COLORS.darkPrimary, // color3 (original era b77900, que é um tom de laranja/marrom)
     marginBottom: 6,
   },
   exerciciosTitulo: {
     fontWeight: '600',
-    color: '#5f4b00',
+    color: COLORS.darkPrimary, // color3 (original era 5f4b00, que é um tom de marrom escuro)
     marginTop: 6,
     marginBottom: 4,
   },
   exercicio: {
     marginLeft: 10,
-    color: '#7a6a00',
+    color: COLORS.neutralGray, // color4 (original era 7a6a00)
     fontSize: 13,
     marginBottom: 2,
   },

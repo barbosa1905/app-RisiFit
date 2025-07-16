@@ -7,7 +7,7 @@ import {
   Alert,
   TouchableOpacity,
   ActivityIndicator,
-  Animated, // Importado Animated
+  Animated,
   Platform,
 } from 'react-native';
 import { Calendar } from 'react-native-calendars';
@@ -29,23 +29,40 @@ import { getUserIdLoggedIn } from '../../services/authService';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ThemeContext } from '../ThemeContext';
+import { ThemeContext } from '../ThemeContext'; // Certifique-se que este import é válido ou remova se não for usado
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebaseConfig';
 
-// Definição das cores para os diferentes status
+// Novas cores
+const COLORS = {
+  primary: '#d4ac54',      // color1
+  lightPrimary: '#e0c892',   // color2
+  darkPrimary: '#69511a',    // color3
+  neutralGray: '#767676',    // color4
+  lightGray: '#bdbdbd',      // color5
+  white: '#fff',
+  black: '#000',             // Preto para sombras e alguns textos
+  background: '#f9fafb',     // Fundo geral
+  cardBackground: '#ffffff', // Fundo dos cards
+  // Cores semânticas mantidas ou mapeadas para as mais próximas
+  completedGreen: '#4CAF50', // Verde para concluído (mantido)
+  missedRed: '#FF5252',      // Vermelho para perdido (mantido)
+  checkIconGreen: '#10b981', // Verde para o ícone de check (mantido)
+};
+
+// Definição das cores para os diferentes status (usando a nova paleta)
 const STATUS_COLORS = {
-  completed: '#4CAF50',       // Verde para concluído
-  missed: '#FF5252',          // Vermelho para perdido
-  todayPending: '#2196F3',    // Azul para hoje pendente
-  scheduledFuture: '#FFC107', // Amarelo/Laranja para futuro agendado
-  noTraining: '#BDBDBD',      // Cinza claro para sem treino
-  defaultBorder: '#BDBDBD',   // Borda padrão para círculos vazios
-  defaultText: '#555',        // Cor de texto padrão
-  selectedDay: '#facc15',     // Amarelo para dia selecionado
-  selectedDayText: '#78350f', // Laranja escuro para texto do dia selecionado
-  evaluation: '#fde68a',      // Amarelo claro para avaliação
-  evaluationText: '#92400e',  // Laranja escuro para texto da avaliação
+  completed: COLORS.completedGreen,
+  missed: COLORS.missedRed,
+  todayPending: COLORS.darkPrimary, // Texto e borda para hoje pendente
+  scheduledFuture: COLORS.lightPrimary, // Fundo para futuro agendado
+  noTraining: COLORS.lightGray,
+  defaultBorder: COLORS.lightGray,
+  defaultText: COLORS.neutralGray,
+  selectedDay: COLORS.primary, // Dia selecionado (fundo)
+  selectedDayText: COLORS.darkPrimary, // Dia selecionado (texto)
+  evaluation: COLORS.lightPrimary, // Fundo para avaliação
+  evaluationText: COLORS.darkPrimary, // Texto para avaliação
 };
 
 // Frases motivacionais com emojis
@@ -73,7 +90,7 @@ const AnimatedCheckIcon = () => {
 
   return (
     <Animated.Text style={{ opacity: fadeCheck, marginLeft: 6 }}>
-      <MaterialCommunityIcons name="check-circle" size={20} color="#10b981" />
+      <MaterialCommunityIcons name="check-circle" size={20} color={COLORS.checkIconGreen} />
     </Animated.Text>
   );
 };
@@ -94,7 +111,7 @@ export default function TreinosScreen() {
   const navigation = useNavigation();
   const [fraseMotivacional, setFraseMotivacional] = useState('');
   const fadeAnimPhrase = useRef(new Animated.Value(0)).current; // NOVO: Para a animação da frase
-  const { colors, toggleTheme, theme } = useContext(ThemeContext);
+  // const { colors, toggleTheme, theme } = useContext(ThemeContext); // Removido se ThemeContext não for usado
 
   const [userName, setUserName] = useState('');
   const [userInitial, setUserInitial] = useState('');
@@ -306,7 +323,7 @@ export default function TreinosScreen() {
         const isFutureDate = treinoDateLocalStartOfDay > todayLocalStartOfDay;
 
         console.log(`[Marcação Treino] Data: ${dataStr}, Nome: ${treino.nome}, Concluido: ${isConcluido}, Hoje (str): ${isTodayDate}, Passado (date-fns): ${isPastDate}, Futuro (date-fns): ${isFutureDate}`);
-        console.log(`    -> Status Calculado para ${dataStr}: Hoje: ${isTodayDate}, Passado: ${isPastDate}, Futuro: ${isFutureDate}`);
+        console.log(`     -> Status Calculado para ${dataStr}: Hoje: ${isTodayDate}, Passado: ${isPastDate}, Futuro: ${isFutureDate}`);
 
 
         const defaultDayStyle = {
@@ -344,11 +361,11 @@ export default function TreinosScreen() {
         if (isConcluido) {
           marcacoes[dataStr].customStyles.container.backgroundColor = STATUS_COLORS.completed;
           marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.completed;
-          marcacoes[dataStr].customStyles.text.color = '#FFFFFF';
+          marcacoes[dataStr].customStyles.text.color = COLORS.white;
           if (!marcacoes[dataStr].dots.some(dot => dot.key === 'concluido')) {
             marcacoes[dataStr].dots.push({ key: 'concluido', color: STATUS_COLORS.completed });
           }
-          console.log(`    -> Treino ${dataStr}: Concluido (Verde)`);
+          console.log(`     -> Treino ${dataStr}: Concluido (Verde)`);
         } else if (isTodayDate) {
           marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.todayPending;
           marcacoes[dataStr].customStyles.container.borderWidth = 2;
@@ -356,25 +373,25 @@ export default function TreinosScreen() {
           if (!marcacoes[dataStr].dots.some(dot => dot.key === 'today')) {
             marcacoes[dataStr].dots.push({ key: 'today', color: STATUS_COLORS.todayPending });
           }
-          console.log(`    -> Treino ${dataStr}: Hoje Pendente (Borda Azul)`);
+          console.log(`     -> Treino ${dataStr}: Hoje Pendente (Borda ${STATUS_COLORS.todayPending} / Texto ${STATUS_COLORS.todayPending})`);
         } else if (isFutureDate) {
-          marcacoes[dataStr].customStyles.container.backgroundColor = STATUS_COLORS.scheduledFuture; // Fundo amarelo/laranja sólido
+          marcacoes[dataStr].customStyles.container.backgroundColor = STATUS_COLORS.scheduledFuture; // Fundo lightPrimary sólido
           marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.scheduledFuture;
           marcacoes[dataStr].customStyles.container.borderWidth = 1;
-          marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.selectedDayText; // Texto laranja escuro para contraste
+          marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.evaluationText; // Texto darkPrimary para contraste
           if (!marcacoes[dataStr].dots.some(dot => dot.key === 'scheduled')) {
-            marcacoes[dataStr].dots.push({ key: 'scheduled', color: STATUS_COLORS.selectedDayText });
+            marcacoes[dataStr].dots.push({ key: 'scheduled', color: STATUS_COLORS.evaluationText });
           }
-          console.log(`    -> Treino ${dataStr}: Futuro Agendado (Fundo Amarelo/Laranja Sólido / Borda Amarelo/Laranja / Texto Laranja Escuro)`);
+          console.log(`     -> Treino ${dataStr}: Futuro Agendado (Fundo ${STATUS_COLORS.scheduledFuture} / Borda ${STATUS_COLORS.scheduledFuture} / Texto ${STATUS_COLORS.evaluationText})`);
         } else if (isPastDate) {
-            marcacoes[dataStr].customStyles.container.backgroundColor = '#FFEBEE';
+            marcacoes[dataStr].customStyles.container.backgroundColor = '#FFEBEE'; // Mantido um vermelho claro para fundo
             marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.missed;
             marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.missed;
             marcacoes[dataStr].customStyles.container.borderWidth = 1;
             if (!marcacoes[dataStr].dots.some(dot => dot.key === 'missed')) {
                 marcacoes[dataStr].dots.push({ key: 'missed', color: STATUS_COLORS.missed });
             }
-            console.log(`    -> Treino ${dataStr}: Perdido (Fundo Vermelho Claro/Texto Vermelho)`);
+            console.log(`     -> Treino ${dataStr}: Perdido (Fundo Vermelho Claro/Texto Vermelho)`);
         }
       } else {
         console.warn(`⚠️ Treino com formato de data inválido ou ausente: ${treino.data} (ID: ${treino.id})`);
@@ -415,7 +432,7 @@ export default function TreinosScreen() {
         if (!marcacoes[dataStr].dots.some(dot => dot.key === 'avaliacao')) {
           marcacoes[dataStr].dots.push({ key: 'avaliacao', color: STATUS_COLORS.evaluationText });
         }
-        console.log(`    -> Avaliação ${dataStr}: Marcada (Amarelo Claro)`);
+        console.log(`     -> Avaliação ${dataStr}: Marcada (Fundo ${STATUS_COLORS.evaluation} / Texto ${STATUS_COLORS.evaluationText})`);
       } else {
         console.warn(`⚠️ Avaliação com formato de data inválido ou ausente: ${avaliacao.data} (ID: ${avaliacao.id})`);
       }
@@ -488,16 +505,16 @@ export default function TreinosScreen() {
     switch (categoria?.toLowerCase()) {
       case 'força':
         return (
-          <MaterialCommunityIcons name="weight-lifter" size={24} color="#d0a956" />
+          <MaterialCommunityIcons name="weight-lifter" size={24} color={COLORS.primary} />
         );
       case 'cardio':
-        return <MaterialCommunityIcons name="heart-pulse" size={24} color="#d0a956" />;
+        return <MaterialCommunityIcons name="heart-pulse" size={24} color={COLORS.primary} />;
       case 'flexibilidade':
-        return <MaterialCommunityIcons name="yoga" size={24} color="#d0a956" />;
+        return <MaterialCommunityIcons name="yoga" size={24} color={COLORS.primary} />;
       case 'hiit':
-        return <MaterialCommunityIcons name="flash" size={24} color="#d0a956" />;
+        return <MaterialCommunityIcons name="flash" size={24} color={COLORS.primary} />;
       default:
-        return <MaterialCommunityIcons name="run" size={24} color="#d0a956" />;
+        return <MaterialCommunityIcons name="run" size={24} color={COLORS.primary} />;
     }
   };
 
@@ -552,7 +569,7 @@ export default function TreinosScreen() {
         </View>
 
         {loading ? (
-          <ActivityIndicator size="large" color="#d0a956" style={{ marginVertical: 20 }} />
+          <ActivityIndicator size="large" color={COLORS.primary} style={{ marginVertical: 20 }} />
         ) : (
           <>
             <Calendar
@@ -692,36 +709,35 @@ export default function TreinosScreen() {
 const styles = StyleSheet.create({
   fullScreenContainer: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: COLORS.background,
   },
-  // ESTILO DA BARRA FIXA (ALTURA E LAYOUT AJUSTADOS)
   fixedHeader: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: FIXED_HEADER_HEIGHT, // Altura ajustada
+    height: FIXED_HEADER_HEIGHT,
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 40 : 20,
-    backgroundColor: '#007bff',
-    flexDirection: 'column', // Alterado para coluna para empilhar conteúdo
-    alignItems: 'flex-start', // Alinha o conteúdo ao início (esquerda)
-    justifyContent: 'flex-start', // Alinha o conteúdo ao topo
+    backgroundColor: COLORS.primary, // color1
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
     borderBottomLeftRadius: 15,
     borderBottomRightRadius: 15,
     elevation: 5,
-    shadowColor: '#000',
+    shadowColor: COLORS.black,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
     shadowRadius: 5,
     zIndex: 10,
   },
-  headerContentRow: { // NOVO: Linha para organizar avatar/nome e appName
+  headerContentRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    width: '100%', // Ocupa a largura total do cabeçalho
-    marginBottom: 5, // Espaçamento entre esta linha e a frase motivacional
+    width: '100%',
+    marginBottom: 5,
   },
   headerUserInfo: {
     flexDirection: 'row',
@@ -731,40 +747,38 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
   },
   headerAvatarText: {
-    color: '#007bff',
+    color: COLORS.primary, // color1
     fontSize: 18,
     fontWeight: 'bold',
   },
   headerUserName: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#fff',
+    color: COLORS.white,
   },
   headerAppName: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#fff',
+    color: COLORS.white,
   },
-  motivationalPhraseTextFixed: { // NOVO: Estilo para a frase motivacional na barra fixa
+  motivationalPhraseTextFixed: {
     fontSize: 14,
-    color: 'rgba(255,255,255,0.8)',
+    color: 'rgba(255,255,255,0.8)', // Mantido branco semi-transparente para contraste
     fontStyle: 'italic',
     textAlign: 'center',
-    width: '100%', // Garante que a frase ocupe a largura total para centralização
-    // Não precisa de marginTop aqui, pois o marginBottom de headerContentRow já dá espaçamento
+    width: '100%',
   },
-  // Ajuste para o conteúdo da ScrollView para começar abaixo do cabeçalho fixo
   scrollViewContent: {
     paddingHorizontal: 20,
     paddingBottom: 20,
-    backgroundColor: '#f9fafb',
-    paddingTop: FIXED_HEADER_HEIGHT + 15, // Ajuste do padding de acordo com a nova altura
+    backgroundColor: COLORS.background,
+    paddingTop: FIXED_HEADER_HEIGHT + 15,
   },
   scrollView: {
     flex: 1,
@@ -773,10 +787,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     elevation: 3,
     marginBottom: 25,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
   },
-  // O estilo 'fraseMotivacional' original foi removido pois a frase agora está no cabeçalho fixo
-  // fraseMotivacional: { ... },
   progressBarContainer: {
     marginHorizontal: 0,
     marginBottom: 20,
@@ -785,15 +797,15 @@ const styles = StyleSheet.create({
   progressText: {
     fontWeight: '700',
     marginBottom: 8,
-    color: '#333',
+    color: COLORS.darkPrimary, // color3
     fontSize: 16,
   },
   progressBarBackground: {
     height: 20,
-    backgroundColor: '#e5e7eb',
+    backgroundColor: COLORS.lightGray, // color5
     borderRadius: 12,
     overflow: 'hidden',
-    shadowColor: '#000',
+    shadowColor: COLORS.black,
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
@@ -801,127 +813,116 @@ const styles = StyleSheet.create({
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#fbbf24',
+    backgroundColor: COLORS.primary, // color1
     borderRadius: 12,
   },
   subTitle: {
     fontSize: 20,
     fontWeight: '600',
     marginBottom: 10,
-    color: '#1e293b',
+    color: COLORS.darkPrimary, // color3
   },
   noTreinos: {
     fontStyle: 'italic',
-    color: '#6b7280',
+    color: COLORS.neutralGray, // color4
     textAlign: 'center',
     marginTop: 10,
   },
   selecioneData: {
     textAlign: 'center',
-    fontSize: 16,
-    color: '#d0a956',
-    marginTop: 30,
+    fontStyle: 'italic',
+    color: COLORS.neutralGray, // color4
+    marginTop: 20,
+  },
+  btnLimpar: {
+    backgroundColor: COLORS.white,
+    borderColor: COLORS.primary, // color1
+    borderWidth: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 15,
+    borderRadius: 8,
+    alignSelf: 'center',
+    marginBottom: 15,
+  },
+  btnLimparText: {
+    color: COLORS.primary, // color1
+    fontWeight: 'bold',
   },
   treinoBox: {
-    backgroundColor: '#fff',
-    padding: 18,
-    borderRadius: 12,
-    marginBottom: 18,
-    borderColor: '#e5e7eb',
-    borderWidth: 1,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
+    backgroundColor: COLORS.cardBackground,
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 15,
+    borderLeftWidth: 5,
+    borderColor: COLORS.primary, // Cor padrão da borda do treino (pode ser ajustado)
+    shadowColor: COLORS.black,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   treinoConcluidoBox: {
-    borderColor: STATUS_COLORS.completed,
-    backgroundColor: '#d1fae5',
+    borderColor: STATUS_COLORS.completed, // Borda verde para concluído
   },
   treinoHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 5,
   },
   treinoNome: {
-    fontSize: 19,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: COLORS.darkPrimary, // color3
     marginLeft: 8,
-    color: '#1e293b',
+    flexShrink: 1,
   },
   treinoNomeConcluido: {
-    color: STATUS_COLORS.completed,
+    color: STATUS_COLORS.completed, // Texto verde para concluído
   },
   treinoCategoria: {
-    fontWeight: '700',
-    marginBottom: 4,
-    color: '#6b7280',
+    fontSize: 14,
+    color: COLORS.neutralGray, // color4
+    marginBottom: 5,
   },
   treinoDescricao: {
-    fontSize: 15,
-    marginBottom: 8,
-    color: '#334155',
+    fontSize: 14,
+    color: COLORS.neutralGray, // color4
+    marginBottom: 5,
   },
   exerciciosTitle: {
-    fontWeight: '700',
-    fontSize: 16,
-    marginBottom: 5,
-    color: '#444',
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: COLORS.darkPrimary, // color3
+    marginTop: 5,
+    marginBottom: 3,
   },
   exercicioItem: {
-    fontSize: 15,
-    marginLeft: 6,
-    marginBottom: 3,
-    color: '#475569',
+    fontSize: 13,
+    color: COLORS.neutralGray, // color4
+    marginLeft: 10,
+    marginBottom: 2,
   },
   treinoHora: {
-    fontSize: 14,
-    color: '#334155',
+    fontSize: 13,
+    color: COLORS.neutralGray, // color4
     marginTop: 5,
   },
   treinoDuracao: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 'bold',
-    color: '#065f46',
-    marginTop: 5,
+    color: COLORS.neutralGray, // color4
+    marginTop: 3,
   },
   btnIniciar: {
-    backgroundColor: '#d0a956',
+    backgroundColor: COLORS.primary, // color1
     paddingVertical: 10,
-    borderRadius: 8,
-    marginTop: 12,
-  },
-  btnIniciarText: {
-    textAlign: 'center',
-    color: '#1e293b',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  btnLimpar: {
-    alignSelf: 'center',
-    marginVertical: 12,
-    backgroundColor: '#fef3c7',
-    paddingVertical: 8,
     paddingHorizontal: 15,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: STATUS_COLORS.selectedDay,
-  },
-  btnLimparText: {
-    color: STATUS_COLORS.selectedDayText,
-    fontWeight: '600',
-    fontSize: 15,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f9fafb',
-  },
-  loadingText: {
     marginTop: 10,
-    fontSize: 16,
-    color: '#6b7280',
+    alignSelf: 'flex-start',
+  },
+  btnIniciarText: {
+    color: COLORS.white,
+    fontWeight: 'bold',
   },
 });

@@ -66,7 +66,7 @@ export default function UserTabs() {
           }
           return <IconComponent name={iconName} size={size} color={color} solid />;
         },
-        tabBarActiveTintColor: '#d0a956', // Cor para abas ativas
+        tabBarActiveTintColor: '#d4ac54', // Cor para abas ativas
         tabBarInactiveTintColor: '#888',  // Cor para abas inativas
         headerShown: false, // Esconde o cabeçalho padrão do Tab Navigator
       })}

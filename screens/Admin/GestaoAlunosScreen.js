@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,9 @@ import {
   ActivityIndicator,
   Switch,
   Platform,
+  SafeAreaView, // Adicionado
+  StatusBar,    // Adicionado
+  Image,        // Adicionado
 } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { db } from '../../services/firebaseConfig';
@@ -25,6 +28,23 @@ import {
 import { Picker } from '@react-native-picker/picker';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { getAuth } from 'firebase/auth'; // Adicionado
+
+// Paleta de Cores Refinada (copiada para consistência)
+const Colors = {
+    primaryGold: '#D4AF37', // Ouro mais clássico
+    darkBrown: '#3E2723',   // Marrom bem escuro, quase preto
+    lightBrown: '#795548',  // Marrom mais suave
+    creamBackground: '#FDF7E4', // Fundo creme claro
+    white: '#FFFFFF',
+    lightGray: '#ECEFF1',   // Cinza muito claro
+    mediumGray: '#B0BEC5',  // Cinza médio para textos secundários
+    darkGray: '#424242',    // Cinza escuro para textos principais
+    accentBlue: '#2196F3',  // Azul vibrante para links
+    successGreen: '#4CAF50', // Verde para sucesso
+    errorRed: '#F44336',    // Vermelho para erros/alertas
+    unreadBadge: '#EF5350', // Vermelho mais vibrante para badge de não lidas
+};
 
 export default function GestaoAlunosScreen() {
   const [selectedDate, setSelectedDate] = useState(null);
@@ -43,8 +63,34 @@ export default function GestaoAlunosScreen() {
   const [tipoTreinoSelecionado, setTipoTreinoSelecionado] = useState(null);
   const [observacoesTreino, setObservacoesTreino] = useState('');
   const [urgente, setUrgente] = useState(false);
+  const [adminInfo, setAdminInfo] = useState(null); // Novo estado para info do admin
 
   const tiposDeTreino = ['Cardio', 'Musculação', 'Funcional', 'Alongamento', 'Crossfit'];
+
+  // Função para carregar informações do administrador logado
+  const fetchAdminInfo = useCallback(() => {
+    const authInstance = getAuth();
+    const currentUser = authInstance.currentUser;
+
+    if (currentUser) {
+      const userRef = doc(db, 'users', currentUser.uid);
+      const unsubscribe = onSnapshot(userRef, (docSnap) => {
+        if (docSnap.exists() && docSnap.data().role === 'admin') {
+          setAdminInfo(docSnap.data());
+        } else {
+          console.warn('Usuário logado não é um administrador ou dados não encontrados.');
+          setAdminInfo({ name: 'Admin', email: 'admin@example.com', nome: 'Admin' }); // Fallback
+        }
+      }, (error) => {
+        console.error("Erro ao buscar informações do admin:", error);
+        setAdminInfo({ name: 'Admin', email: 'admin@example.com', nome: 'Admin' }); // Fallback em caso de erro
+      });
+      return unsubscribe;
+    } else {
+      setAdminInfo({ name: 'Visitante', email: '', nome: 'Visitante' }); // Fallback se não houver usuário logado
+      return () => {}; // Retorna uma função vazia para o cleanup
+    }
+  }, []);
 
   // Listener para marcar datas no calendário
   useEffect(() => {
@@ -104,7 +150,7 @@ export default function GestaoAlunosScreen() {
             marked: true,
             dots: dots,
             activeOpacity: 0,
-            selectedColor: hasUrgente ? '#d9534f' : '#d0a956', 
+            selectedColor: hasUrgente ? '#d9534f' : '#d0a956',
           };
           console.log(`[onSnapshot] Data ${docSnap.id} marcada. Dots:`, dots);
         } else {
@@ -139,9 +185,15 @@ export default function GestaoAlunosScreen() {
     };
   }, []);
 
+  // useEffect para buscar informações do admin
+  useEffect(() => {
+    const unsubscribeAdmin = fetchAdminInfo();
+    return () => unsubscribeAdmin();
+  }, [fetchAdminInfo]);
+
   const onDayPress = async (day) => {
     setSelectedDate(day.dateString);
-    setFormType(null); 
+    setFormType(null);
     setLoading(true);
     setClienteSelecionado(null);
     setTipoTreinoSelecionado(null);
@@ -166,14 +218,14 @@ export default function GestaoAlunosScreen() {
       });
     } else {
       console.log(`[onDayPress] Nenhum documento encontrado para a data selecionada: ${day.dateString}`);
-      setDadosData({ notas: [], treinos: [], avaliacoes: [] }); 
+      setDadosData({ notas: [], treinos: [], avaliacoes: [] });
     }
     setLoading(false);
   };
 
   const deletarItem = async (tipo, id) => {
     const docRef = doc(db, 'agenda', selectedDate);
-    const docSnap = await getDoc(docRef); 
+    const docSnap = await getDoc(docRef);
 
     if (!docSnap.exists()) {
       Alert.alert('Erro', 'Documento não encontrado para exclusão.');
@@ -206,7 +258,7 @@ export default function GestaoAlunosScreen() {
     if (!formType || !selectedDate) return;
 
     let novoDado = null;
-    let tipoLista = ''; 
+    let tipoLista = '';
 
     if (formType === 'nota') {
       if (!nota.trim()) return Alert.alert('Erro', 'Digite uma nota.');
@@ -225,7 +277,7 @@ export default function GestaoAlunosScreen() {
         tipo: tipoTreinoSelecionado,
         observacoes: observacoesTreino.trim(),
         urgente,
-        dataAgendada: selectedDate, 
+        dataAgendada: selectedDate,
         hora: horaTreino.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         tipoAgendamento: 'anotacaoTreino', // Identificador para anotações de treino
       };
@@ -274,7 +326,7 @@ export default function GestaoAlunosScreen() {
       };
 
       console.log(`[salvarDados] Tentando salvar para ${docRef.path}:`, dataToSave);
-      await setDoc(docRef, dataToSave, { merge: true }); 
+      await setDoc(docRef, dataToSave, { merge: true });
 
       setDadosData(prev => ({
         ...prev,
@@ -304,7 +356,6 @@ export default function GestaoAlunosScreen() {
         style={[
           styles.itemContainer,
           item.urgente ? styles.urgentItem : {},
-          // Estilo condicional para Treino Completo
           item.tipoAgendamento === 'treinoCompleto' ? styles.treinoCompletoItem : {},
           styles.itemRow,
         ]}
@@ -372,7 +423,7 @@ export default function GestaoAlunosScreen() {
   };
 
   const handleTimeChange = (event, selectedTime) => {
-    setShowTimePicker(Platform.OS === 'ios'); 
+    setShowTimePicker(Platform.OS === 'ios');
     if (selectedTime) {
       if (formType === 'treino') {
         setHoraTreino(selectedTime);
@@ -406,112 +457,124 @@ export default function GestaoAlunosScreen() {
     </View>
   );
 
-  return (
-    <View style={styles.container}>
-      {/* Título "Agenda" */}
-      <Text style={styles.headerTitle}>Agenda</Text>
+  // Lógica para obter o nome mais adequado do admin
+  const adminDisplayName = adminInfo?.nome || adminInfo?.name || 'Admin';
+  const adminInitial = adminDisplayName ? adminDisplayName.charAt(0).toUpperCase() : 'A';
 
-      <View style={styles.calendarContainer}>
-        <Calendar
-          onDayPress={onDayPress}
-          markedDates={{
-            ...datasMarcadas,
-            ...(selectedDate ? { 
-              [selectedDate]: { 
-                selected: true, 
-                selectedColor: datasMarcadas[selectedDate]?.selectedColor || '#d0a956', 
-                dots: datasMarcadas[selectedDate]?.dots || [], 
-              } 
-            } : {}),
-          }}
-          theme={{
-            todayTextColor: '#d0a956',
-            arrowColor: '#d0a956',
-            selectedDayBackgroundColor: '#d0a956',
-            dotColor: '#d0a956', 
-            textDisabledColor: '#d9e1e8',
-            monthTextColor: '#2d4150',
-            indicatorColor: '#d0a956',
-            dayTextColor: '#2d4150',
-            textSectionTitleColor: '#b6c1cd',
-            selectedDayTextColor: '#ffffff',
-            'stylesheet.calendar.header': {
-              week: {
-                marginTop: 5,
-                flexDirection: 'row',
-                justifyContent: 'space-around',
-              },
-            },
-            // Customização para os dots (pontos)
-            dotStyle: {
-                width: 6, // Tamanho padrão
-                height: 6,
-                borderRadius: 3,
-                marginHorizontal: 1,
-            },
-            // Customização para o dot do treino completo
-            // NOTE: Isso se aplica a TODOS os dots. Para tamanhos diferentes,
-            // precisaríamos de uma implementação mais complexa de customização de dots
-            // ou usar um componente customizado para o dia.
-            // Por enquanto, o dotColor no 'dots' array já diferencia.
-          }}
-          style={styles.calendarStyle}
+  return (
+    <SafeAreaView style={styles.container}>
+      {/* Barra Fixa Superior (Header - Otimizada) */}
+      <View style={styles.header}>
+        <Image
+          source={require('../../assets/logo.jpeg')} // Verifique se o caminho do logo está correto
+          style={styles.headerLogo}
+          resizeMode="contain"
         />
+        <View style={styles.userInfo}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{adminInitial}</Text>
+          </View>
+          <Text style={styles.userNameText}>Olá, {adminDisplayName}</Text>
+        </View>
       </View>
 
-
-      {loading && (
-        <ActivityIndicator size="large" color="#d0a956" style={styles.activityIndicator} />
-      )}
-
-      {selectedDate && !loading ? (
-        <ScrollView style={styles.detailsScrollView}>
-          {dadosData.notas.length === 0 && dadosData.treinos.length === 0 && dadosData.avaliacoes.length === 0 ? (
-            <View style={styles.noDataContainer}>
-              <MaterialIcons name="info-outline" size={50} color="#d0a956" />
-              <Text style={styles.noDataText}>Nenhum agendamento para esta data.</Text>
-              <Text style={styles.noDataSubText}>Clique no botão "+" para adicionar uma nota, treino ou avaliação.</Text>
-            </View>
-          ) : (
-            <>
-              {dadosData.notas.length > 0 && (
-                <>
-                  <View style={styles.sectionHeader}>
-                    <MaterialIcons name="note" size={24} color="#d0a956" style={styles.sectionIcon} />
-                    <Text style={styles.sectionTitle}>Notas</Text>
-                  </View>
-                  {renderDataList('notas')}
-                </>
-              )}
-
-              {dadosData.treinos.length > 0 && (
-                <>
-                  <View style={styles.sectionHeader}>
-                    <MaterialIcons name="fitness-center" size={24} color="#d0a956" style={styles.sectionIcon} />
-                    <Text style={styles.sectionTitle}>Treinos</Text>
-                  </View>
-                  {renderDataList('treinos')}
-                </>
-              )}
-
-              {dadosData.avaliacoes.length > 0 && (
-                <>
-                  <View style={styles.sectionHeader}>
-                    <MaterialIcons name="assignment" size={24} color="#d0a956" style={styles.sectionIcon} />
-                    <Text style={styles.sectionTitle}>Avaliações</Text>
-                  </View>
-                  {renderDataList('avaliacoes')}
-                </>
-              )}
-            </>
-          )}
-        </ScrollView>
-      ) : (
-        <View style={styles.noDateSelectedContainer}>
-          <MaterialIcons name="event" size={60} color="#d0a956" />
-          <Text style={styles.noDateSelectedText}>Selecione uma data para ver os agendamentos</Text>
+      {/* Calendário e Conteúdo */}
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.calendarContainer}>
+          <Calendar
+            onDayPress={onDayPress}
+            markedDates={{
+              ...datasMarcadas,
+              ...(selectedDate ? {
+                [selectedDate]: {
+                  selected: true,
+                  selectedColor: datasMarcadas[selectedDate]?.selectedColor || Colors.primaryGold, // Usar Colors.primaryGold
+                  dots: datasMarcadas[selectedDate]?.dots || [],
+                }
+              } : {}),
+            }}
+            theme={{
+              todayTextColor: Colors.primaryGold,
+              arrowColor: Colors.primaryGold,
+              selectedDayBackgroundColor: Colors.primaryGold,
+              dotColor: Colors.primaryGold,
+              textDisabledColor: Colors.lightGray,
+              monthTextColor: Colors.darkBrown,
+              indicatorColor: Colors.primaryGold,
+              dayTextColor: Colors.darkGray,
+              textSectionTitleColor: Colors.mediumGray,
+              selectedDayTextColor: Colors.white,
+              'stylesheet.calendar.header': {
+                week: {
+                  marginTop: 5,
+                  flexDirection: 'row',
+                  justifyContent: 'space-around',
+                },
+              },
+              dotStyle: {
+                  width: 6,
+                  height: 6,
+                  borderRadius: 3,
+                  marginHorizontal: 1,
+              },
+            }}
+            style={styles.calendarStyle}
+          />
         </View>
-      )}
+
+        {loading && (
+          <ActivityIndicator size="large" color={Colors.primaryGold} style={styles.activityIndicator} />
+        )}
+
+        {selectedDate && !loading ? (
+          <View style={styles.detailsContainer}>
+            {dadosData.notas.length === 0 && dadosData.treinos.length === 0 && dadosData.avaliacoes.length === 0 ? (
+              <View style={styles.noDataContainer}>
+                <MaterialIcons name="info-outline" size={50} color={Colors.primaryGold} />
+                <Text style={styles.noDataText}>Nenhum agendamento para esta data.</Text>
+                <Text style={styles.noDataSubText}>Clique no botão "+" para adicionar uma nota, treino ou avaliação.</Text>
+              </View>
+            ) : (
+              <>
+                {dadosData.notas.length > 0 && (
+                  <>
+                    <View style={styles.sectionHeader}>
+                      <MaterialIcons name="note" size={24} color={Colors.primaryGold} style={styles.sectionIcon} />
+                      <Text style={styles.sectionTitle}>Notas</Text>
+                    </View>
+                    {renderDataList('notas')}
+                  </>
+                )}
+
+                {dadosData.treinos.length > 0 && (
+                  <>
+                    <View style={styles.sectionHeader}>
+                      <MaterialIcons name="fitness-center" size={24} color={Colors.primaryGold} style={styles.sectionIcon} />
+                      <Text style={styles.sectionTitle}>Treinos</Text>
+                    </View>
+                    {renderDataList('treinos')}
+                  </>
+                )}
+
+                {dadosData.avaliacoes.length > 0 && (
+                  <>
+                    <View style={styles.sectionHeader}>
+                      <MaterialIcons name="assignment" size={24} color={Colors.primaryGold} style={styles.sectionIcon} />
+                      <Text style={styles.sectionTitle}>Avaliações</Text>
+                    </View>
+                    {renderDataList('avaliacoes')}
+                  </>
+                )}
+              </>
+            )}
+          </View>
+        ) : (
+          <View style={styles.noDateSelectedContainer}>
+            <MaterialIcons name="event" size={60} color={Colors.primaryGold} />
+            <Text style={styles.noDateSelectedText}>Selecione uma data para ver os agendamentos</Text>
+          </View>
+        )}
+      </ScrollView>
 
 
       <TouchableOpacity
@@ -527,8 +590,8 @@ export default function GestaoAlunosScreen() {
         transparent={true}
         onRequestClose={() => {
           setModalVisible(false);
-          setFormType(null); 
-          setShowTimePicker(false); 
+          setFormType(null);
+          setShowTimePicker(false);
         }}
       >
         <View style={styles.modalBackground}>
@@ -590,8 +653,8 @@ export default function GestaoAlunosScreen() {
                       <Switch
                         value={urgente}
                         onValueChange={setUrgente}
-                        trackColor={{ false: '#767577', true: '#d0a956' }}
-                        thumbColor={urgente ? '#f4f3f4' : '#f4f3f4'}
+                        trackColor={{ false: Colors.mediumGray, true: Colors.errorRed }} // Usar cores da paleta
+                        thumbColor={Colors.white}
                       />
                     </View>
                   </>
@@ -606,6 +669,7 @@ export default function GestaoAlunosScreen() {
                         onValueChange={(val) => setClienteSelecionado(val)}
                         mode="dropdown"
                         style={styles.picker}
+                        itemStyle={{ color: Colors.darkGray }} // Estilo para os itens do Picker
                       >
                         <Picker.Item label="Selecione um cliente" value={null} />
                         {clientes.map((cliente) => (
@@ -627,6 +691,7 @@ export default function GestaoAlunosScreen() {
                             onValueChange={(val) => setTipoTreinoSelecionado(val)}
                             mode="dropdown"
                             style={styles.picker}
+                            itemStyle={{ color: Colors.darkGray }}
                           >
                             <Picker.Item label="Selecione o tipo" value={null} />
                             {tiposDeTreino.map((tipo) => (
@@ -682,8 +747,8 @@ export default function GestaoAlunosScreen() {
                       <Switch
                         value={urgente}
                         onValueChange={setUrgente}
-                        trackColor={{ false: '#767577', true: '#d9534f' }} 
-                        thumbColor={urgente ? '#f4f3f4' : '#f4f3f4'}
+                        trackColor={{ false: Colors.mediumGray, true: Colors.errorRed }}
+                        thumbColor={Colors.white}
                       />
                     </View>
                   </>
@@ -694,7 +759,7 @@ export default function GestaoAlunosScreen() {
                     style={[styles.button, styles.buttonCancel]}
                     onPress={() => {
                       setFormType(null);
-                      setShowTimePicker(false); 
+                      setShowTimePicker(false);
                     }}
                   >
                     <Text style={styles.buttonCancelText}>Voltar</Text>
@@ -712,44 +777,88 @@ export default function GestaoAlunosScreen() {
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8f8f8', 
-    paddingTop: Platform.OS === 'android' ? 25 : 50, 
+    backgroundColor: Colors.creamBackground, // Usando a cor de fundo da paleta
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-    textAlign: 'center',
-    marginBottom: 20,
+  header: { // Estilos do header copiados e ajustados para compactação
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingVertical: 8, // Reduzido
+    backgroundColor: Colors.primaryGold,
+    borderBottomWidth: 0,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 2 : 0, // Reduzido
+    shadowColor: Colors.darkBrown,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 4,
   },
+  headerLogo: { // Estilos do logo copiados e ajustados
+    width: 40, // Reduzido
+    height: 40, // Reduzido
+    borderRadius: 8,
+  },
+  userInfo: { // Estilos do userInfo copiados
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  avatar: { // Estilos do avatar copiados e ajustados
+    width: 38, // Reduzido
+    height: 38, // Reduzido
+    borderRadius: 19, // Ajustado
+    backgroundColor: Colors.darkBrown,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+    borderWidth: 1.5,
+    borderColor: Colors.white,
+  },
+  avatarText: { // Estilos do avatarText copiados e ajustados
+    color: Colors.white,
+    fontSize: 18, // Reduzido
+    fontWeight: '600',
+  },
+  userNameText: { // Estilos do userNameText copiados e ajustados
+    fontSize: 16, // Reduzido
+    fontWeight: '600',
+    color: Colors.white,
+  },
+  scrollContent: { // Novo estilo para o ScrollView principal (conteúdo abaixo do header)
+    flexGrow: 1,
+    paddingHorizontal: 15,
+    paddingTop: 15, // Espaço entre o header e o calendário
+    paddingBottom: 80, // Espaço para o FAB
+  },
+  // Removido headerTitle antigo, pois o novo header o substitui
+
   calendarContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: Colors.white, // Usando a cor da paleta
     borderRadius: 10,
-    marginHorizontal: 15,
     marginBottom: 10,
     elevation: 3,
-    shadowColor: '#000',
+    shadowColor: Colors.darkBrown, // Usando a cor da paleta
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 3,
   },
   calendarStyle: {
-    height: 330, 
-    borderRadius: 10, 
+    height: 330,
+    borderRadius: 10,
   },
   activityIndicator: {
     marginTop: 20,
   },
-  detailsScrollView: {
+  detailsContainer: { // Novo container para os detalhes da data selecionada
     flex: 1,
-    paddingHorizontal: 15,
     paddingTop: 10,
   },
   noDataContainer: {
@@ -757,32 +866,32 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 40,
     marginTop: 20,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.white, // Usando a cor da paleta
     borderRadius: 10,
     elevation: 2,
-    shadowColor: '#000',
+    shadowColor: Colors.darkBrown,
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
   noDataText: {
     fontSize: 18,
-    color: '#666',
+    color: Colors.darkGray, // Usando a cor da paleta
     marginTop: 15,
     textAlign: 'center',
     fontWeight: '600',
   },
   noDataSubText: {
     fontSize: 14,
-    color: '#888',
+    color: Colors.mediumGray, // Usando a cor da paleta
     marginTop: 5,
     textAlign: 'center',
     paddingHorizontal: 20,
   },
-  noDataItemText: { 
+  noDataItemText: {
     padding: 10,
     textAlign: 'center',
-    color: '#888',
+    color: Colors.mediumGray, // Usando a cor da paleta
     fontStyle: 'italic',
   },
   noDateSelectedContainer: {
@@ -793,7 +902,7 @@ const styles = StyleSheet.create({
   },
   noDateSelectedText: {
     fontSize: 18,
-    color: '#666',
+    color: Colors.darkGray, // Usando a cor da paleta
     marginTop: 15,
     textAlign: 'center',
     fontWeight: '600',
@@ -804,7 +913,7 @@ const styles = StyleSheet.create({
     marginTop: 25,
     marginBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: Colors.lightGray, // Usando a cor da paleta
     paddingBottom: 5,
   },
   sectionIcon: {
@@ -813,15 +922,15 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontWeight: '700',
     fontSize: 20,
-    color: '#3e3e3e',
+    color: Colors.darkBrown, // Usando a cor da paleta
   },
   itemContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: Colors.white, // Usando a cor da paleta
     borderRadius: 10,
     padding: 15,
     marginBottom: 12,
     elevation: 3,
-    shadowColor: '#000',
+    shadowColor: Colors.darkBrown,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 3,
@@ -837,26 +946,25 @@ const styles = StyleSheet.create({
   itemText: {
     fontSize: 16,
     marginBottom: 5,
-    color: '#333',
+    color: Colors.darkGray, // Usando a cor da paleta
   },
   itemLabel: {
     fontWeight: 'bold',
-    color: '#555',
+    color: Colors.darkBrown, // Usando a cor da paleta
   },
   urgentItem: {
-    borderLeftColor: '#d9534f',
+    borderLeftColor: Colors.errorRed, // Usando a cor da paleta
     borderLeftWidth: 5,
   },
   urgentText: {
-    color: '#d9534f',
+    color: Colors.errorRed, // Usando a cor da paleta
     fontWeight: 'bold',
   },
-  // Novo estilo para Treino Completo na lista de detalhes
   treinoCompletoItem: {
-    backgroundColor: '#e6f7ff', // Um azul claro de fundo
-    borderLeftColor: '#007bff', // Borda esquerda azul mais intensa
+    backgroundColor: '#e6f7ff',
+    borderLeftColor: Colors.accentBlue, // Usando a cor da paleta
     borderLeftWidth: 5,
-    shadowColor: '#007bff', // Sombra azul
+    shadowColor: Colors.accentBlue,
     shadowOpacity: 0.2,
     shadowRadius: 5,
     elevation: 5,
@@ -864,7 +972,7 @@ const styles = StyleSheet.create({
   treinoCompletoTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#0056b3', // Título em azul escuro
+    color: Colors.accentBlue, // Usando a cor da paleta
     marginBottom: 8,
   },
   deleteButton: {
@@ -875,21 +983,21 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 30,
     right: 25,
-    backgroundColor: '#d0a956',
+    backgroundColor: Colors.primaryGold, // Usando a cor da paleta
     width: 60,
     height: 60,
     borderRadius: 30,
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 8,
-    shadowColor: '#000',
+    shadowColor: Colors.darkBrown,
     shadowOffset: { width: 0, height: 5 },
     shadowOpacity: 0.4,
     shadowRadius: 5,
   },
   fabText: {
     fontSize: 35,
-    color: '#fff',
+    color: Colors.white, // Usando a cor da paleta
     lineHeight: 35,
     fontWeight: '600',
   },
@@ -900,12 +1008,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   modalContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: Colors.creamBackground, // Usando a cor da paleta
     borderRadius: 15,
     padding: 25,
     maxHeight: '90%',
     elevation: 10,
-    shadowColor: '#000',
+    shadowColor: Colors.darkBrown,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.25,
     shadowRadius: 10,
@@ -914,50 +1022,65 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     marginBottom: 25,
-    color: '#333',
+    color: Colors.darkBrown, // Usando a cor da paleta
     textAlign: 'center',
   },
   modalOption: {
     paddingVertical: 16,
     paddingHorizontal: 20,
-    backgroundColor: '#e9e9e9',
+    backgroundColor: Colors.lightGray, // Usando a cor da paleta
     borderRadius: 12,
     marginBottom: 15,
     alignItems: 'center',
   },
   modalOptionText: {
     fontSize: 18,
-    color: '#555',
+    color: Colors.darkGray, // Usando a cor da paleta
     fontWeight: '500',
   },
   label: {
     fontSize: 16,
-    color: '#444',
+    color: Colors.darkBrown, // Usando a cor da paleta
     marginBottom: 8,
     fontWeight: '500',
   },
   input: {
     borderWidth: 1,
-    borderColor: '#d0a956',
+    borderColor: Colors.inputBorder, // Usando a cor da paleta
     borderRadius: 12,
     paddingHorizontal: 15,
     paddingVertical: 12,
     fontSize: 16,
     marginBottom: 20,
-    color: '#222',
-    backgroundColor: '#fff',
+    color: Colors.darkGray, // Usando a cor da paleta
+    backgroundColor: Colors.white, // Usando a cor da paleta
   },
   pickerContainer: {
     borderWidth: 1,
-    borderColor: '#d0a956',
+    borderColor: Colors.inputBorder, // Usando a cor da paleta
     borderRadius: 12,
     marginBottom: 20,
     overflow: 'hidden',
-    backgroundColor: '#fff',
+    backgroundColor: Colors.white, // Usando a cor da paleta
   },
   picker: {
     height: 50,
     width: '100%',
+  },
+  timePickerButton: { // Estilo para o botão do TimePicker
+    borderWidth: 1,
+    borderColor: Colors.inputBorder,
+    borderRadius: 12,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    fontSize: 16,
+    marginBottom: 20,
+    backgroundColor: Colors.white,
+    alignItems: 'center',
+  },
+  timePickerButtonText: { // Estilo para o texto do botão do TimePicker
+    color: Colors.darkGray,
+    fontSize: 16,
   },
   switchRow: {
     flexDirection: 'row',
@@ -968,48 +1091,40 @@ const styles = StyleSheet.create({
   },
   switchText: {
     fontSize: 16,
-    color: '#444',
+    color: Colors.darkBrown, // Usando a cor da paleta
   },
   buttonGroup: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginTop: 25,
+    marginTop: 20,
   },
   button: {
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    borderRadius: 12,
-    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 25,
+    borderRadius: 10,
     alignItems: 'center',
-    minWidth: 120,
-  },
-  buttonSave: {
-    backgroundColor: '#d0a956',
-  },
-  buttonSaveText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    flex: 1,
+    marginHorizontal: 5,
+    shadowColor: Colors.darkBrown,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
   },
   buttonCancel: {
-    backgroundColor: '#ccc',
+    backgroundColor: Colors.lightGray, // Usando a cor da paleta
+  },
+  buttonSave: {
+    backgroundColor: Colors.accentBlue, // Usando a cor da paleta
   },
   buttonCancelText: {
-    color: '#333',
+    color: Colors.darkGray, // Usando a cor da paleta
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
-  timePickerButton: {
-    borderWidth: 1,
-    borderColor: '#d0a956',
-    borderRadius: 12,
-    padding: 15,
-    alignItems: 'center',
-    marginBottom: 20,
-    backgroundColor: '#fff',
-  },
-  timePickerButtonText: {
+  buttonSaveText: {
+    color: Colors.white, // Usando a cor da paleta
     fontSize: 16,
-    color: '#444',
+    fontWeight: 'bold',
   },
 });

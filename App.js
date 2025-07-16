@@ -43,7 +43,7 @@ import EditarQuestionarioScreen from './screens/Admin/EditarQuestionarioScreen';
 import ListarQuestionariosUserScreen from './screens/User/ListarQuestionariosUserScreen';
 import { ThemeProvider } from './screens/ThemeContext';
 import CompletedTrainingsHistoryScreen from './screens/Admin/CompletedTrainingsHistoryScreen';
-
+import ExerciseLibraryScreen from './screens/Admin/ExerciseLibraryScreen';
 // IMPORTAR AS DUAS HOMESCREENS COM NOMES DISTINTOS
 import AdminHomeScreen from './screens/Admin/HomeScreen'; // HomeScreen para o Admin
 import HomeScreen from './screens/User/UserHomeScreen';  // HomeScreen para o Utilizador
@@ -80,6 +80,10 @@ export default function App() {
                 <Stack.Screen name="CriarQuestionario" component={CriarQuestionarioScreen} />
                 <Stack.Screen name="ListarQuestionarios" component={ListarQuestionariosScreen} options={{ title: 'Listar Questionários' }} />
                 <Stack.Screen name="CompletedTrainingsHistory" component={CompletedTrainingsHistoryScreen} />
+               <Stack.Screen
+    name="ExerciseLibrary" // Escolha um nome de rota único e descritivo
+    component={ExerciseLibraryScreen}
+    options={{ headerShown: false }} />
                 <Stack.Screen name="ResponderQuestionarioScreen" component={ResponderQuestionarioScreen} options={{ title: 'Questionário' }} />
                 {/* Telas de Chat (Admin) */}
                 <Stack.Screen name="AdminChatList" component={AdminChatListScreen} />

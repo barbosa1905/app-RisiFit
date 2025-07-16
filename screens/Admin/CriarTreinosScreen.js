@@ -10,6 +10,7 @@ import {
   Modal,
   Alert,
   KeyboardAvoidingView,
+  ActivityIndicator,
 } from 'react-native';
 import {
   buscarClientes,
@@ -21,68 +22,18 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { obterNomeCliente } from '../../utils/clienteUtils';
 import Feather from 'react-native-vector-icons/Feather';
 
-// IMPORTANTE: Adicionar 'Timestamp' e 'doc', 'setDoc', 'getDoc' para interagir com a coleção 'agenda'
-import { db } from '../../services/firebaseConfig'; 
-import { collection, query, where, getDocs, onSnapshot, orderBy, limit, collectionGroup, Timestamp, doc, setDoc, getDoc } from 'firebase/firestore'; 
+import { db } from '../../services/firebaseConfig';
+import { collection, query, where, getDocs, onSnapshot, orderBy, limit, collectionGroup, Timestamp, doc, setDoc, getDoc, addDoc } from 'firebase/firestore';
 
 const categorias = ['Cardio', 'Força', 'Mobilidade', 'Core'];
-
-const listaExercicios = [
-  'Abdução de pernas na máquina (sentado ou em pé)', 'Abdominais crunch', 'Abdominais crunch invertido', 'Abdominais com bola suíça',
-  'Abdominais na máquina', 'Abdominais na polia alta (joelhos no chão)', 'Ab wheel (roda abdominal)', 'Agachamento búlgaro',
-  'Agachamento com barra', 'Agachamento com halteres', 'Agachamento com kettlebell (goblet squat)', 'Agachamento frontal',
-  'Agachamento hack (máquina)', 'Agachamento no Smith', 'Agachamento sumô com halteres ou barra', 'Avanço com halteres',
-  'Avanço no Smith', 'Barra fixa (pull-up)', 'Barra fixa com pegada supinada (chin-up)', 'Barra guiada (Smith machine)',
-  'Battle ropes (cordas ondulatórias)', 'Bicicleta ergométrica', 'Bíceps alternado com halteres', 'Bíceps com barra reta ou W',
-  'Bíceps concentrado', 'Bíceps na máquina Scott', 'Bíceps na polia baixa', 'Bíceps rosca martelo', 'Bíceps rosca direta',
-  'Box jump (salto à caixa)', 'Burpees', 'Cadeira abdutora', 'Cadeira adutora', 'Cadeira extensora',
-  'Cadeira flexora (deitado ou sentado)', 'Caminhada inclinada na passadeira', 'Caminhada na esteira', 'Clean com barra ou halteres',
-  'Climber (escalador)', 'Corrida ao ar livre', 'Corrida na passadeira', 'Corda naval', 'Corda para pular',
-  'Crucifixo com halteres (reto ou inclinado)', 'Crucifixo invertido (posterior de ombro)', 'Crucifixo na máquina peck deck',
-  'Cross over na polia', 'Cross trainer (elíptica)', 'Crunch oblíquo', 'Deadlift (levantamento terra tradicional)',
-  'Deadlift romeno (stiff)', 'Deadlift sumô', 'Desenvolvimento com barra', 'Desenvolvimento com halteres (ombros)',
-  'Desenvolvimento na máquina', 'Dumbbell press (ombros ou peito)', 'Dumbbell snatch (arranco com halteres)', 'Dumbbell swing',
-  'Elevação de panturrilhas em pé', 'Elevação de panturrilhas sentado', 'Elevação de pernas (no solo ou paralelas)',
-  'Elevação de pernas suspenso', 'Elevação frontal com halteres', 'Elevação lateral com halteres', 'Escalador (mountain climber)',
-  'Escalador vertical (máquina)', 'Escapulamento na polia (scapula pull)', 'Face pull na polia (ombros e costas)',
-  'Farmer’s walk (caminhada com halteres ou kettlebells)', 'Flexão de braços com joelhos no chão', 'Flexão de braços inclinada',
-  'Flexão de braços tradicional', 'Flexora deitada (máquina)', 'Flexora sentada', 'Fly peitoral com cabos',
-  'Fly peitoral com halteres', 'Front squat (agachamento frontal)', 'Gêmeos na leg press', 'Gêmeos na máquina em pé',
-  'Gêmeos na máquina sentado', 'Glúteo na máquina', 'Glúteo na polia', 'Glute bridge (elevação de quadril)',
-  'Glute bridge com barra (hip thrust)', 'Goblet squat', 'Good morning (com barra ou halteres)', 'Hack squat (máquina)',
-  'Hammer curl (rosca martelo)', 'High knees (corrida no lugar com joelhos altos)', 'Hip thrust com barra',
-  'Hiperextensão lombar (banco 45º ou solo)', 'Hollow hold (abdominal isométrico)',
-  'Incline bench press (supino inclinado com barra ou halteres)', 'Incline curl (rosca bíceps em banco inclinado)',
-  'Isometria abdominal', 'Isometria de prancha', 'Jump lunge (avanço com salto)', 'Jump squat', 'Jumping jacks',
-  'Landmine press (barra presa de um lado)', 'Lateral raise (elevação lateral)', 'Leg curl sentado', 'Leg press 45º',
-  'Leg press horizontal', 'L-sit (paralela ou chão)', 'Lunge com barra', 'Lunge frontal', 'Lunge lateral', 'Lunge reverso',
-  'Máquina adutora/abdutora', 'Máquina de bíceps/tríceps', 'Máquina de glúteo', 'Máquina de remada baixa',
-  'Máquina de remada unilateral', 'Mountain climbers', 'Natação (cardio funcional)',
-  'Neutral grip pull-up (barra fixa com pegada neutra)', 'Nórdicos (nordic hamstring curl – posterior de coxa)',
-  'Panturrilha na leg press', 'Paralelas (dips)', 'Passada com halteres', 'Pêndulo (swings com kettlebell)', 'Peck deck',
-  'Planche hold (avançado)', 'Pliometria (caixa, saltos)', 'Prancha abdominal', 'Prancha lateral',
-  'Pull-over com halteres', 'Pull-up (barra fixa)', 'Pulley frente (puxada na polia)',
-  'Push press (com barra ou halteres)', 'Quadríceps na extensora', 'Quadrupede diagonal (abdominal funcional)',
-  'Remada alta na polia', 'Remada baixa na polia', 'Remada cavalinho (T-bar row)', 'Remada com halteres unilateral',
-  'Remada curvada com barra', 'Remada no TRX', 'Remo na máquina', 'Rosca 21', 'Rosca concentrada', 'Rosca direta',
-  'Rosca martelo', 'Shoulder press com halteres ou barra', 'Shoulder shrug (encolhimento de ombros)',
-  'Smith machine (exercícios guiados)', 'Sprints (corrida curta e rápida)', 'Squat jump', 'Step-up com halteres',
-  'Stiff com barra', 'Stiff com halteres', 'Supino declinado', 'Supino inclinado com barra',
-  'Supino inclinado com halteres', 'Supino na máquina', 'Supino reto com barra', 'Supino reto com halteres',
-  'Swing com kettlebell', 'T-Bar row (remada cavalinho)', 'TRX push-up', 'TRX row (remada no TRX)', 'TRX Y-fly',
-  'Treino intervalado HIIT', 'Tríceps mergulho em banco (bench dips)', 'Tríceps na máquina',
-  'Tríceps na polia (barra ou corda)', 'Tríceps testa com barra ou halteres',
-  'Underhand row (remada com pegada supinada)', 'Upright row (remada alta)', 'V-sit abdominal',
-  'Voador inverso (posterior de ombro)', 'Voador peitoral', 'Walking lunge (passada andando)',
-  'Wall ball (bola contra parede)', 'Wall sit (isometria de pernas)', 'Weight plate front raise (com anilha)',
-  'Windshield wipers (abdominais oblíquos avançados)',
-];
 
 export default function CriarTreinosScreen() {
   const [clientes, setClientes] = useState([]);
   const [clienteSelecionado, setClienteSelecionado] = useState(null);
   const [modalClientesVisible, setModalClientesVisible] = useState(false);
-  const [listaExerciciosEstado, setListaExerciciosEstado] = useState(listaExercicios);
+  // listaExerciciosEstado agora guarda objetos completos de exercícios da biblioteca
+  const [listaExerciciosEstado, setListaExerciciosEstado] = useState([]);
+  const [loadingExercises, setLoadingExercises] = useState(true);
   const [filtroExercicios, setFiltroExercicios] = useState('');
   const [nome, setNome] = useState('');
   const [descricao, setDescricao] = useState('');
@@ -90,24 +41,45 @@ export default function CriarTreinosScreen() {
   const [horaSelecionada, setHoraSelecionada] = useState(null);
   const [mostrarPickerHora, setMostrarPickerHora] = useState(false);
   const [categoria, setCategoria] = useState('');
+  // exercicios agora guarda objetos com nome, tipo, valor E os detalhes da biblioteca (como animationUrl)
   const [exercicios, setExercicios] = useState([]);
 
   const [novoExercicioNome, setNovoExercicioNome] = useState('');
 
-  const [treinos, setTreinos] = useState([]); // Este estado é para os treinos detalhados
+  const [treinos, setTreinos] = useState([]);
 
   const [modalListaExerciciosVisible, setModalListaExerciciosVisible] = useState(false);
   const [exercicioSelecionadoIndex, setExercicioSelecionadoIndex] = useState(null);
+
+  // Função para buscar exercícios completos do Firestore (não apenas nomes)
+  const fetchExercisesFromFirestore = useCallback(() => {
+    setLoadingExercises(true);
+    const exercisesColRef = collection(db, 'exercises');
+    const q = query(exercisesColRef, orderBy('name', 'asc'));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      // Mapeia para objetos completos, incluindo id e todos os dados
+      const fetchedExercises = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setListaExerciciosEstado(fetchedExercises);
+      setLoadingExercises(false);
+    }, (err) => {
+      console.error("Erro ao buscar exercícios da biblioteca:", err);
+      Alert.alert("Erro", "Não foi possível carregar a lista de exercícios da biblioteca.");
+      setLoadingExercises(false);
+    });
+
+    return unsubscribe;
+  }, []);
 
   const carregarClientesETreinos = useCallback(async () => {
     try {
       const listaClientes = await buscarClientes();
       setClientes(listaClientes);
 
-      // Não precisamos de buscar todos os treinos detalhados aqui para o calendário do admin.
-      // A marcação no calendário será feita pela coleção 'agenda'.
-      // No entanto, se 'treinos' aqui se refere a algo que você usa no CriarTreinosScreen, mantenha.
-      const listaTreinos = await buscarTodosTreinosComNomes(); // Isso busca os treinos detalhados
+      const listaTreinos = await buscarTodosTreinosComNomes();
       setTreinos(listaTreinos);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
@@ -116,21 +88,24 @@ export default function CriarTreinosScreen() {
   }, []);
 
   useEffect(() => {
+    const unsubscribeExercises = fetchExercisesFromFirestore();
     carregarClientesETreinos();
-  }, [carregarClientesETreinos]);
 
-  // A lógica de marcar datas no calendário do CriarTreinosScreen.js
-  // pode ser baseada nos treinos detalhados que já existem.
+    return () => {
+      unsubscribeExercises();
+    };
+  }, [fetchExercisesFromFirestore, carregarClientesETreinos]);
+
   const markedDates = useCallback(() => {
     const marcacoes = {};
     treinos.forEach((treino) => {
       let dataTreino;
       if (treino.data && typeof treino.data.toDate === 'function') {
-          dataTreino = treino.data.toDate(); 
+        dataTreino = treino.data.toDate();
       } else if (typeof treino.data === 'string' && treino.data.includes('T')) {
-          dataTreino = new Date(treino.data); 
+        dataTreino = new Date(treino.data);
       } else {
-          return; 
+        return;
       }
 
       const dataString = dataTreino.toISOString().split('T')[0];
@@ -146,7 +121,7 @@ export default function CriarTreinosScreen() {
               borderRadius: 10,
             },
             text: {
-              color: '#4f46e5', // Cor do texto para datas marcadas
+              color: '#4f46e5',
               fontWeight: '700',
             },
           },
@@ -158,10 +133,22 @@ export default function CriarTreinosScreen() {
     return marcacoes;
   }, [treinos]);
 
-  const markedDatesForCalendar = markedDates(); // Renomeado para evitar conflito
+  const markedDatesForCalendar = markedDates();
 
   const adicionarExercicio = () => {
-    setExercicios((prev) => [...prev, { nome: '', tipo: 'reps', valor: '' }]);
+    // Adiciona um objeto de exercício com campos iniciais, incluindo os da biblioteca
+    setExercicios((prev) => [...prev, {
+      id: '', // ID do exercício da biblioteca
+      name: '', // Nome do exercício
+      description: '', // Descrição da biblioteca
+      category: '', // Categoria da biblioteca
+      targetMuscles: [], // Músculos da biblioteca
+      equipment: [], // Equipamento da biblioteca
+      animationUrl: '', // URL da animação da biblioteca
+      imageUrl: '', // URL da imagem da biblioteca
+      tipo: 'reps', // Tipo de medida para o treino (reps/tempo)
+      valor: '', // Valor da medida (número de reps ou segundos)
+    }]);
   };
 
   const atualizarExercicio = (index, campo, valor) => {
@@ -197,7 +184,7 @@ export default function CriarTreinosScreen() {
     setCategoria('');
     setClienteSelecionado(null);
     setExercicios([]);
-    setNovoExercicioNome(''); 
+    setNovoExercicioNome('');
     setFiltroExercicios('');
   };
 
@@ -210,7 +197,7 @@ export default function CriarTreinosScreen() {
       !horaSelecionada ||
       !categoria ||
       exercicios.length === 0 ||
-      exercicios.some((e) => !e.nome.trim() || !e.valor.trim())
+      exercicios.some((e) => !e.name.trim() || !e.valor.trim()) // Verifica 'name' agora
     ) {
       Alert.alert('Campos Obrigatórios', 'Por favor, preencha todos os campos e adicione pelo menos um exercício com nome e valor.');
       return;
@@ -226,56 +213,56 @@ export default function CriarTreinosScreen() {
     );
 
     try {
-      // 1. Salvar o treino detalhado na sua coleção de treinos (ex: 'treinos' ou 'treinosClientes')
+      // Prepara os exercícios para serem guardados, removendo o 'id' local se não for necessário
+      // e garantindo que a estrutura é a que queremos guardar
+      const exerciciosParaGuardar = exercicios.map(ex => {
+        const { id, ...rest } = ex; // Remove o 'id' que é apenas para uso local na app
+        return rest;
+      });
+
       await criarTreinoParaCliente({
         userId: clienteSelecionado.id,
         nome: nome.trim(),
         descricao: descricao.trim(),
-        data: Timestamp.fromDate(dataHora), // Guarda como Timestamp nativo do Firestore
+        data: Timestamp.fromDate(dataHora),
         categoria,
-        criadoEm: Timestamp.now(), // Guarda a data de criação como Timestamp
-        exercicios,
+        criadoEm: Timestamp.now(),
+        exercicios: exerciciosParaGuardar, // Usa a lista de exercícios formatada
       });
 
-      // 2. Criar/Atualizar uma entrada sumária na coleção 'agenda' para marcar no calendário do admin
-      const agendaDocRef = doc(db, 'agenda', dataSelecionada); // Documento para a data YYYY-MM-DD
+      const agendaDocRef = doc(db, 'agenda', dataSelecionada);
       const agendaDocSnap = await getDoc(agendaDocRef);
       let currentTreinosInAgenda = [];
 
       if (agendaDocSnap.exists()) {
-          // Filtra itens nulos/undefined e garante que 'treinos' é um array
-          currentTreinosInAgenda = (agendaDocSnap.data().treinos || []).filter(Boolean);
+        currentTreinosInAgenda = (agendaDocSnap.data().treinos || []).filter(Boolean);
       }
 
       const novoTreinoAgendaSumario = {
-          id: Date.now().toString(), // ID único para este item na agenda
-          clienteId: clienteSelecionado.id,
-          clienteNome: clienteSelecionado.name || clienteSelecionado.nome || 'Cliente Desconhecido', // Fallback para nome
-          tipo: categoria, // A categoria do treino detalhado vira o tipo na agenda
-          observacoes: descricao.trim(), // A descrição do treino detalhado vira observações na agenda
-          urgente: false, // Por padrão, treinos detalhados não são marcados como urgentes aqui
-          dataAgendada: dataSelecionada, // Data no formato YYYY-MM-DD
-          hora: horaSelecionada.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          // ====================================================================
-          // ADIÇÃO CRÍTICA: Campo para distinguir o tipo de agendamento na agenda
-          // ====================================================================
-          tipoAgendamento: 'treinoCompleto', 
+        id: Date.now().toString(),
+        clienteId: clienteSelecionado.id,
+        clienteNome: clienteSelecionado.name || clienteSelecionado.nome || 'Cliente Desconhecido',
+        tipo: categoria,
+        observacoes: descricao.trim(),
+        urgente: false,
+        dataAgendada: dataSelecionada,
+        hora: horaSelecionada.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        tipoAgendamento: 'treinoCompleto',
       };
 
       const updatedTreinosInAgenda = [...currentTreinosInAgenda, novoTreinoAgendaSumario];
 
       await setDoc(agendaDocRef, {
-          treinos: updatedTreinosInAgenda,
-      }, { merge: true }); // Usar merge para não apagar notas ou avaliações existentes
+        treinos: updatedTreinosInAgenda,
+      }, { merge: true });
 
       Alert.alert('Sucesso', '✅ Treino criado e agendado com sucesso!');
 
-      // Atualiza a lista de treinos detalhados para o calendário local (se necessário)
       const listaTreinosAtualizada = await buscarTodosTreinosComNomes();
       setTreinos(listaTreinosAtualizada);
 
       limparFormulario();
-      setDataSelecionada(''); // Limpa a data selecionada no calendário de criação
+      setDataSelecionada('');
     } catch (error) {
       console.error('Erro ao criar treino ou agendar:', error);
       Alert.alert('Erro', 'Falha ao criar e agendar treino. Tente novamente mais tarde.');
@@ -303,30 +290,73 @@ export default function CriarTreinosScreen() {
     setNovoExercicioNome('');
   };
 
-  const selecionarExercicioDaLista = (nomeExercicio) => {
+  // Esta função agora recebe o OBJETO COMPLETO do exercício da biblioteca
+  const selecionarExercicioDaLista = (exercicioDaBiblioteca) => {
     if (exercicioSelecionadoIndex === null) return;
-    atualizarExercicio(exercicioSelecionadoIndex, 'nome', nomeExercicio);
+
+    // Cria uma cópia dos exercícios atuais
+    const novosExerciciosNoTreino = [...exercicios];
+
+    // Atualiza o exercício no treino com os detalhes da biblioteca
+    novosExerciciosNoTreino[exercicioSelecionadoIndex] = {
+      ...exercicioDaBiblioteca, // Copia todos os campos da biblioteca (id, name, description, animationUrl, imageUrl, etc.)
+      tipo: novosExerciciosNoTreino[exercicioSelecionadoIndex].tipo || 'reps', // Mantém o tipo se já definido, senão padrão
+      valor: novosExerciciosNoTreino[exercicioSelecionadoIndex].valor || '', // Mantém o valor se já definido, senão vazio
+    };
+
+    setExercicios(novosExerciciosNoTreino);
     setModalListaExerciciosVisible(false);
     setExercicioSelecionadoIndex(null);
     setFiltroExercicios('');
     setNovoExercicioNome('');
   };
 
-  const adicionarNovoExercicioESelecionar = () => {
+  const adicionarNovoExercicioESelecionar = async () => {
     const nomeNovo = novoExercicioNome.trim();
     if (!nomeNovo) {
       Alert.alert('Nome inválido', 'Por favor, digite um nome válido para o exercício.');
       return;
     }
-    if (listaExerciciosEstado.some(ex => ex.toLowerCase() === nomeNovo.toLowerCase())) {
+    // Verifica se o exercício já existe na lista carregada do Firestore
+    if (listaExerciciosEstado.some(ex => ex.name.toLowerCase() === nomeNovo.toLowerCase())) { // Usa ex.name
       Alert.alert('Exercício existente', 'Este exercício já está na lista.');
       return;
     }
 
-    const updatedList = [...listaExerciciosEstado, nomeNovo];
-    setListaExerciciosEstado(updatedList);
-    selecionarExercicioDaLista(nomeNovo);
-    setNovoExercicioNome('');
+    try {
+      // Adiciona o novo exercício à coleção 'exercises' no Firestore
+      const newExerciseRef = await addDoc(collection(db, 'exercises'), {
+        name: nomeNovo,
+        description: 'Exercício adicionado pelo admin.',
+        category: 'Força',
+        targetMuscles: [],
+        equipment: [],
+        animationUrl: '',
+        imageUrl: '',
+      });
+
+      Alert.alert('Sucesso', `Exercício "${nomeNovo}" adicionado à biblioteca!`);
+
+      // Cria um objeto de exercício completo para adicionar ao treino atual
+      const novoExercicioObjeto = {
+        id: newExerciseRef.id, // O ID gerado pelo Firestore
+        name: nomeNovo,
+        description: 'Exercício adicionado pelo admin.',
+        category: 'Força',
+        targetMuscles: [],
+        equipment: [],
+        animationUrl: '',
+        imageUrl: '',
+        tipo: 'reps', // Padrão
+        valor: '', // Vazio
+      };
+
+      selecionarExercicioDaLista(novoExercicioObjeto); // Seleciona o novo exercício completo
+      setNovoExercicioNome('');
+    } catch (error) {
+      console.error("Erro ao adicionar novo exercício ao Firestore:", error);
+      Alert.alert('Erro', 'Não foi possível adicionar o novo exercício à biblioteca.');
+    }
   };
 
   const renderTimePicker = () => {
@@ -388,7 +418,7 @@ export default function CriarTreinosScreen() {
             setDataSelecionada(day.dateString);
           }}
           markedDates={{
-            ...markedDatesForCalendar, // Usar o nome renomeado
+            ...markedDatesForCalendar,
             ...(dataSelecionada
               ? {
                   [dataSelecionada]: {
@@ -544,8 +574,8 @@ export default function CriarTreinosScreen() {
                   style={styles.selectInput}
                   onPress={() => abrirModalSelecionarExercicio(idx)}
                 >
-                  <Text style={exercicio.nome ? styles.selectedText : styles.placeholderText}>
-                    {exercicio.nome || 'Selecionar exercício'}
+                  <Text style={exercicio.name ? styles.selectedText : styles.placeholderText}>
+                    {exercicio.name || 'Selecionar exercício'}
                   </Text>
                   <Feather name="list" size={20} color="#666" />
                 </TouchableOpacity>
@@ -659,26 +689,30 @@ export default function CriarTreinosScreen() {
                 </Text>
               </TouchableOpacity>
 
-              <ScrollView style={{ maxHeight: 300, marginTop: 10 }}>
-                {listaExerciciosEstado
-                  .filter((exercicio) =>
-                    exercicio.toLowerCase().includes(filtroExercicios.toLowerCase())
-                  )
-                  .map((exercicio, idx) => (
-                    <TouchableOpacity
-                      key={idx}
-                      style={styles.itemLista}
-                      onPress={() => selecionarExercicioDaLista(exercicio)}
-                    >
-                      <Text style={styles.itemListaText}>{exercicio}</Text>
-                    </TouchableOpacity>
-                  ))}
-                {listaExerciciosEstado.filter((exercicio) =>
-                  exercicio.toLowerCase().includes(filtroExercicios.toLowerCase())
-                ).length === 0 && (
-                  <Text style={styles.noItemsText}>Nenhum exercício encontrado. Tente adicionar um novo.</Text>
-                )}
-              </ScrollView>
+              {loadingExercises ? (
+                <ActivityIndicator size="small" color="#d0a956" style={{ marginTop: 20 }} />
+              ) : (
+                <ScrollView style={{ maxHeight: 300, marginTop: 10 }}>
+                  {listaExerciciosEstado
+                    .filter((exercicio) => // Filtra por exercicio.name agora
+                      exercicio.name.toLowerCase().includes(filtroExercicios.toLowerCase())
+                    )
+                    .map((exercicio, idx) => (
+                      <TouchableOpacity
+                        key={exercicio.id} // Usa o ID do Firestore como key
+                        style={styles.itemLista}
+                        onPress={() => selecionarExercicioDaLista(exercicio)} // Passa o objeto completo
+                      >
+                        <Text style={styles.itemListaText}>{exercicio.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  {listaExerciciosEstado.filter((exercicio) =>
+                    exercicio.name.toLowerCase().includes(filtroExercicios.toLowerCase())
+                  ).length === 0 && (
+                    <Text style={styles.noItemsText}>Nenhum exercício encontrado. Tente adicionar um novo.</Text>
+                  )}
+                </ScrollView>
+              )}
 
               <TouchableOpacity
                 style={styles.modalCloseButton}
@@ -824,7 +858,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 10,
-    padding: 8,
+    paddingVertical: 8,
     borderRadius: 5,
     borderWidth: 1,
     borderColor: 'red',
@@ -833,41 +867,47 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'transparent',
-    padding: 12,
+    paddingVertical: 10,
+    backgroundColor: 'white',
     borderRadius: 8,
+    marginTop: 10,
     borderWidth: 1,
     borderColor: '#d0a956',
-    marginTop: 10,
   },
   botaoCriar: {
-    backgroundColor: '#4f46e5',
+    backgroundColor: '#d0a956',
     padding: 15,
-    borderRadius: 8,
+    borderRadius: 10,
     alignItems: 'center',
     marginTop: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   textoBotaoCriar: {
     color: 'white',
-    fontWeight: '700',
     fontSize: 18,
+    fontWeight: 'bold',
   },
   botaoVoltar: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 10,
-    marginBottom: 15,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 5,
+    marginBottom: 10,
     alignSelf: 'flex-start',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 5,
+    backgroundColor: '#f0f0f0',
   },
   textoBotaoVoltar: {
-    color: '#000',
     marginLeft: 5,
+    color: '#000',
     fontWeight: '500',
   },
+  // Estilos para o Modal
   modalOverlay: {
     flex: 1,
     justifyContent: 'center',
@@ -879,11 +919,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 20,
     width: '90%',
-    maxHeight: '80%',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    shadowRadius: 4,
     elevation: 5,
   },
   modalTitle: {
@@ -895,7 +934,6 @@ const styles = StyleSheet.create({
   },
   itemLista: {
     paddingVertical: 12,
-    paddingHorizontal: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
@@ -906,20 +944,20 @@ const styles = StyleSheet.create({
   noItemsText: {
     textAlign: 'center',
     marginTop: 20,
-    fontSize: 16,
-    color: '#999',
+    color: '#666',
+    fontSize: 14,
   },
   modalCloseButton: {
-    marginTop: 20,
-    backgroundColor: '#4f46e5',
+    backgroundColor: '#d0a956',
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
+    marginTop: 20,
   },
   modalCloseButtonText: {
     color: 'white',
-    fontWeight: '600',
     fontSize: 16,
+    fontWeight: 'bold',
   },
   pickerModalOverlay: {
     flex: 1,
@@ -928,23 +966,21 @@ const styles = StyleSheet.create({
   },
   pickerModalContent: {
     backgroundColor: 'white',
-    width: '100%',
-    borderTopLeftRadius: 10,
-    borderTopRightRadius: 10,
-    paddingTop: 10,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 15,
     alignItems: 'center',
   },
   pickerConfirmButton: {
     backgroundColor: '#d0a956',
     paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+    paddingHorizontal: 30,
+    borderRadius: 10,
     marginTop: 15,
-    marginBottom: 10,
   },
   pickerConfirmButtonText: {
     color: 'white',
-    fontWeight: '600',
     fontSize: 16,
+    fontWeight: 'bold',
   },
 });

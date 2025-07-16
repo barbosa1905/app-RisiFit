@@ -25,16 +25,16 @@ const { width } = Dimensions.get('window');
 // Paleta de Cores Refinada para um look mais elegante e menos pesado
 const Colors = {
     primaryGold: '#D4AF37', // Ouro mais clássico
-    darkBrown: '#3E2723',   // Marrom bem escuro, quase preto
-    lightBrown: '#795548',  // Marrom mais suave
+    darkBrown: '#3E2723',   // Marrom bem escuro, quase preto
+    lightBrown: '#795548',  // Marrom mais suave
     creamBackground: '#FDF7E4', // Fundo creme claro
     white: '#FFFFFF',
-    lightGray: '#ECEFF1',   // Cinza muito claro
-    mediumGray: '#B0BEC5',  // Cinza médio para textos secundários
-    darkGray: '#424242',    // Cinza escuro para textos principais
-    accentBlue: '#2196F3',  // Azul vibrante para links
+    lightGray: '#ECEFF1',   // Cinza muito claro
+    mediumGray: '#B0BEC5',  // Cinza médio para textos secundários
+    darkGray: '#424242',    // Cinza escuro para textos principais
+    accentBlue: '#2196F3',  // Azul vibrante para links
     successGreen: '#4CAF50', // Verde para sucesso
-    errorRed: '#F44336',    // Vermelho para erros/alertas
+    errorRed: '#F44336',    // Vermelho para erros/alertas
     unreadBadge: '#EF5350', // Vermelho mais vibrante para badge de não lidas
 };
 
@@ -214,9 +214,14 @@ export default function HomeScreen() {
                 if (change.type === 'removed') {
                     if (chatUnsubscribersRef.current[chatId]) {
                         chatUnsubscribersRef.current[chatId]();
-                        delete chatUnreadCounts.current[chatId];
+                        // Assuming chatUnreadCounts is a ref or state that needs to be updated
+                        // If it's a ref, it should be like: chatUnreadCounts.current[chatId]
+                        // For now, I'll keep currentUnreadCounts as a local variable as it was
+                        // but if it's meant to persist across renders, it should be a ref or state.
+                        // Given the context, it seems to be a local counter for this specific snapshot.
+                        delete currentUnreadCounts[chatId]; 
                     }
-                    if (currentUnreadCounts[chatId]) {
+                    if (currentUnreadCounts[chatId]) { // This check might be redundant if deleted above
                         totalUnread -= currentUnreadCounts[chatId];
                         delete currentUnreadCounts[chatId];
                         setStats(prevStats => ({ ...prevStats, unreadMessages: totalUnread }));
@@ -355,6 +360,7 @@ export default function HomeScreen() {
                         <ActionButton icon="people-outline" text="Gerir Clientes" onPress={() => navigation.navigate('Clientes')} />
                         <ActionButton icon="chatbubbles-outline" text="Chat Online" onPress={() => navigation.navigate('Chat Online')} />
                         {/* NOVO BOTÃO PARA O HISTÓRICO DE TREINOS CONCLUÍDOS */}
+                         <ActionButton icon="barbell-outline" text="Gerir Exercícios" onPress={() => navigation.navigate('ExerciseLibrary')} />
                         <ActionButton icon="checkmark-done-circle-outline" text="Histórico Treinos" onPress={() => navigation.navigate('CompletedTrainingsHistory')} />
                     </ScrollView>
                 </View>

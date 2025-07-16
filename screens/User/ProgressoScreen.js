@@ -278,7 +278,7 @@ const styles = StyleSheet.create({
     height: FIXED_HEADER_HEIGHT,
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 40 : 20, // Ajuste para Android para status bar
-    backgroundColor: '#007bff', // Cor de fundo azul
+    backgroundColor: '#d4ac54', 
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -305,7 +305,7 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   headerAvatarText: { // Estilo para o texto do avatar na barra fixa
-    color: '#007bff',
+    color: '#d4ac54',
     fontSize: 18,
     fontWeight: 'bold',
   },

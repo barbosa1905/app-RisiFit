@@ -21,6 +21,23 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 // Altura da barra fixa do cabeçalho
 const FIXED_HEADER_HEIGHT = Platform.OS === 'android' ? 90 : 80;
 
+// Novas cores
+const COLORS = {
+  primary: '#d4ac54', // color1
+  lightPrimary: '#e0c892', // color2
+  darkPrimary: '#69511a', // color3
+  neutralGray: '#767676', // color4
+  lightGray: '#bdbdbd', // color5
+  white: '#fff',
+  black: '#111827', // Mantido para texto escuro geral, ou pode ser ajustado
+  background: '#F3F4F6', // Fundo geral
+  inputBackground: '#F9FAFB', // Fundo de inputs
+  inputBorder: '#D1D5DB', // Borda de inputs (pode ser substituído por lightGray)
+  logoutBg: '#fee2e2', // Fundo do botão de logout
+  logoutText: '#dc2626', // Texto do botão de logout
+};
+
+
 export default function PerfilUserScreen() {
   const { user } = useUser();
   const [userData, setUserData] = useState(null);
@@ -175,7 +192,7 @@ export default function PerfilUserScreen() {
           <Text style={styles.headerAppName}>RisiFit</Text>
         </View>
         <View style={styles.loadingContentContainer}>
-          <ActivityIndicator size="large" color="#d0a956" />
+          <ActivityIndicator size="large" color={COLORS.primary} />
           <Text style={{ marginTop: 10 }}>A carregar dados do usuário...</Text>
         </View>
       </SafeAreaView>
@@ -227,7 +244,7 @@ export default function PerfilUserScreen() {
           {/* Ícone de Edição */}
           {!isEditing && (
             <TouchableOpacity style={styles.editIconContainer} onPress={handleEditProfile}>
-              <Icon name="pencil-alt" size={20} color="#007bff" />
+              <Icon name="pencil-alt" size={20} color={COLORS.primary} />
             </TouchableOpacity>
           )}
           
@@ -328,7 +345,7 @@ export default function PerfilUserScreen() {
                 disabled={isSaving}
               >
                 {isSaving ? (
-                  <ActivityIndicator color="#fff" />
+                  <ActivityIndicator color={COLORS.white} />
                 ) : (
                   <Text style={[styles.cardButtonText, styles.saveButtonText]}>Guardar</Text>
                 )}
@@ -340,11 +357,11 @@ export default function PerfilUserScreen() {
 
         {/* Os botões de questionário e logout permanecem fora do cartão */}
         <TouchableOpacity style={styles.botao} onPress={handleAbrirQuestionario}>
-          <Text style={[styles.botaoTexto, { color: '#fff' }]}>📝 Responder Questionário</Text>
+          <Text style={[styles.botaoTexto, { color: COLORS.white }]}>📝 Responder Questionário</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={[styles.botao, styles.logout]} onPress={handleLogout}>
-          <Text style={[styles.botaoTexto, { color: '#dc2626' }]}>🚪 Terminar Sessão</Text>
+          <Text style={[styles.botaoTexto, { color: COLORS.logoutText }]}>🚪 Terminar Sessão</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -354,7 +371,7 @@ export default function PerfilUserScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: COLORS.background,
   },
   // NOVO ESTILO PARA A BARRA FIXA
   fixedHeader: {
@@ -365,7 +382,7 @@ const styles = StyleSheet.create({
     height: FIXED_HEADER_HEIGHT,
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 40 : 20, // Ajuste para Android para status bar
-    backgroundColor: '#007bff', // Cor de fundo azul
+    backgroundColor: COLORS.primary, // Cor de fundo azul -> color1
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -386,31 +403,31 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white, // Branco
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
   },
   headerAvatarText: { // Estilo para o texto do avatar na barra fixa
-    color: '#007bff',
+    color: COLORS.primary, // Cor do texto do avatar -> color1
     fontSize: 18,
     fontWeight: 'bold',
   },
   headerUserName: { // Estilo para o nome do user na barra fixa
     fontSize: 18,
     fontWeight: '600',
-    color: '#fff',
+    color: COLORS.white, // Branco
   },
   headerAppName: { // Estilo para o nome da app na barra fixa
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#fff', // Cor do texto da app
+    color: COLORS.white, // Branco
   },
   // Ajuste para o conteúdo da ScrollView para começar abaixo do cabeçalho fixo
   scrollViewContent: {
     paddingHorizontal: 20,
     paddingBottom: 60, // Mantenha o paddingBottom original
-    backgroundColor: '#F3F4F6',
+    backgroundColor: COLORS.background, // Fundo geral
     paddingTop: FIXED_HEADER_HEIGHT + 20, // Adiciona padding para o cabeçalho fixo + um pouco mais
     alignItems: 'center', // Mantém o alinhamento central para o conteúdo
     flexGrow: 1, // Garante que a ScrollView ocupe o espaço disponível
@@ -420,15 +437,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F3F4F6',
+    backgroundColor: COLORS.background, // Fundo geral
     paddingTop: FIXED_HEADER_HEIGHT, // Garante que o conteúdo não fique por baixo do header
   },
-  // Removido o estilo 'profileHeader' original
-  // Removido o estilo 'nome' original, pois 'headerUserName' e 'cardTextValue' já o cobrem.
-  // Se 'nome' for usado em outro contexto, pode ser reintroduzido com um nome mais específico.
   
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white, // Branco
     padding: 16,
     borderRadius: 10,
     width: '100%',
@@ -443,7 +457,7 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#111827',
+    color: COLORS.darkPrimary, // Cor do título do card -> color3
     marginBottom: 10,
     paddingRight: 40,
   },
@@ -462,26 +476,26 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 16,
-    color: '#374151',
+    color: COLORS.neutralGray, // Cor do label -> color4
     fontWeight: '600',
     marginRight: 5,
     minWidth: 120,
   },
   cardTextValue: {
     fontSize: 16,
-    color: '#374151',
+    color: COLORS.neutralGray, // Cor do valor do texto do card -> color4
     flexShrink: 1,
   },
   input: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: COLORS.inputBackground, // Fundo de inputs
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 5,
     fontSize: 16,
-    color: '#111827',
+    color: COLORS.black, // Cor do texto do input
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: COLORS.lightGray, // Borda de inputs -> color5
   },
   cardButtonContainer: {
     flexDirection: 'row',
@@ -489,7 +503,7 @@ const styles = StyleSheet.create({
     width: '100%',
     marginTop: 20,
     borderTopWidth: 1,
-    borderTopColor: '#eee',
+    borderTopColor: COLORS.lightGray, // Borda do container de botões do card -> color5
     paddingTop: 15,
   },
   cardButton: {
@@ -509,32 +523,38 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   saveButton: {
-    backgroundColor: '#007bff',
+    backgroundColor: COLORS.primary, // Cor do botão Guardar -> color1
   },
   saveButtonText: {
-    color: '#fff',
+    color: COLORS.white, // Branco
   },
   cancelButton: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white, // Branco
     borderWidth: 1,
-    borderColor: '#007bff',
+    borderColor: COLORS.primary, // Borda do botão Cancelar -> color1
   },
   cancelButtonText: {
-    color: '#007bff',
+    color: COLORS.primary, // Cor do texto do botão Cancelar -> color1
   },
   botao: {
     width: '100%',
-    backgroundColor: '#d0a956',
+    backgroundColor: COLORS.primary, // Cor do botão "Responder Questionário" -> color1
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
     marginTop: 12,
   },
   logout: {
-    backgroundColor: '#fee2e2',
+    backgroundColor: COLORS.logoutBg, // Fundo do botão de logout
   },
   botaoTexto: {
     fontWeight: '600',
     fontSize: 16,
+  },
+  nome: { // Estilo para 'Usuário não encontrado'
+    fontSize: 22,
+    fontWeight: '700',
+    color: COLORS.black,
+    marginBottom: 4,
   },
 });

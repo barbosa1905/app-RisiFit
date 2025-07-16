@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useContext, useEffect } from 'react'; // Adicionado useEffect
+import React, { useState, useCallback, useContext, useEffect } from 'react';
 import {
-  View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Platform // Adicionado Platform
+  View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Platform
 } from 'react-native';
 import { db, auth } from '../../services/firebaseConfig';
 import {
@@ -11,7 +11,7 @@ import {
   addDoc,
   serverTimestamp,
   onSnapshot,
-  doc, getDoc // Adicionado doc, getDoc para buscar dados do user
+  doc, getDoc
 } from 'firebase/firestore';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import moment from 'moment';
@@ -20,6 +20,20 @@ import { UnreadContext } from '../../contexts/UnreadContext';
 // Altura da barra fixa do cabeçalho
 const FIXED_HEADER_HEIGHT = Platform.OS === 'android' ? 90 : 80;
 
+// Novas cores
+const COLORS = {
+  primary: '#d4ac54',      // color1
+  lightPrimary: '#e0c892',   // color2 (não usado diretamente neste arquivo, mas mantido na paleta)
+  darkPrimary: '#69511a',    // color3
+  neutralGray: '#767676',    // color4
+  lightGray: '#bdbdbd',      // color5 (não usado diretamente neste arquivo, mas mantido na paleta)
+  white: '#fff',
+  black: '#1a1a1a',          // Um preto mais genérico para textos
+  background: '#fafafa',     // Fundo geral
+  unreadRed: '#e53935',      // Cor para indicadores de não lidas (mantida)
+  avatarShadow: '#5a31f4',   // Cor da sombra do avatar (mantida)
+};
+
 export default function CreateChatScreen() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27,8 +41,8 @@ export default function CreateChatScreen() {
   const navigation = useNavigation();
   const { setUnreadCount } = useContext(UnreadContext);
 
-  const [userName, setUserName] = useState(''); // Estado para o nome do utilizador
-  const [userInitial, setUserInitial] = useState(''); // Estado para a inicial do utilizador
+  const [userName, setUserName] = useState('');
+  const [userInitial, setUserInitial] = useState('');
 
   useFocusEffect(
     useCallback(() => {
@@ -183,7 +197,7 @@ export default function CreateChatScreen() {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#d0a956" />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={styles.loadingText}>A carregar dados...</Text>
       </View>
     );
@@ -192,7 +206,7 @@ export default function CreateChatScreen() {
   const ItemSeparator = () => <View style={styles.separator} />;
 
   return (
-    <View style={styles.fullScreenContainer}> 
+    <View style={styles.fullScreenContainer}>
       {/* Cabeçalho Fixo (Barra Fixa) */}
       <View style={styles.fixedHeader}>
         <View style={styles.headerUserInfo}>
@@ -254,13 +268,13 @@ export default function CreateChatScreen() {
           );
         }}
         ItemSeparatorComponent={ItemSeparator}
-        ListHeaderComponent={ // Adicionado ListHeaderComponent para o título
+        ListHeaderComponent={
           <Text style={styles.title}>Escolha um administrador para iniciar o chat:</Text>
         }
         ListEmptyComponent={
           <Text style={styles.emptyText}>Nenhum administrador encontrado.</Text>
         }
-        contentContainerStyle={styles.flatListContentContainer} 
+        contentContainerStyle={styles.flatListContentContainer}
         showsVerticalScrollIndicator={false}
       />
     </View>
@@ -268,11 +282,10 @@ export default function CreateChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  fullScreenContainer: { // NOVO: Container principal para a tela inteira
+  fullScreenContainer: {
     flex: 1,
-    backgroundColor: '#fafafa',
+    backgroundColor: COLORS.background,
   },
-  // ESTILO DA BARRA FIXA
   fixedHeader: {
     position: 'absolute',
     top: 0,
@@ -280,76 +293,70 @@ const styles = StyleSheet.create({
     right: 0,
     height: FIXED_HEADER_HEIGHT,
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'android' ? 40 : 20, // Ajuste para Android para status bar
-    backgroundColor: '#007bff', // Cor de fundo azul
+    paddingTop: Platform.OS === 'android' ? 40 : 20,
+    backgroundColor: COLORS.primary, // color1
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderBottomLeftRadius: 15, // Arredondamento nas bordas inferiores
+    borderBottomLeftRadius: 15,
     borderBottomRightRadius: 15,
-    elevation: 5, // Sombra para Android
-    shadowColor: '#000', // Sombra para iOS
+    elevation: 5,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
     shadowRadius: 5,
-    zIndex: 10, // Garante que fique acima do conteúdo que rola
+    zIndex: 10,
   },
-  headerUserInfo: { // Estilo para agrupar avatar e nome do user
+  headerUserInfo: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  headerAvatar: { // Estilo para o avatar na barra fixa
+  headerAvatar: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
   },
-  headerAvatarText: { // Estilo para o texto do avatar na barra fixa
-    color: '#007bff',
+  headerAvatarText: {
+    color: COLORS.primary, // color1
     fontSize: 18,
     fontWeight: 'bold',
   },
-  headerUserName: { // Estilo para o nome do user na barra fixa
+  headerUserName: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#fff',
+    color: COLORS.white,
   },
-  headerAppName: { // Estilo para o nome da app na barra fixa
+  headerAppName: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#fff', // Cor do texto da app
+    color: COLORS.white,
   },
-  // NOVO: Estilo para o contentContainerStyle da FlatList
   flatListContentContainer: {
     paddingHorizontal: 24,
-    paddingTop: FIXED_HEADER_HEIGHT + 20, // Ajusta o padding para começar abaixo do cabeçalho fixo
-    paddingBottom: 20, // Mantém um padding inferior
+    paddingTop: FIXED_HEADER_HEIGHT + 20,
+    paddingBottom: 20,
   },
-  container: { // Este estilo será removido ou ajustado, pois fullScreenContainer será o principal
-    // flex: 1, // Já em fullScreenContainer
-    // backgroundColor: '#fafafa', // Já em fullScreenContainer
-    // paddingHorizontal: 24, // Movido para flatListContentContainer
-    // paddingTop: 30, // Movido para flatListContentContainer
-  },
+  // 'container' style was removed as 'fullScreenContainer' and 'flatListContentContainer' manage layout
   title: {
     fontSize: 24,
     fontWeight: '800',
     marginBottom: 25,
-    color: '#1a1a1a',
+    color: COLORS.darkPrimary, // color3
     textAlign: 'center',
-    marginTop: 0, // Removido marginTop extra, já que paddingTop do flatListContentContainer já lida com isso
+    marginTop: 0,
   },
   userItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#d0a956',
+    backgroundColor: COLORS.primary, // color1
     paddingVertical: 16,
     paddingHorizontal: 18,
     borderRadius: 12,
-    shadowColor: '#d0a956',
+    shadowColor: COLORS.primary, // color1
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.1,
     shadowRadius: 6,
@@ -357,31 +364,31 @@ const styles = StyleSheet.create({
   },
   userItemUnread: {
     borderWidth: 2,
-    borderColor: '#e53935',
+    borderColor: COLORS.unreadRed,
   },
   avatar: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     width: 48,
     height: 48,
     borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 20,
-    shadowColor: '#5a31f4',
+    shadowColor: COLORS.avatarShadow,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.4,
     shadowRadius: 6,
     elevation: 4,
   },
   avatarText: {
-    color: '#000',
+    color: COLORS.darkPrimary, // color3
     fontSize: 22,
     fontWeight: '900',
   },
   userName: {
     fontSize: 19,
     fontWeight: '600',
-    color: '#222',
+    color: COLORS.white, // Branco
   },
   lastMessageRow: {
     flexDirection: 'row',
@@ -391,19 +398,19 @@ const styles = StyleSheet.create({
   lastMessageText: {
     flex: 1,
     fontSize: 14,
-    color: '#333',
+    color: COLORS.white, // Branco
     marginRight: 10,
   },
   lastMessageTextUnread: {
     fontWeight: 'bold',
-    color: '#000',
+    color: COLORS.black, // Preto para destaque
   },
   lastMessageTime: {
     fontSize: 12,
-    color: '#555',
+    color: COLORS.neutralGray, // color4
   },
   unreadBadge: {
-    backgroundColor: '#e53935',
+    backgroundColor: COLORS.unreadRed,
     borderRadius: 12,
     paddingHorizontal: 8,
     paddingVertical: 2,
@@ -411,7 +418,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   unreadText: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 12,
     fontWeight: 'bold',
   },
@@ -419,7 +426,7 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#e53935',
+    backgroundColor: COLORS.unreadRed,
     marginLeft: 8,
     alignSelf: 'center',
   },
@@ -428,26 +435,26 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 18,
-    color: '#999',
+    color: COLORS.neutralGray, // color4
     textAlign: 'center',
     marginTop: 60,
   },
-  emptyContainer: { // Ajustado para centralizar o texto vazio na tela, considerando o cabeçalho
+  emptyContainer: {
     flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: FIXED_HEADER_HEIGHT, // Garante que o conteúdo vazio não fique por baixo do header
+    paddingTop: FIXED_HEADER_HEIGHT,
   },
-  loadingContainer: { // Ajustado para centralizar o loading na tela, considerando o cabeçalho
+  loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fafafa',
-    paddingTop: FIXED_HEADER_HEIGHT, // Garante que o loading não fique por baixo do header
+    backgroundColor: COLORS.background,
+    paddingTop: FIXED_HEADER_HEIGHT,
   },
-  loadingText: { // Adicionado estilo para o texto de loading
+  loadingText: {
     marginTop: 10,
     fontSize: 16,
-    color: '#6b7280',
+    color: COLORS.neutralGray, // color4
   },
 });

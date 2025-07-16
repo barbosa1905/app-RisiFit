@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react'; // Adicionado useRef
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Platform, ActivityIndicator, Modal, Animated } from 'react-native'; // Adicionado Animated
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Platform, ActivityIndicator, Modal, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/FontAwesome5';
 import { useNavigation } from '@react-navigation/native';
@@ -25,15 +25,39 @@ import { pt } from 'date-fns/locale';
 // Array de rótulos dos dias da semana (Segunda a Domingo)
 const daysOfWeekLabels = ['S', 'T', 'Q', 'Q', 'S', 'S', 'D'];
 
-// Definição das cores para os diferentes status (mantido como no seu ficheiro)
+// Novas cores
+const COLORS = {
+  primary: '#d4ac54',      // color1
+  lightPrimary: '#e0c892',   // color2
+  darkPrimary: '#69511a',    // color3
+  neutralGray: '#767676',    // color4
+  lightGray: '#bdbdbd',      // color5
+  white: '#fff',             // Branco puro
+  black: '#000',             // Preto para sombras e alguns textos
+  background: '#f0f2f5',     // Fundo geral da tela
+  cardBackground: '#fff',    // Fundo dos cards (seções)
+  borderLight: '#f0f0f0',    // Borda clara para divisores
+  textLightGray: '#6b7280',  // Texto cinza claro para loading
+  textDarkGray: '#4b5563',   // Texto cinza escuro para saudação
+  toggleBackground: '#e0e0e0', // Fundo para botões de alternância
+  toggleText: '#333',       // Texto para botões de alternância
+  // Cores semânticas mantidas ou mapeadas para as mais próximas
+  completedGreen: '#4CAF50', // Verde para concluído (mantido)
+  missedRed: '#FF5252',      // Vermelho para perdido (mantido)
+  todayBlue: '#2196F3',      // Azul para hoje pendente (mantido)
+  scheduledOrange: '#FFC107', // Amarelo/Laranja para futuro agendado (mantido)
+  lightRedBackground: '#FFEBEE', // Fundo vermelho claro para missed (mantido)
+};
+
+// Definição das cores para os diferentes status (usando a nova paleta)
 const STATUS_COLORS = {
-  completed: '#4CAF50',       // Verde para concluído
-  missed: '#FF5252',          // Vermelho para perdido
-  todayPending: '#2196F3',    // Azul para hoje pendente
-  scheduledFuture: '#FFC107', // Amarelo/Laranja para futuro agendado
-  noTraining: '#BDBDBD',      // Cinza claro para sem treino
-  defaultBorder: '#BDBDBD',   // Borda padrão para círculos vazios
-  defaultText: '#555',        // Cor de texto padrão
+  completed: COLORS.completedGreen,
+  missed: COLORS.missedRed,
+  todayPending: COLORS.todayBlue,
+  scheduledFuture: COLORS.scheduledOrange,
+  noTraining: COLORS.lightGray,
+  defaultBorder: COLORS.lightGray,
+  defaultText: COLORS.neutralGray,
 };
 
 // Altura da barra fixa do cabeçalho de perfil
@@ -266,11 +290,11 @@ export default function HomeScreen() {
         // Lógica de marcação baseada no status
         if (isCompleted) {
           marked[dateString].customStyles.container.backgroundColor = STATUS_COLORS.completed;
-          marked[dateString].customStyles.text.color = '#FFFFFF'; // Texto branco para contraste
+          marked[dateString].customStyles.text.color = COLORS.white; // Texto branco para contraste
           if (!marked[dateString].dots.some(dot => dot.key === 'concluido')) {
             marked[dateString].dots.push({ key: 'concluido', color: STATUS_COLORS.completed });
           }
-          console.log(`    -> Status: Concluído (Verde)`);
+          console.log(`     -> Status: Concluído (Verde)`);
         } else if (isFutureDate) {
           marked[dateString].customStyles.container.borderColor = STATUS_COLORS.scheduledFuture;
           marked[dateString].customStyles.container.borderWidth = 1;
@@ -278,7 +302,7 @@ export default function HomeScreen() {
           if (!marked[dateString].dots.some(dot => dot.key === 'scheduled')) {
             marked[dateString].dots.push({ key: 'scheduled', color: STATUS_COLORS.scheduledFuture });
           }
-          console.log(`    -> Status: Futuro Agendado (Borda Amarela/Laranja)`);
+          console.log(`     -> Status: Futuro Agendado (Borda ${STATUS_COLORS.scheduledFuture})`);
         } else if (isTodayDate) {
           marked[dateString].customStyles.container.borderColor = STATUS_COLORS.todayPending;
           marked[dateString].customStyles.container.borderWidth = 2;
@@ -286,16 +310,16 @@ export default function HomeScreen() {
           if (!marked[dateString].dots.some(dot => dot.key === 'today')) {
             marked[dateString].dots.push({ key: 'today', color: STATUS_COLORS.todayPending });
           }
-          console.log(`    -> Status: Hoje Pendente (Borda Azul)`);
+          console.log(`     -> Status: Hoje Pendente (Borda ${STATUS_COLORS.todayPending})`);
         } else if (isPastDate) { // Treino passado e não concluído (missed)
-            marked[dateString].customStyles.container.backgroundColor = '#FFEBEE'; // Fundo vermelho claro
+            marked[dateString].customStyles.container.backgroundColor = COLORS.lightRedBackground; // Fundo vermelho claro
             marked[dateString].customStyles.text.color = STATUS_COLORS.missed; // Texto vermelho
             if (!marked[dateString].dots.some(dot => dot.key === 'missed')) {
                 marked[dateString].dots.push({ key: 'missed', color: STATUS_COLORS.missed });
             }
-            console.log(`    -> Status: Perdido (Fundo Vermelho Claro/Texto Vermelho)`);
+            console.log(`     -> Status: Perdido (Fundo Vermelho Claro/Texto Vermelho)`);
         } else {
-            console.log(`    -> Status: Sem Treino / Não Especificado (Padrão)`);
+            console.log(`     -> Status: Sem Treino / Não Especificado (Padrão)`);
         }
       });
       setMarkedDatesForCalendar(marked);
@@ -352,7 +376,7 @@ export default function HomeScreen() {
   if (loadingScreen || userContextLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007bff" />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={styles.loadingText}>Carregando dados do perfil...</Text>
       </View>
     );
@@ -395,14 +419,14 @@ export default function HomeScreen() {
           <Text style={styles.sectionTitle}>Frequência de Treinos</Text>
           <View style={styles.weekNavigation}>
             <TouchableOpacity onPress={goToPreviousWeek} style={styles.weekNavButton}>
-              <Icon name="chevron-left" size={20} color="#333" />
+              <Icon name="chevron-left" size={20} color={COLORS.toggleText} />
             </TouchableOpacity>
             <Text style={styles.weekRangeText}>
               {format(startOfWeek(currentWeekDate, { weekStartsOn: 1 }), 'dd MMM', { locale: pt })} -{' '}
               {format(endOfWeek(currentWeekDate, { weekStartsOn: 1 }), 'dd MMM', { locale: pt })}
             </Text>
             <TouchableOpacity onPress={goToNextWeek} style={styles.weekNavButton}>
-              <Icon name="chevron-right" size={20} color="#333" />
+              <Icon name="chevron-right" size={20} color={COLORS.toggleText} />
             </TouchableOpacity>
           </View>
           <View style={styles.trainingFrequencyContainer}>
@@ -433,27 +457,27 @@ export default function HomeScreen() {
         {/* Lista de Opções */}
         <View style={styles.optionsList}>
           <TouchableOpacity style={styles.optionItem} onPress={() => navigation.navigate('Treinos')}>
-            <Icon name="dumbbell" size={24} color="#007bff" />
+            <Icon name="dumbbell" size={24} color={COLORS.primary} />
             <Text style={styles.optionText}>Treinos</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.optionItem} onPress={() => navigation.navigate('Histórico')}> 
-            <Icon name="history" size={24} color="#007bff" /> 
+            <Icon name="history" size={24} color={COLORS.primary} /> 
             <Text style={styles.optionText}>Histórico de Treinos</Text> 
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.optionItem} onPress={() => navigation.navigate('CriarAvaliacao')}>
-            <Icon name="clipboard-list" size={24} color="#007bff" />
+            <Icon name="clipboard-list" size={24} color={COLORS.primary} />
             <Text style={styles.optionText}>Avaliações</Text>
           </TouchableOpacity>
           
           <TouchableOpacity style={styles.optionItem} onPress={() => navigation.navigate('Progresso')}>
-            <Icon name="chart-line" size={24} color="#007bff" />
+            <Icon name="chart-line" size={24} color={COLORS.primary} />
             <Text style={styles.optionText}>Progresso do aluno</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.optionItem} onPress={() => navigation.navigate('Chat Online')}>
-            <Icon name="comments" size={24} color="#007bff" /> 
+            <Icon name="comments" size={24} color={COLORS.primary} /> 
             <Text style={styles.optionText}>Chat Online</Text> 
           </TouchableOpacity>
 
@@ -461,7 +485,7 @@ export default function HomeScreen() {
             style={[styles.optionItem, styles.optionItemLast]}
             onPress={() => navigation.navigate('ListarQuestionariosUser')} 
           >
-            <Icon name="question-circle" size={24} color="#007bff" /> 
+            <Icon name="question-circle" size={24} color={COLORS.primary} /> 
             <Text style={styles.optionText}>Responder Questionário</Text>
           </TouchableOpacity>
         </View>
@@ -483,11 +507,11 @@ export default function HomeScreen() {
                   console.log('Dia selecionado no calendário:', day.dateString);
                 }}
                 theme={{
-                  selectedDayBackgroundColor: '#007bff',
-                  todayTextColor: '#007bff',
-                  arrowColor: '#007bff',
-                  monthTextColor: '#000',
-                  textSectionTitleColor: '#555',
+                  selectedDayBackgroundColor: COLORS.primary,
+                  todayTextColor: COLORS.primary,
+                  arrowColor: COLORS.primary,
+                  monthTextColor: COLORS.black,
+                  textSectionTitleColor: COLORS.neutralGray,
                   textDayFontWeight: '500',
                   textMonthFontWeight: 'bold',
                   textDayHeaderFontWeight: 'bold',
@@ -511,86 +535,81 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f0f2f5',
+    backgroundColor: COLORS.background,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f0f2f5',
+    backgroundColor: COLORS.background,
   },
   loadingText: {
     marginTop: 10,
     fontSize: 16,
-    color: '#6b7280',
+    color: COLORS.textLightGray,
   },
-  // ESTILO PARA A BARRA FIXA
   fixedProfileHeader: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: FIXED_HEADER_HEIGHT, // Altura ajustada
-    backgroundColor: '#007bff', // Cor original do profileHeader
+    height: FIXED_HEADER_HEIGHT,
+    backgroundColor: COLORS.primary, // color1
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 20 : 0,
     borderBottomLeftRadius: 15,
     borderBottomRightRadius: 15,
-    shadowColor: '#000',
+    shadowColor: COLORS.black,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 5,
     elevation: 8,
     zIndex: 10,
   },
-  // ESTILO PARA O contentContainerStyle da ScrollView
   scrollContentWithHeader: {
-    paddingTop: FIXED_HEADER_HEIGHT + 20, // Altura do cabeçalho + padding extra
+    paddingTop: FIXED_HEADER_HEIGHT + 20,
     paddingHorizontal: 20,
     paddingBottom: 40,
   },
-  // Estilos do perfil (agora com sufixo 'Fixed' para a barra fixa)
   avatarCircleFixed: {
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 15,
   },
   avatarTextFixed: {
-    color: '#007bff',
+    color: COLORS.primary, // color1
     fontSize: 30,
     fontWeight: 'bold',
   },
   userInfoFixed: {
     flex: 1,
-    justifyContent: 'center', // Centraliza verticalmente o conteúdo de texto
+    justifyContent: 'center',
   },
   userNameTextFixed: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#fff',
+    color: COLORS.white,
   },
   userPlanTextFixed: {
     fontSize: 15,
-    color: '#e0e0e0',
+    color: 'rgba(255,255,255,0.8)', // Mantido branco semi-transparente
     marginTop: 2,
   },
-  // NOVO ESTILO PARA A FRASE MOTIVACIONAL
   motivationalPhraseText: {
     fontSize: 13,
-    color: 'rgba(255,255,255,0.7)',
+    color: 'rgba(255,255,255,0.7)', // Mantido branco semi-transparente
     fontStyle: 'italic',
     marginTop: 5,
   },
-  
   greetingText: {
     fontSize: 18,
-    color: '#4b5563',
+    color: COLORS.textDarkGray,
     textAlign: 'center',
     marginBottom: 20,
     fontStyle: 'italic',
@@ -598,7 +617,7 @@ const styles = StyleSheet.create({
   toggleButtons: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    backgroundColor: '#e0e0e0',
+    backgroundColor: COLORS.toggleBackground,
     borderRadius: 10,
     marginBottom: 20,
     padding: 5,
@@ -610,8 +629,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   activeButton: {
-    backgroundColor: '#fff',
-    shadowColor: '#000',
+    backgroundColor: COLORS.white,
+    shadowColor: COLORS.black,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
@@ -620,14 +639,14 @@ const styles = StyleSheet.create({
   toggleButtonText: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#333',
+    color: COLORS.toggleText,
   },
   sectionCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.cardBackground,
     borderRadius: 15,
     padding: 20,
     marginBottom: 20,
-    shadowColor: '#000',
+    shadowColor: COLORS.black,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
@@ -637,7 +656,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 15,
-    color: '#333',
+    color: COLORS.toggleText, // Usado toggleText para um tom escuro
   },
   weekNavigation: {
     flexDirection: 'row',
@@ -651,7 +670,7 @@ const styles = StyleSheet.create({
   weekRangeText: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#333',
+    color: COLORS.toggleText, // Usado toggleText para um tom escuro
   },
   trainingFrequencyContainer: {
     flexDirection: 'row',
@@ -695,9 +714,9 @@ const styles = StyleSheet.create({
     color: STATUS_COLORS.defaultText,
   },
   optionsList: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.cardBackground,
     borderRadius: 15,
-    shadowColor: '#000',
+    shadowColor: COLORS.black,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
@@ -710,12 +729,15 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     paddingHorizontal: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: COLORS.borderLight,
+  },
+  optionItemLast: {
+    borderBottomWidth: 0, // Remove a borda do último item
   },
   optionText: {
     fontSize: 16,
     marginLeft: 15,
-    color: '#333',
+    color: COLORS.toggleText, // Usado toggleText para um tom escuro
   },
   modalOverlay: {
     flex: 1,
@@ -724,13 +746,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   modalContent: {
-    backgroundColor: 'white',
+    backgroundColor: COLORS.white,
     borderRadius: 15,
     padding: 20,
     width: '95%',
     maxHeight: '80%',
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: COLORS.black,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 5,
@@ -740,40 +762,40 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: 'bold',
     marginBottom: 15,
-    color: '#007bff',
+    color: COLORS.primary, // color1
   },
   fullCalendar: {
     width: '100%',
     marginBottom: 20,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: COLORS.toggleBackground, // Usado toggleBackground para uma borda clara
   },
   modalCloseButton: {
     marginTop: 10,
-    backgroundColor: '#007bff',
+    backgroundColor: COLORS.primary, // color1
     paddingVertical: 12,
     paddingHorizontal: 25,
     borderRadius: 10,
   },
   modalCloseButtonText: {
-    color: 'white',
+    color: COLORS.white,
     fontSize: 16,
     fontWeight: 'bold',
   },
   legendContainer: {
     marginTop: 20,
     padding: 15,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: COLORS.background, // Usado background para um fundo leve
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#eee',
+    borderColor: COLORS.borderLight, // Usado borderLight para uma borda clara
   },
   legendTitle: {
     fontSize: 16,
     fontWeight: 'bold',
     marginBottom: 10,
-    color: '#333',
+    color: COLORS.toggleText, // Usado toggleText para um tom escuro
   },
   legendItem: {
     flexDirection: 'row',
@@ -786,10 +808,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginRight: 10,
     borderWidth: 1,
-    borderColor: '#ccc',
+    borderColor: COLORS.lightGray, // Usado lightGray para uma borda clara
   },
   legendText: {
     fontSize: 14,
-    color: '#555',
+    color: COLORS.neutralGray, // color4
   },
 });

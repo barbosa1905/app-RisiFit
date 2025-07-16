@@ -49,8 +49,7 @@ export default function AdminTabs() {
                     if (route.name === 'Início') {
                         iconName = 'home';
                         IconComponent = Ionicons;
-                    } else if (route.name === 'Criar Treino') {
-                        iconName = 'plus-circle';
+                    
                     } else if (route.name === 'Agenda') {
                         iconName = 'calendar-alt';
                     } else if (route.name === 'Clientes') {
@@ -75,7 +74,7 @@ export default function AdminTabs() {
             })}
         >
             <Tab.Screen name="Início" component={HomeScreen} options={{ title: 'Início' }} />
-            <Tab.Screen name="Criar Treino" component={CriarTreinosScreen} options={{ title: 'Criar Treino' }} />
+        
             <Tab.Screen name="Agenda" component={GerirTreinosScreen} options={{ title: 'Agenda' }} />
             <Tab.Screen name="Chat Online" component={ChatStackScreen} options={{ title: 'Chats' }} />
             <Tab.Screen name="Clientes" component={ClientesScreen} options={{ title: 'Clientes' }} />
