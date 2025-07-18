@@ -116,25 +116,31 @@ export default function LoginScreen({ navigation }) {
     }
   }, [email, password, navigation, setRole, setUser, selectedLoginRole]);
 
-  const handleAuthError = (error) => {
-    switch (error.code) {
-      case 'auth/user-not-found':
-        setErrorMsg('Utilizador não encontrado.');
-        break;
-      case 'auth/wrong-password':
-        setErrorMsg('Senha incorreta.');
-        break;
-      case 'auth/invalid-email':
-        setErrorMsg('Email inválido.');
-        break;
-      case 'auth/too-many-requests':
-        setErrorMsg('Muitas tentativas. Tente novamente mais tarde.');
-        break;
-      default:
-        setErrorMsg('Erro ao fazer login. Tente novamente.');
-        console.error('Erro de autenticação:', error);
-    }
-  };
+const handleAuthError = (error) => {
+  switch (error.code) {
+    case 'auth/user-not-found':
+      setErrorMsg('Utilizador não encontrado. Verifique o email.');
+      break;
+    case 'auth/wrong-password':
+      setErrorMsg('Senha incorreta. Tente novamente ou redefina a senha.');
+      break;
+    case 'auth/invalid-email':
+      setErrorMsg('Email inválido. Verifique o formato do email.');
+      break;
+    case 'auth/invalid-credential': // Adicione esta linha
+      setErrorMsg('Credenciais inválidas. Verifique o email e a senha.'); // Mensagem mais clara
+      break;
+    case 'auth/too-many-requests':
+      setErrorMsg('Muitas tentativas de login falhadas. Tente novamente mais tarde.');
+      break;
+    case 'auth/user-disabled': // Adicione este caso também, caso um utilizador seja desativado
+      setErrorMsg('A sua conta foi desativada. Contacte o suporte.');
+      break;
+    default:
+      setErrorMsg('Erro ao fazer login. Tente novamente.');
+      console.error('Erro de autenticação:', error);
+  }
+};
 
   const handlePasswordReset = useCallback(async () => {
     try {

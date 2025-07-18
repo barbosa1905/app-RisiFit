@@ -6,17 +6,21 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
-  Image, // Importar Image
-  Modal, // Importar Modal
-  Dimensions, // Importar Dimensions para WebView
+  Image,
+  Modal,
+  Dimensions,
+  ActivityIndicator,
+  TextInput,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getUserIdLoggedIn } from '../../services/authService';
-import { salvarTreinoConcluido } from '../../services/userService';
-import { WebView } from 'react-native-webview'; // Importar WebView
-import { Ionicons } from '@expo/vector-icons'; // Importar Ionicons para o ícone de play
+import { salvarTreinoConcluido } from '../../services/userService'; 
+import { WebView } from 'react-native-webview';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../services/firebaseConfig';
 
-const { width, height } = Dimensions.get('window'); // Obter dimensões da tela
+const { width, height } = Dimensions.get('window');
 
 export default function ExecucaoTreinoScreen({ route, navigation }) {
   const { treino } = route.params;
@@ -24,31 +28,66 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
   const [emExecucao, setEmExecucao] = useState(false);
   const timerRef = useRef(null);
 
-  // Novos estados para o modal de animação
   const [isAnimationModalVisible, setIsAnimationModalVisible] = useState(false);
   const [currentAnimationUrl, setCurrentAnimationUrl] = useState('');
 
-  // --- Adicionado para Depuração: Verificação de Tipos de Dados ---
-  useEffect(() => {
-    console.log('--- Dados do Treino em ExecucaoTreinoScreen ---');
-    console.log('Objeto treino completo:', treino);
-    console.log('Tipo de treino.nome:', typeof treino.nome, 'Valor:', treino.nome);
-    console.log('Tipo de treino.categoria:', typeof treino.categoria, 'Valor:', treino.categoria);
-    console.log('Tipo de treino.descricao:', typeof treino.descricao, 'Valor:', treino.descricao);
+  const [detailedExercises, setDetailedExercises] = useState([]);
+  const [loadingExercisesDetails, setLoadingExercisesDetails] = useState(true);
 
-    if (treino.exercicios && Array.isArray(treino.exercicios)) {
-      treino.exercicios.forEach((ex, idx) => {
-        console.log(`Exercício ${idx} - Objeto completo:`, ex);
-        console.log(`Exercício ${idx} - Tipo de ex.name:`, typeof ex.name, 'Valor:', ex.name); // Alterado de ex.nome para ex.name
-        console.log(`Exercício ${idx} - Tipo de ex.tipo:`, typeof ex.tipo, 'Valor:', ex.tipo);
-        console.log(`Exercício ${idx} - Tipo de ex.valor:`, typeof ex.valor, 'Valor:', ex.valor);
-        console.log(`Exercício ${idx} - Tipo de ex.imageUrl:`, typeof ex.imageUrl, 'Valor:', ex.imageUrl);
-        console.log(`Exercício ${idx} - Tipo de ex.animationUrl:`, typeof ex.animationUrl, 'Valor:', ex.animationUrl);
-      });
-    } else {
-      console.warn('treino.exercicios não é um array ou está vazio:', treino.exercicios);
+  const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
+  const [workoutRating, setWorkoutRating] = useState(0);
+  const [workoutObservation, setWorkoutObservation] = useState('');
+
+  useEffect(() => {
+    const fetchExerciseDetails = async () => {
+      setLoadingExercisesDetails(true);
+      const exercisesInTreino = treino.templateExercises || treino.customExercises || [];
+      const fetchedDetails = [];
+
+      for (const ex of exercisesInTreino) {
+        if (ex.exerciseId) {
+          try {
+            const exerciseDocRef = doc(db, 'exercises', ex.exerciseId);
+            const exerciseDocSnap = await getDoc(exerciseDocRef);
+            if (exerciseDocSnap.exists()) {
+              fetchedDetails.push({
+                ...exerciseDocSnap.data(),
+                ...ex,
+                id: ex.exerciseId,
+                exerciseName: ex.exerciseName || exerciseDocSnap.data().name,
+                repsOrDuration: ex.repsOrDuration || ex.valor,
+              });
+            } else {
+              console.warn(`Exercício com ID ${ex.exerciseId} não encontrado na biblioteca. Exibindo dados parciais.`);
+              fetchedDetails.push({
+                ...ex,
+                exerciseName: ex.exerciseName || 'Exercício Desconhecido',
+                repsOrDuration: ex.repsOrDuration || ex.valor,
+              });
+            }
+          } catch (error) {
+            console.error(`Erro ao buscar detalhes do exercício ${ex.exerciseId}:`, error);
+            fetchedDetails.push({
+              ...ex,
+              exerciseName: ex.exerciseName || 'Exercício Desconhecido',
+              repsOrDuration: ex.repsOrDuration || ex.valor,
+            });
+          }
+        } else {
+          fetchedDetails.push({
+            ...ex,
+            exerciseName: ex.exerciseName || 'Exercício Personalizado',
+            repsOrDuration: ex.repsOrDuration || ex.valor,
+          });
+        }
+      }
+      setDetailedExercises(fetchedDetails);
+      setLoadingExercisesDetails(false);
+    };
+
+    if (treino) {
+      fetchExerciseDetails();
     }
-    console.log('-------------------------------------------');
   }, [treino]);
 
   useEffect(() => {
@@ -72,6 +111,9 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
 
     const pad = (num) => String(num).padStart(2, '0');
 
+    if (horas === 0) {
+      return `${pad(min)}:${pad(seg)}`;
+    }
     return `${pad(horas)}:${pad(min)}:${pad(seg)}`;
   };
 
@@ -112,38 +154,51 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
         },
         {
           text: 'Concluir',
-          onPress: async () => {
-            try {
-              const userId = await getUserIdLoggedIn();
-              if (!userId) {
-                Alert.alert('Erro', 'Utilizador não autenticado.');
-                return;
-              }
-
-              const chaveAsyncStorage = `treinosConcluidos_${userId}`;
-              const dadosAtuaisJson = await AsyncStorage.getItem(chaveAsyncStorage);
-              const dadosAtuais = dadosAtuaisJson ? JSON.parse(dadosAtuaisJson) : {};
-              dadosAtuais[String(treino.data).split('T')[0]] = true;
-              await AsyncStorage.setItem(chaveAsyncStorage, JSON.stringify(dadosAtuais));
-
-              await salvarTreinoConcluido(
-                userId,
-                treino.id,
-                String(treino.nome),
-                String(treino.data),
-                tempo
-              );
-
-              Alert.alert('Sucesso', 'Treino concluído e registado!');
-              navigation.goBack();
-            } catch (error) {
-              console.error('Erro ao salvar treino concluído:', error);
-              Alert.alert('Erro', 'Não foi possível registar o treino. Tente novamente.');
-            }
+          onPress: () => {
+            setFeedbackModalVisible(true);
           },
         },
       ]
     );
+  };
+
+  const handleSendFeedback = async () => {
+    if (!treino.id) {
+      Alert.alert('Erro', 'ID do treino não encontrado. Não foi possível registar o feedback.');
+      return;
+    }
+
+    try {
+      const userId = await getUserIdLoggedIn();
+      if (!userId) {
+        Alert.alert('Erro', 'Utilizador não autenticado.');
+        return;
+      }
+
+      // Atualiza o AsyncStorage com o status de conclusão
+      const chaveAsyncStorage = `treinosConcluidos_${userId}`;
+      const dadosAtuaisJson = await AsyncStorage.getItem(chaveAsyncStorage);
+      const dadosAtuais = dadosAtuaisJson ? JSON.parse(dadosAtuaisJson) : {};
+      dadosAtuais[treino.id] = { completed: true, duration: tempo }; 
+      await AsyncStorage.setItem(chaveAsyncStorage, JSON.stringify(dadosAtuais));
+      console.log(`✅ Treino ID ${treino.id} marcado como concluído no AsyncStorage.`);
+
+      // *** CORREÇÃO AQUI: Passa o objeto treino completo para salvarTreinoConcluido ***
+      await salvarTreinoConcluido(
+        userId,
+        treino, // Passa o objeto treino completo, como esperado pela função em userService.js
+        tempo,
+        workoutRating,
+        workoutObservation
+      );
+
+      Alert.alert('Sucesso', 'Treino concluído e feedback registado!');
+      setFeedbackModalVisible(false);
+      navigation.goBack();
+    } catch (error) {
+      console.error('Erro ao salvar treino concluído e feedback:', error);
+      Alert.alert('Erro', 'Não foi possível registar o treino e o feedback. Tente novamente.');
+    }
   };
 
   return (
@@ -189,56 +244,66 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
 
       <Text style={styles.exerciciosTitulo}>Exercícios</Text>
 
-      {treino.exercicios && treino.exercicios.length > 0 ? (
-        treino.exercicios.map((ex, idx) => (
-          <View key={idx} style={styles.exercicioCard}>
-            <Text style={styles.exercicioNome}>{String(ex.name)}</Text>
-            <Text style={styles.exercicioTipo}>
-              {ex.tipo === 'reps'
-                ? `${String(ex.valor)} repetições`
-                : `${String(ex.valor)} segundos`}
-            </Text>
-            {ex.description ? (
-              <Text style={styles.exercicioDescription}>{ex.description}</Text>
-            ) : null}
-            {ex.category ? (
-              <Text style={styles.exercicioDetail}>Categoria: {ex.category}</Text>
-            ) : null}
-            {ex.targetMuscles && ex.targetMuscles.length > 0 ? (
-              <Text style={styles.exercicioDetail}>Músculos: {ex.targetMuscles.join(', ')}</Text>
-            ) : null}
-            {ex.equipment && ex.equipment.length > 0 ? (
-              <Text style={styles.exercicioDetail}>Equipamento: {ex.equipment.join(', ')}</Text>
-            ) : null}
-
-            {ex.imageUrl ? (
-              <Image
-                source={{ uri: ex.imageUrl }}
-                style={styles.exercicioImage}
-                resizeMode="contain"
-                onError={(e) => console.log('Erro ao carregar imagem do exercício:', e.nativeEvent.error, ex.imageUrl)}
-              />
-            ) : null}
-
-            {ex.animationUrl ? (
-              <TouchableOpacity
-                style={styles.animationButton}
-                onPress={() => openAnimationModal(ex.animationUrl)}
-              >
-                <Ionicons name="play-circle-outline" size={24} color="#fff" />
-                <Text style={styles.animationButtonText}>Ver Animação</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        ))
+      {loadingExercisesDetails ? (
+        <ActivityIndicator size="large" color="#eab308" style={{ marginTop: 20 }} />
       ) : (
-        <Text style={styles.semExercicios}>Nenhum exercício cadastrado.</Text>
+        detailedExercises.length > 0 ? (
+          detailedExercises.map((ex, idx) => (
+            <View key={idx} style={styles.exercicioCard}>
+              <Text style={styles.exercicioNome}>{String(ex.exerciseName)}</Text>
+              <Text style={styles.exercicioTipo}>
+                {ex.sets ? `${String(ex.sets)} séries de ` : ''}
+                {ex.repsOrDuration} {ex.tipo === 'reps' ? 'repetições' : 'segundos'}
+              </Text>
+              {ex.rest ? (
+                <Text style={styles.exercicioDetail}>Descanso: {ex.rest}</Text>
+              ) : null}
+              {ex.notes ? (
+                <Text style={styles.exercicioDetail}>Notas: {ex.notes}</Text>
+              ) : null}
+              {ex.description ? (
+                <Text style={styles.exercicioDescription}>{ex.description}</Text>
+              ) : null}
+              {ex.category ? (
+                <Text style={styles.exercicioDetail}>Categoria: {ex.category}</Text>
+              ) : null}
+              {ex.targetMuscles && ex.targetMuscles.length > 0 ? (
+                <Text style={styles.exercicioDetail}>Músculos: {ex.targetMuscles.join(', ')}</Text>
+              ) : null}
+              {ex.equipment && ex.equipment.length > 0 ? (
+                <Text style={styles.exercicioDetail}>Equipamento: {ex.equipment.join(', ')}</Text>
+              ) : null}
+
+              {ex.imageUrl ? (
+                <Image
+                  source={{ uri: ex.imageUrl }}
+                  style={styles.exercicioImage}
+                  resizeMode="contain"
+                  onError={(e) => console.log('Erro ao carregar imagem do exercício:', e.nativeEvent.error, ex.imageUrl)}
+                />
+              ) : null}
+
+              {ex.animationUrl ? (
+                <TouchableOpacity
+                  style={styles.animationButton}
+                  onPress={() => openAnimationModal(ex.animationUrl)}
+                >
+                  <Ionicons name="play-circle-outline" size={24} color="#fff" />
+                  <Text style={styles.animationButtonText}>Ver Animação</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ))
+        ) : (
+          <Text style={styles.semExercicios}>Nenhum exercício cadastrado.</Text>
+        )
       )}
 
       <TouchableOpacity style={styles.botaoConcluir} onPress={concluirTreino}>
         <Text style={styles.botaoTexto}>Concluir Treino</Text>
       </TouchableOpacity>
 
+      {/* Modal de Animação */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -268,7 +333,7 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
                 `}}
                 style={styles.webView}
                 allowsFullscreenVideo={true}
-                mediaPlaybackRequiresUserAction={false} // Tenta auto-play
+                mediaPlaybackRequiresUserAction={false}
                 javaScriptEnabled={true}
                 domStorageEnabled={true}
                 containerStyle={{ width: width * 0.9, height: height * 0.6 }}
@@ -279,6 +344,60 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
             <TouchableOpacity onPress={closeAnimationModal} style={styles.animationModalCloseButton}>
               <Text style={styles.animationModalCloseButtonText}>Fechar</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal de Feedback do Treino */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={feedbackModalVisible}
+        onRequestClose={() => setFeedbackModalVisible(false)}
+      >
+        <View style={styles.feedbackModalOverlay}>
+          <View style={styles.feedbackModalContent}>
+            <Text style={styles.feedbackModalTitle}>Avalie o Treino</Text>
+            <Text style={styles.feedbackModalSubtitle}>Como foi o seu treino?</Text>
+
+            <View style={styles.starRatingContainer}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <TouchableOpacity key={star} onPress={() => setWorkoutRating(star)}>
+                  <MaterialCommunityIcons
+                    name={star <= workoutRating ? 'star' : 'star-outline'}
+                    size={40}
+                    color={star <= workoutRating ? '#FFD700' : '#ccc'}
+                    style={styles.starIcon}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.feedbackModalSubtitle}>Observações (Opcional):</Text>
+            <TextInput
+              style={styles.observationInput}
+              placeholder="Ex: Treino desafiador, gostei dos exercícios de perna."
+              placeholderTextColor="#999"
+              multiline
+              numberOfLines={4}
+              value={workoutObservation}
+              onChangeText={setWorkoutObservation}
+            />
+
+            <View style={styles.feedbackModalButtons}>
+              <TouchableOpacity
+                style={[styles.feedbackButton, styles.feedbackButtonCancel]}
+                onPress={() => setFeedbackModalVisible(false)}
+              >
+                <Text style={styles.feedbackButtonText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.feedbackButton, styles.feedbackButtonSubmit]}
+                onPress={handleSendFeedback}
+              >
+                <Text style={styles.feedbackButtonText}>Enviar Feedback</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -380,12 +499,12 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
     color: '#1e293b',
-    marginBottom: 5, // Adicionado para espaçamento
+    marginBottom: 5,
   },
   exercicioTipo: {
     fontSize: 15,
     color: '#475569',
-    marginBottom: 8, // Adicionado para espaçamento
+    marginBottom: 8,
   },
   exercicioDescription: {
     fontSize: 14,
@@ -399,17 +518,17 @@ const styles = StyleSheet.create({
   },
   exercicioImage: {
     width: '100%',
-    height: 200, // Altura ajustável, pode ser 'auto' se preferir manter a proporção
+    height: 200,
     borderRadius: 8,
     marginTop: 10,
     marginBottom: 10,
-    backgroundColor: '#e0e0e0', // Placeholder light gray
+    backgroundColor: '#e0e0e0',
   },
   animationButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#3b82f6', // Cor para o botão de animação
+    backgroundColor: '#3b82f6',
     paddingVertical: 10,
     borderRadius: 8,
     marginTop: 10,
@@ -425,7 +544,6 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     textAlign: 'center',
   },
-  // Estilos para o Modal de Animação
   animationModalOverlay: {
     flex: 1,
     justifyContent: 'center',
@@ -433,7 +551,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.8)',
   },
   animationModalContent: {
-    backgroundColor: '#000', // Fundo preto para o conteúdo do modal
+    backgroundColor: '#000',
     borderRadius: 15,
     width: '95%',
     height: '70%',
@@ -444,7 +562,7 @@ const styles = StyleSheet.create({
   webView: {
     flex: 1,
     width: '100%',
-    backgroundColor: '#000', // Fundo preto para o WebView
+    backgroundColor: '#000',
   },
   noAnimationText: {
     color: '#fff',
@@ -453,12 +571,86 @@ const styles = StyleSheet.create({
   },
   animationModalCloseButton: {
     marginTop: 15,
-    backgroundColor: '#eab308', // Cor do botão de fechar
+    backgroundColor: '#eab308',
     paddingVertical: 10,
     paddingHorizontal: 20,
     borderRadius: 8,
   },
   animationModalCloseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  feedbackModalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+  },
+  feedbackModalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 25,
+    width: '90%',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  feedbackModalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#0f172a',
+    marginBottom: 10,
+  },
+  feedbackModalSubtitle: {
+    fontSize: 16,
+    color: '#64748b',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  starRatingContainer: {
+    flexDirection: 'row',
+    marginBottom: 20,
+  },
+  starIcon: {
+    marginHorizontal: 4,
+  },
+  observationInput: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    padding: 10,
+    width: '100%',
+    minHeight: 100,
+    textAlignVertical: 'top',
+    fontSize: 16,
+    color: '#333',
+    marginBottom: 20,
+  },
+  feedbackModalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+  },
+  feedbackButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    flex: 1,
+    marginHorizontal: 5,
+    elevation: 3,
+  },
+  feedbackButtonCancel: {
+    backgroundColor: '#ef4444',
+  },
+  feedbackButtonSubmit: {
+    backgroundColor: '#10b981',
+  },
+  feedbackButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',

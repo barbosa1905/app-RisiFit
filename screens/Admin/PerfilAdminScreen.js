@@ -6,13 +6,16 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   Alert,
-  Image,
+  // Removido: Image, // Não precisamos mais do componente Image diretamente para o avatar
+  ScrollView,
+  Platform,
 } from 'react-native';
 import { useUser } from '../../contexts/UserContext';
 import { doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../services/firebaseConfig';
 import { signOut } from 'firebase/auth';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 
 export default function PerfilAdminScreen() {
   const { user } = useUser();
@@ -20,7 +23,10 @@ export default function PerfilAdminScreen() {
   const [loading, setLoading] = useState(true);
   const navigation = useNavigation();
 
-  const DEFAULT_AVATAR = require('../../assets/default-avatar.png');
+  // Função para obter a inicial do nome
+  const getInitial = useCallback((name) => {
+    return name ? name.charAt(0).toUpperCase() : '?';
+  }, []);
 
   const fetchAdminData = useCallback(() => {
     async function getData() {
@@ -91,8 +97,8 @@ export default function PerfilAdminScreen() {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#b38600" />
+      <View style={styles.centeredContainer}>
+        <ActivityIndicator size="large" color={colors.primary} />
         <Text style={styles.loadingText}>A carregar dados do administrador...</Text>
       </View>
     );
@@ -100,7 +106,7 @@ export default function PerfilAdminScreen() {
 
   if (!adminData) {
     return (
-      <View style={styles.loadingContainer}>
+      <View style={styles.centeredContainer}>
         <Text style={styles.errorText}>Administrador não encontrado ou erro ao carregar.</Text>
         <TouchableOpacity onPress={fetchAdminData} style={styles.retryButton}>
           <Text style={styles.retryButtonText}>Tentar Novamente</Text>
@@ -109,138 +115,297 @@ export default function PerfilAdminScreen() {
     );
   }
 
+  // Obter a inicial do nome para o avatar
+  const avatarInitial = getInitial(adminData.nome);
+
   return (
-    <View style={styles.container}>
-      <View style={styles.avatarContainer}>
-        <Image
-          source={DEFAULT_AVATAR}
-          style={styles.avatar}
-        />
+    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+      {/* Header com Avatar e Nome */}
+      <View style={styles.header}>
+        <View style={styles.avatarContainer}>
+          {/* Avatar com a inicial do nome */}
+          <View style={styles.initialsAvatar}>
+            <Text style={styles.initialsText}>{avatarInitial}</Text>
+          </View>
+          {/* Removido: TouchableOpacity do botão de edição do avatar */}
+        </View>
+        <Text style={styles.nome}>{adminData.nome || 'Sem Nome'}</Text>
+        <Text style={styles.roleTag}>Administrador</Text>
       </View>
 
-      <Text style={styles.nome}>{adminData.nome || 'Sem nome'}</Text>
-      <Text style={styles.info}>Email: {user?.email || 'N/A'}</Text>
-      <Text style={styles.info}>ID: {user?.uid || 'N/A'}</Text>
-      <Text style={styles.info}>Função: {adminData.role || 'Admin'}</Text>
+      {/* Detalhes do Perfil */}
+      <View style={styles.detailsCard}>
+        <View style={styles.detailRow}>
+          <Ionicons name="mail-outline" size={20} color={colors.primary} style={styles.detailIcon} />
+          <Text style={styles.info}>Email: {user?.email || 'N/A'}</Text>
+        </View>
+        <View style={styles.detailRow}>
+          <Ionicons name="card-outline" size={20} color={colors.primary} style={styles.detailIcon} />
+          <Text style={styles.info}>ID: {user?.uid || 'N/A'}</Text>
+        </View>
+      </View>
 
-      <View style={styles.buttonGroup}>
-        <TouchableOpacity style={styles.botao} onPress={irParaCadastroCliente}>
-          <Text style={styles.botaoTexto}>➕ Cadastrar Novo Cliente</Text>
+      {/* Grupo de Ações */}
+      <View style={styles.actionGroup}>
+        <Text style={styles.sectionTitle}>Ações Rápidas</Text>
+
+        <TouchableOpacity style={styles.actionButton} onPress={irParaCadastroCliente}>
+          <Ionicons name="person-add-outline" size={22} color={colors.primaryDark} style={styles.actionIcon} />
+          <Text style={styles.actionButtonText}>Cadastrar Novo Cliente</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.botao} onPress={() => navigation.navigate('CriarAvaliacao')}>
-          <Text style={styles.botaoTexto}>📝 Criar Nova Avaliação</Text>
+        <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('CriarAvaliacao')}>
+          <Ionicons name="create-outline" size={22} color={colors.primaryDark} style={styles.actionIcon} />
+          <Text style={styles.actionButtonText}>Criar Nova Avaliação</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.botao} onPress={handleEditarPerfil}>
-          <Text style={styles.botaoTexto}>✏️ Editar Perfil</Text>
+        <TouchableOpacity style={styles.actionButton} onPress={handleEditarPerfil}>
+          <Ionicons name="build-outline" size={22} color={colors.primaryDark} style={styles.actionIcon} />
+          <Text style={styles.actionButtonText}>Gerir Perfil</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.botao} onPress={() => navigation.navigate('ListarQuestionarios')}>
-          <Text style={styles.botaoTexto}>🛠️ Gerir Questionários</Text>
+        <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('ListarQuestionarios')}>
+          <Ionicons name="list-outline" size={22} color={colors.primaryDark} style={styles.actionIcon} />
+          <Text style={styles.actionButtonText}>Gerir Questionários</Text>
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity style={[styles.botao, styles.logoutButton]} onPress={handleLogout}>
-        <Text style={[styles.botaoTexto, styles.logoutButtonText]}>🚪 Terminar Sessão</Text>
+      {/* Botão de Terminar Sessão */}
+      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+        <Ionicons name="log-out-outline" size={22} color={colors.backgroundLight} style={styles.logoutIcon} />
+        <Text style={styles.logoutButtonText}>Terminar Sessão</Text>
       </TouchableOpacity>
-    </View>
+    </ScrollView>
   );
 }
 
+// --- Definição da Paleta de Cores ---
+const colors = {
+  primary: '#D4AC54',       // Dourado principal - Para botões, ícones, títulos
+  primaryDark: '#A88433',   // Dourado mais escuro - Para texto em destaque
+  secondary: '#69511A',     // Castanho escuro - Para texto principal
+  textMuted: '#767676',     // Cinzento médio - Para texto secundário
+  background: '#F8F8F8',    // Fundo geral claro
+  backgroundLight: '#FFFFFF',// Fundo de cards/elementos brancos
+  border: '#E0E0E0',        // Cor para bordas sutis
+  shadow: 'rgba(0,0,0,0.08)', // Sombra suave
+  danger: '#D32F2F',        // Vermelho para ações destrutivas (logout)
+  textLight: '#FFFFFF',     // Texto para fundos escuros
+};
+
+// --- Estilos Profissionais ---
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 15, // Reduz o padding geral
-    backgroundColor: '#FBF8F1',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: colors.background,
   },
-  loadingContainer: {
+  contentContainer: {
+    padding: 20,
+    alignItems: 'center',
+    paddingBottom: 40,
+  },
+  centeredContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FBF8F1',
+    backgroundColor: colors.background,
   },
   loadingText: {
-    marginTop: 8, // Reduz a margem
-    color: '#6B5A00',
-    fontSize: 15, // Fonte ligeiramente menor
+    marginTop: 10,
+    color: colors.secondary,
+    fontSize: 16,
   },
   errorText: {
-    fontSize: 16, // Fonte ligeiramente menor
-    color: '#D13E3E',
-    marginBottom: 10, // Reduz a margem
+    fontSize: 17,
+    color: colors.danger,
+    marginBottom: 15,
     textAlign: 'center',
   },
   retryButton: {
-    backgroundColor: '#D0A956',
-    paddingVertical: 8, // Reduz o padding
-    paddingHorizontal: 16, // Reduz o padding
-    borderRadius: 6, // Raio menor
+    backgroundColor: colors.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    elevation: 3,
+    ...Platform.select({
+      ios: {
+        shadowColor: colors.shadow,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+      },
+    }),
   },
   retryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15, // Fonte ligeiramente menor
+    color: colors.textLight,
+    fontSize: 16,
     fontWeight: 'bold',
   },
-  avatarContainer: {
+
+  // --- Header Section ---
+  header: {
+    width: '100%',
     alignItems: 'center',
-    marginVertical: 15, // Reduz a margem vertical
+    paddingBottom: 25,
+    marginBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  avatar: {
-    width: 120, // Avatar menor
-    height: 120, // Avatar menor
-    borderRadius: 60, // Ajusta o raio para ser um círculo
-    borderWidth: 3, // Borda mais fina
-    borderColor: '#D0A956',
-    shadowColor: '#A17F00',
-    shadowOffset: { width: 0, height: 3 }, // Sombra menos proeminente
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 6,
+  avatarContainer: {
+    position: 'relative',
+    marginBottom: 15,
   },
+  // Novo estilo para o avatar com as iniciais
+  initialsAvatar: {
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    borderWidth: 4,
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryDark, // Fundo do avatar com a cor dourado escuro
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: colors.shadow,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 10,
+      },
+    }),
+  },
+  initialsText: {
+    color: colors.textLight, // Cor branca para o texto das iniciais
+    fontSize: 60, // Tamanho grande para a inicial
+    fontWeight: 'bold',
+  },
+  // Removido: editAvatarButton e seus estilos
+
   nome: {
-    fontSize: 24, // Nome menor
-    fontWeight: '800',
-    color: '#4B3B00',
-    marginTop: 8, // Margem menor
-    marginBottom: 5, // Margem menor
+    fontSize: 28,
+    fontWeight: '700',
+    color: colors.secondary,
+    marginBottom: 5,
     textAlign: 'center',
+  },
+  roleTag: {
+    backgroundColor: colors.primary,
+    color: colors.textLight,
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // --- Details Card ---
+  detailsCard: {
+    width: '100%',
+    backgroundColor: colors.backgroundLight,
+    borderRadius: 12,
+    padding: 18,
+    marginBottom: 25,
+    ...Platform.select({
+      ios: {
+        shadowColor: colors.shadow,
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.15,
+        shadowRadius: 6,
+      },
+      android: {
+        elevation: 8,
+      },
+    }),
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  detailIcon: {
+    marginRight: 10,
   },
   info: {
-    fontSize: 15, // Info menor
-    color: '#6B5A00',
-    marginBottom: 3, // Margem menor
-    textAlign: 'center',
+    fontSize: 16,
+    color: colors.textMuted,
+    flexShrink: 1,
   },
-  buttonGroup: {
+
+  // --- Action Group ---
+  actionGroup: {
     width: '100%',
-    marginTop: 15, // Margem menor
+    marginBottom: 25,
   },
-  botao: {
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: colors.secondary,
+    marginBottom: 15,
+    textAlign: 'left',
     width: '100%',
-    marginTop: 10, // Margem entre botões menor
-    backgroundColor: '#D0A956',
-    paddingVertical: 12, // Padding vertical do botão menor
-    borderRadius: 10, // Raio menor
+  },
+  actionButton: {
+    flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#A17F00',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 5,
+    backgroundColor: colors.backgroundLight,
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...Platform.select({
+      ios: {
+        shadowColor: colors.shadow,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
   },
-  botaoTexto: {
-    fontWeight: '700',
-    fontSize: 16, // Texto do botão menor
-    color: '#FFFFFF',
+  actionIcon: {
+    marginRight: 15,
   },
+  actionButtonText: {
+    fontSize: 17,
+    fontWeight: '500',
+    color: colors.secondary,
+  },
+
+  // --- Logout Button ---
   logoutButton: {
-    marginTop: 25, // Margem maior, mas reduzida da original
-    backgroundColor: '#A35400',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    backgroundColor: colors.danger,
+    paddingVertical: 16,
+    borderRadius: 10,
+    marginTop: 10,
+    ...Platform.select({
+      ios: {
+        shadowColor: colors.shadow,
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.2,
+        shadowRadius: 5,
+      },
+      android: {
+        elevation: 7,
+      },
+    }),
+  },
+  logoutIcon: {
+    marginRight: 10,
   },
   logoutButtonText: {
-    color: '#FFECB3',
+    color: colors.textLight,
+    fontSize: 18,
+    fontWeight: '600',
   },
 });

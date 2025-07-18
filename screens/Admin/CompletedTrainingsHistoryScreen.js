@@ -1,10 +1,8 @@
-// screens/Admin/CompletedTrainingsHistoryScreen.js
-
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, ActivityIndicator, TextInput, Platform, Alert } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'; // Importar MaterialCommunityIcons
 import { db } from '../../services/firebaseConfig';
-import { collection, query, where, orderBy, getDocs, doc, getDoc } from 'firebase/firestore'; // Note: Não é collectionGroup aqui, é collection para historicoTreinos
+import { collection, query, where, orderBy, getDocs, doc, getDoc } from 'firebase/firestore';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 // Reintroduzindo a função formatarDuracao, pois será útil aqui
@@ -16,8 +14,21 @@ const formatarDuracao = (totalSegundos) => {
     const min = Math.floor((totalSegundos % 3600) / 60);
     const seg = totalSegundos % 60;
     const pad = (num) => num.toString().padStart(2, '0');
-    return `${pad(horas)}h ${pad(min)}m ${pad(seg)}s`;
+    
+    const parts = [];
+    if (horas > 0) {
+        parts.push(`${horas}h`);
+    }
+    if (min > 0 || (horas === 0 && seg > 0)) { // Inclui minutos se houver segundos e nenhuma hora
+        parts.push(`${min}m`);
+    }
+    if (seg > 0 || (horas === 0 && min === 0)) { // Inclui segundos se for a única unidade ou se houver minutos mas não horas
+        parts.push(`${seg}s`);
+    }
+    
+    return parts.join(' ');
 };
+
 
 const Colors = {
     primaryGold: '#D4AF37',
@@ -47,38 +58,32 @@ export default function CompletedTrainingsHistoryScreen({ navigation }) {
     // Estados para o DateTimePicker
     const [showStartDatePicker, setShowStartDatePicker] = useState(false);
     const [showEndDatePicker, setShowEndDatePicker] = useState(false);
-    const [currentPickerMode, setCurrentPickerMode] = useState('date'); // 'date' ou 'time'
-    const [pickerFor, setPickerFor] = useState(null); // 'start' ou 'end'
+    const [currentPickerMode, setCurrentPickerMode] = useState('date');
+    const [pickerFor, setPickerFor] = useState(null);
 
     const fetchCompletedTrainings = async () => {
         setLoading(true);
         setError(null);
         try {
-            // AQUI USAMOS A COLEÇÃO 'historicoTreinos' DIRETAMENTE, NÃO collectionGroup
             const historicoRef = collection(db, 'historicoTreinos');
-            let q = query(historicoRef); // Inicia a query sem filtros iniciais além da coleção
+            let q = query(historicoRef);
 
-            // Aplicar filtros de data (no Firebase)
             if (startDateFilter) {
                 q = query(q, where('dataConclusao', '>=', startDateFilter));
             }
             if (endDateFilter) {
-                // Para incluir o dia final inteiro, adicione 23:59:59.999
                 const endOfDay = new Date(endDateFilter);
                 endOfDay.setHours(23, 59, 59, 999);
                 q = query(q, where('dataConclusao', '<=', endOfDay));
             }
 
-            // A ordenação DEVE vir depois dos wheres, e se houver um 'where' em um campo
-            // e 'orderBy' em outro, é necessário um índice composto no Firebase.
-            // Para as datas, se usar range (>= e <=), é melhor ordenar pela data.
             q = query(q, orderBy('dataConclusao', 'desc'));
 
             const querySnapshot = await getDocs(q);
             const trainingsData = await Promise.all(querySnapshot.docs.map(async docSnap => {
                 const data = docSnap.data();
                 let clientName = 'Cliente Desconhecido';
-                const currentUserId = data.userId; // O userId está diretamente no documento do histórico
+                const currentUserId = data.userId;
 
                 if (currentUserId) {
                     try {
@@ -96,18 +101,20 @@ export default function CompletedTrainingsHistoryScreen({ navigation }) {
                 return {
                     id: docSnap.id,
                     ...data,
-                    dataConclusao: data.dataConclusao ? data.dataConclusao.toDate() : null, // Converter Timestamp para Date
+                    dataConclusao: data.dataConclusao ? data.dataConclusao.toDate() : null,
                     clientName: clientName,
+                    // NOVO: Adicionar avaliação e observações
+                    avaliacao: data.avaliacao || 0, // Padrão para 0 se não existir
+                    observacoesUser: data.observacoesUser || '', // Padrão para string vazia
                 };
             }));
 
-            // Filtragem em memória para nome do cliente e nome do treino (para flexibilidade com "contains")
             const filteredTrainings = trainingsData.filter(treino => {
                 const matchesClient = clientNameFilter
                     ? treino.clientName.toLowerCase().includes(clientNameFilter.toLowerCase())
                     : true;
                 const matchesTraining = trainingNameFilter
-                    ? (treino.nomeTreino || '').toLowerCase().includes(trainingNameFilter.toLowerCase()) // Garante que nomeTreino existe
+                    ? (treino.nomeTreino || '').toLowerCase().includes(trainingNameFilter.toLowerCase())
                     : true;
                 return matchesClient && matchesTraining;
             });
@@ -123,11 +130,11 @@ export default function CompletedTrainingsHistoryScreen({ navigation }) {
     };
 
     useEffect(() => {
-        fetchCompletedTrainings(); // Carrega inicialmente ao montar o componente
+        fetchCompletedTrainings();
     }, []);
 
     const handleSearch = () => {
-        fetchCompletedTrainings(); // Refaz a busca com os filtros atuais
+        fetchCompletedTrainings();
     };
 
     const handleClearFilters = () => {
@@ -135,7 +142,6 @@ export default function CompletedTrainingsHistoryScreen({ navigation }) {
         setTrainingNameFilter('');
         setStartDateFilter(null);
         setEndDateFilter(null);
-        // Chamar fetchCompletedTrainings para recarregar sem filtros
         fetchCompletedTrainings();
     };
 
@@ -255,7 +261,29 @@ export default function CompletedTrainingsHistoryScreen({ navigation }) {
                                 <Text style={styles.trainingCardDetail}>
                                     Duração: {formatarDuracao(treino.duracao)}
                                 </Text>
-                                {/* Adicione mais detalhes se desejar */}
+
+                                {/* NOVO: Exibir Avaliação */}
+                                {treino.avaliacao > 0 && (
+                                    <View style={styles.ratingContainer}>
+                                        <Text style={styles.ratingText}>Avaliação: </Text>
+                                        {[1, 2, 3, 4, 5].map((star) => (
+                                            <MaterialCommunityIcons
+                                                key={star}
+                                                name={star <= treino.avaliacao ? 'star' : 'star-outline'}
+                                                size={20}
+                                                color="#FFD700" // Cor de ouro para as estrelas
+                                            />
+                                        ))}
+                                    </View>
+                                )}
+
+                                {/* NOVO: Exibir Observações */}
+                                {treino.observacoesUser ? (
+                                    <View style={styles.observationContainer}>
+                                        <Text style={styles.observationLabel}>Observações do Cliente:</Text>
+                                        <Text style={styles.observationText}>{treino.observacoesUser}</Text>
+                                    </View>
+                                ) : null}
                             </View>
                         ))}
                     </View>
@@ -407,6 +435,37 @@ const styles = StyleSheet.create({
     trainingCardDetail: {
         fontSize: 14,
         color: Colors.darkGray,
+        marginBottom: 2, // Ajustado para espaçamento
+    },
+    // NOVOS ESTILOS para feedback
+    ratingContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 8,
+        marginBottom: 5,
+    },
+    ratingText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: Colors.darkBrown,
+        marginRight: 5,
+    },
+    observationContainer: {
+        marginTop: 10,
+        borderTopWidth: 1,
+        borderTopColor: Colors.lightGray,
+        paddingTop: 10,
+    },
+    observationLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: Colors.darkBrown,
+        marginBottom: 5,
+    },
+    observationText: {
+        fontSize: 14,
+        color: Colors.darkGray,
+        fontStyle: 'italic',
     },
     noDataText: {
         fontSize: 16,

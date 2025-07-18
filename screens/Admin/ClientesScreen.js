@@ -26,23 +26,27 @@ import {
 import { db } from '../../services/firebaseConfig';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
+import { Ionicons } from '@expo/vector-icons'; // Importar ícones
 
 // Paleta de Cores Refinada
 const Colors = {
-    primaryGold: '#D4AF37', // Ouro mais clássico
-    darkBrown: '#3E2723',   // Marrom bem escuro, quase preto
-    lightBrown: '#795548',  // Marrom mais suave
-    creamBackground: '#FDF7E4', // Fundo creme claro
-    white: '#FFFFFF',
-    lightGray: '#ECEFF1',   // Cinza muito claro
-    mediumGray: '#B0BEC5',  // Cinza médio para textos secundários
-    darkGray: '#424242',    // Cinza escuro para textos principais
-    accentBlue: '#2196F3',  // Azul vibrante para links
-    successGreen: '#4CAF50', // Verde para sucesso
-    errorRed: '#F44336',    // Vermelho para erros/alertas
-    unreadBadge: '#EF5350', // Vermelho mais vibrante para badge de não lidas
+  primaryGold: '#D4AF37',   // Ouro mais clássico
+  darkBrown: '#3E2723',     // Marrom bem escuro, quase preto
+  lightBrown: '#795548',    // Marrom mais suave
+  creamBackground: '#FDF7E4', // Fundo creme claro
+  white: '#FFFFFF',
+  lightGray: '#ECEFF1',     // Cinza muito claro
+  mediumGray: '#B0BEC5',    // Cinza médio para textos secundários
+  darkGray: '#424242',      // Cinza escuro para textos principais
+  accentBlue: '#2196F3',    // Azul vibrante para links
+  successGreen: '#4CAF50',  // Verde para sucesso
+  errorRed: '#F44336',      // Vermelho para erros/alertas
+  buttonTextLight: '#FFFFFF', // Cor de texto para botões com fundo escuro
+  buttonTextDark: '#3E2723', // Cor de texto para botões com fundo claro
+  shadow: 'rgba(0,0,0,0.08)', // Sombra suave
 };
 
+const { width } = Dimensions.get('window');
 
 export default function ClientesScreen() {
   const [clientes, setClientes] = useState([]);
@@ -63,9 +67,7 @@ export default function ClientesScreen() {
       const unsubscribe = onSnapshot(userRef, (docSnap) => {
         if (docSnap.exists() && docSnap.data().role === 'admin') {
           setAdminInfo(docSnap.data());
-          console.log('User details loaded:', docSnap.data());
         } else {
-          console.warn('Usuário logado não é um administrador ou dados não encontrados.');
           setAdminInfo({ name: 'Admin', email: 'admin@example.com', nome: 'Admin' });
         }
       }, (error) => {
@@ -95,7 +97,7 @@ export default function ClientesScreen() {
             id: docUser.id,
             ...userData,
             totalTreinos: treinosSnap.size,
-            dataCriacao: docUser.createTime?.toDate?.() || new Date(0),
+            dataCriacao: (userData.createdAt && userData.createdAt.toDate) ? userData.createdAt.toDate() : new Date(),
           };
         })
       );
@@ -113,42 +115,34 @@ export default function ClientesScreen() {
     const unsubscribeAdmin = fetchAdminInfo();
     carregarClientes();
 
+    const unsubscribeFocus = navigation.addListener('focus', () => {
+      carregarClientes();
+    });
+
     return () => {
       unsubscribeAdmin();
+      unsubscribeFocus();
     };
-  }, [fetchAdminInfo, carregarClientes]);
+  }, [fetchAdminInfo, carregarClientes, navigation]);
 
   const confirmarRemocao = (cliente) => {
     Alert.alert(
-      'Remover cliente',
-      `Tens a certeza que queres remover ${cliente.name || 'este cliente'}?`,
+      'Remover Cliente',
+      `Tem certeza que quer remover ${cliente.name || 'este cliente'}? Esta ação é irreversível.`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
-          text: 'Continuar',
+          text: 'Apagar',
           style: 'destructive',
-          onPress: () => {
-            Alert.alert(
-              'Confirmação final',
-              'Esta ação é irreversível. Queres mesmo apagar este cliente?',
-              [
-                { text: 'Cancelar', style: 'cancel' },
-                {
-                  text: 'Apagar',
-                  style: 'destructive',
-                  onPress: async () => {
-                    try {
-                      await deleteDoc(doc(db, 'users', cliente.id));
-                      carregarClientes();
-                      Alert.alert('Sucesso', 'Cliente removido com sucesso!');
-                    } catch (error) {
-                      console.error('Erro ao apagar cliente:', error);
-                      Alert.alert('Erro', 'Não foi possível apagar o cliente.');
-                    }
-                  },
-                },
-              ]
-            );
+          onPress: async () => {
+            try {
+              await deleteDoc(doc(db, 'users', cliente.id));
+              carregarClientes();
+              Alert.alert('Sucesso', 'Cliente removido com sucesso!');
+            } catch (error) {
+              console.error('Erro ao apagar cliente:', error);
+              Alert.alert('Erro', 'Não foi possível apagar o cliente.');
+            }
           },
         },
       ]
@@ -164,16 +158,21 @@ export default function ClientesScreen() {
         cliente.email && cliente.email.toLowerCase().includes(termo);
       const tipoOk =
         filtroTipo === 'Todos' ||
-        (filtroTipo === 'ComTreinos' && cliente.totalTreinos > 0);
+        (filtroTipo === 'ComTreinos' && cliente.totalTreinos > 0) ||
+        (filtroTipo === 'SemTreinos' && cliente.totalTreinos === 0);
       return (nameOk || emailOk) && tipoOk;
     })
     .sort((a, b) => {
+      const dateA = a.dataCriacao instanceof Date ? a.dataCriacao.getTime() : new Date(0).getTime();
+      const dateB = b.dataCriacao instanceof Date ? b.dataCriacao.getTime() : new Date(0).getTime();
+
       if (ordem === 'recente') {
-        return b.dataCriacao.getTime() - a.dataCriacao.getTime();
+        return dateB - dateA;
       } else {
-        return a.dataCriacao.getTime() - b.dataCriacao.getTime();
+        return dateA - dateB;
       }
     });
+
 
   const renderItem = ({ item }) => {
     const iniciais = item.name
@@ -182,26 +181,30 @@ export default function ClientesScreen() {
           .map((parte) => parte[0])
           .join('')
           .toUpperCase()
-      : '👤';
+      : '??';
 
     return (
-      <View style={styles.card}>
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => navigation.navigate('FichaCliente', { clienteId: item.id, clientename: item.name })}
+        activeOpacity={0.8}
+      >
         <View style={styles.headerCard}>
           <View style={styles.avatarCard}>
             <Text style={styles.avatarTextCard}>{iniciais}</Text>
           </View>
-          <View>
-            <Text style={styles.nameCard}>{item.name || 'Sem nome'}</Text>
+          <View style={styles.infoClienteContainer}>
+            <Text style={styles.nameCard}>{item.name || 'Cliente Sem Nome'}</Text>
             <Text style={styles.emailCard}>{item.email}</Text>
             <Text style={styles.treinosCard}>
-              Treinos atribuídos: {item.totalTreinos}
+              <Ionicons name="barbell-outline" size={14} color={Colors.lightBrown} /> {item.totalTreinos} treinos atribuídos
             </Text>
           </View>
         </View>
 
         <View style={styles.buttonRow}>
           <TouchableOpacity
-            style={styles.primaryButton}
+            style={[styles.actionButton, { backgroundColor: Colors.primaryGold }]}
             onPress={() =>
               navigation.navigate('TreinosCliente', {
                 clienteId: item.id,
@@ -209,28 +212,32 @@ export default function ClientesScreen() {
               })
             }
           >
-            <Text style={styles.buttonText}>📋 Ver Treinos</Text>
+            <Ionicons name="fitness-outline" size={18} color={Colors.buttonTextLight} />
+            <Text style={styles.actionButtonText}>Ver Treinos</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.secondaryButton}
+            style={[styles.actionButton, { backgroundColor: Colors.lightBrown }]}
             onPress={() =>
               navigation.navigate('FichaCliente', {
                 clienteId: item.id,
+                clientename: item.name,
               })
             }
           >
-            <Text style={styles.buttonText}>📄 Ficha de Cliente</Text>
+            <Ionicons name="document-text-outline" size={18} color={Colors.buttonTextLight} />
+            <Text style={styles.actionButtonText}>Ver Ficha</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.deleteButton}
+            style={[styles.actionButton, { backgroundColor: Colors.errorRed }]}
             onPress={() => confirmarRemocao(item)}
           >
-            <Text style={styles.buttonText}>🗑️ Remover</Text>
+            <Ionicons name="trash-outline" size={18} color={Colors.buttonTextLight} />
+            <Text style={styles.actionButtonText}>Remover</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -248,7 +255,7 @@ export default function ClientesScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Barra Fixa Superior (Header - Otimizada) */}
+      {/* Barra Fixa Superior (Header) */}
       <View style={styles.header}>
         <Image
           source={require('../../assets/logo.jpeg')}
@@ -259,75 +266,117 @@ export default function ClientesScreen() {
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{adminInitial}</Text>
           </View>
-          <Text style={styles.userNameText}>Olá, {adminDisplayName}</Text>
+          <Text style={styles.userNameText}>Olá, {adminDisplayName.split(' ')[0]}</Text>
         </View>
       </View>
 
-      <Text style={styles.total}>
-        👥 {clientesFiltrados.length} clientes encontrados
-      </Text>
+      <FlatList
+        data={clientesFiltrados}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContainer}
+        renderItem={renderItem}
+        ListHeaderComponent={() => (
+          <View>
+            {/* Contagem de Clientes - Agora sem margin horizontal */}
+            <View style={styles.totalClientsContainer}>
+              <Text style={styles.totalClientsText}>
+                <Ionicons name="people-outline" size={20} color={Colors.darkBrown} /> {clientesFiltrados.length} clientes encontrados
+              </Text>
+            </View>
 
-      <TextInput
-        style={styles.searchInput}
-        placeholder="🔍 Procurar por nome ou email"
-        value={pesquisa}
-        onChangeText={setPesquisa}
+            {/* Campo de Pesquisa - Agora sem margin horizontal */}
+            <View style={styles.searchInputContainer}>
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="🔍 Pesquisar por nome ou email..."
+                  placeholderTextColor={Colors.mediumGray}
+                  value={pesquisa}
+                  onChangeText={setPesquisa}
+                />
+            </View>
+
+
+            {/* Filtros e Ordenação (Compactos e Horizontais) - Agora sem margin horizontal */}
+            <View style={styles.filterSortRow}>
+              <Text style={styles.filterSortLabel}>Filtrar:</Text>
+              <View style={styles.filterButtonGroup}>
+                <TouchableOpacity
+                  style={[
+                    styles.filterButtonCompact,
+                    filtroTipo === 'Todos' && styles.filterButtonActiveCompact,
+                  ]}
+                  onPress={() => setFiltroTipo('Todos')}
+                >
+                  <Text style={[styles.filterButtonTextCompact, filtroTipo === 'Todos' && styles.filterButtonTextActiveCompact]}>Todos</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.filterButtonCompact,
+                    filtroTipo === 'ComTreinos' && styles.filterButtonActiveCompact,
+                  ]}
+                  onPress={() => setFiltroTipo('ComTreinos')}
+                >
+                  <Text style={[styles.filterButtonTextCompact, filtroTipo === 'ComTreinos' && styles.filterButtonTextActiveCompact]}>Com Treinos</Text>
+                </TouchableOpacity>
+                 <TouchableOpacity
+                  style={[
+                    styles.filterButtonCompact,
+                    filtroTipo === 'SemTreinos' && styles.filterButtonActiveCompact,
+                  ]}
+                  onPress={() => setFiltroTipo('SemTreinos')}
+                >
+                  <Text style={[styles.filterButtonTextCompact, filtroTipo === 'SemTreinos' && styles.filterButtonTextActiveCompact]}>Sem Treinos</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.filterSortLabel}>Ordenar:</Text>
+              <View style={styles.filterButtonGroup}>
+                <TouchableOpacity
+                  style={[
+                    styles.filterButtonCompact,
+                    ordem === 'recente' && styles.filterButtonActiveCompact,
+                  ]}
+                  onPress={() => setOrdem('recente')}
+                >
+                  <Text style={[styles.filterButtonTextCompact, ordem === 'recente' && styles.filterButtonTextActiveCompact]}>Recentes</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.filterButtonCompact,
+                    ordem === 'antigo' && styles.filterButtonActiveCompact,
+                  ]}
+                  onPress={() => setOrdem('antigo')}
+                >
+                  <Text style={[styles.filterButtonTextCompact, ordem === 'antigo' && styles.filterButtonTextActiveCompact]}>Antigos</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+             {clientesFiltrados.length === 0 && (
+                <View style={styles.emptyResultsContainer}>
+                  <Ionicons name="sad-outline" size={50} color={Colors.mediumGray} />
+                  <Text style={styles.emptyResultsText}>
+                    Nenhum cliente corresponde aos seus critérios de pesquisa/filtro.
+                  </Text>
+                </View>
+              )}
+          </View>
+        )}
+        ListEmptyComponent={!loading && clientes.length === 0 && (
+            <View style={styles.emptyResultsContainer}>
+                <Ionicons name="people-outline" size={50} color={Colors.mediumGray} />
+                <Text style={styles.emptyResultsText}>
+                    Ainda não há clientes registados.
+                </Text>
+                <TouchableOpacity
+                    style={styles.addButton}
+                    onPress={() => navigation.navigate('CadastroCliente')}
+                >
+                    <Ionicons name="add-circle-outline" size={24} color={Colors.buttonTextLight} />
+                    <Text style={styles.addButtonText}>Adicionar Primeiro Cliente</Text>
+                </TouchableOpacity>
+            </View>
+        )}
       />
-
-      <View style={styles.filtros}>
-        <TouchableOpacity
-          style={[
-            styles.filtroBtn,
-            filtroTipo === 'Todos' && styles.filtroAtivo,
-          ]}
-          onPress={() => setFiltroTipo('Todos')}
-        >
-          <Text>Todos</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.filtroBtn,
-            filtroTipo === 'ComTreinos' && styles.filtroAtivo,
-          ]}
-          onPress={() => setFiltroTipo('ComTreinos')}
-        >
-          <Text>Com Treinos</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.filtroBtn,
-            ordem === 'recente' && styles.filtroAtivo,
-          ]}
-          onPress={() => setOrdem('recente')}
-        >
-          <Text>Mais Recentes</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.filtroBtn,
-            ordem === 'antigo' && styles.filtroAtivo,
-          ]}
-          onPress={() => setOrdem('antigo')}
-        >
-          <Text>Mais Antigos</Text>
-        </TouchableOpacity>
-      </View>
-
-      {clientesFiltrados.length === 0 ? (
-        <View style={styles.center}>
-          <Text style={styles.emptyText}>
-            Nenhum cliente corresponde à pesquisa.
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={clientesFiltrados}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.list}
-          renderItem={renderItem}
-        />
-      )}
     </SafeAreaView>
   );
 }
@@ -345,191 +394,272 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.creamBackground,
   },
   loadingText: {
-    marginTop: 10,
-    fontSize: 16,
+    marginTop: 15,
+    fontSize: 17,
     color: Colors.darkBrown,
+    fontWeight: '500',
   },
+  // --- Header ---
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingVertical: 8, // Reduzido de 10 para 8
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     backgroundColor: Colors.primaryGold,
-    borderBottomWidth: 0,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 2 : 0, // Reduzido de 5 para 2
+    borderBottomLeftRadius: 15,
+    borderBottomRightRadius: 15,
     shadowColor: Colors.darkBrown,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 6,
+    marginBottom: 5,
   },
   headerLogo: {
-    width: 40, // Reduzido de 50 para 40
-    height: 40, // Reduzido de 50 para 40
-    borderRadius: 8,
+    width: 45,
+    height: 45,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.white,
   },
   userInfo: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   avatar: {
-    width: 38, // Reduzido de 44 para 38
-    height: 38, // Reduzido de 44 para 38
-    borderRadius: 19, // Ajustado para ser metade da nova altura/largura
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: Colors.darkBrown,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
-    borderWidth: 1.5,
+    marginRight: 12,
+    borderWidth: 2,
     borderColor: Colors.white,
   },
   avatarText: {
     color: Colors.white,
-    fontSize: 18, // Reduzido de 20 para 18
-    fontWeight: '600',
+    fontSize: 19,
+    fontWeight: '700',
   },
   userNameText: {
-    fontSize: 16, // Reduzido de 17 para 16
+    fontSize: 17,
     fontWeight: '600',
     color: Colors.white,
   },
-  center: {
+
+  // --- List Header Components (Search, Filters, Total) ---
+  // Novo contêiner para o total de clientes
+  totalClientsContainer: {
+    width: '100%', // Ocupa a largura total
+    backgroundColor: Colors.creamBackground, // Fundo transparente ou da tela
+    paddingVertical: 20, // Mantém o padding vertical
+    paddingHorizontal: 20, // Adiciona padding interno
+    marginBottom: 15, // Mantém a margem inferior
+  },
+  totalClientsText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: Colors.darkBrown,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // Novo contêiner para a barra de pesquisa
+  searchInputContainer: {
+    width: '100%',
+    backgroundColor: Colors.white, // Fundo branco
+    paddingHorizontal: 20, // Adiciona padding interno
+    paddingVertical: 12, // Mantém o padding vertical
+    marginBottom: 20,
+    borderRadius: 10, // Arredonda as bordas
+    shadowColor: Colors.shadow, // Sombra
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+    marginHorizontal: 0, // Remove a margem horizontal
+  },
+  searchInput: {
+    // Estilos internos do TextInput
+    flex: 1, // Ocupa o espaço disponível
+    fontSize: 16,
+    color: Colors.darkGray,
+    padding: 0, // Remover padding interno do TextInput se já tiver no container
+  },
+  // Contêiner de filtros e ordenação - Alterado para ter padding interno
+  filterSortRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginHorizontal: 0, // Remove a margem horizontal
+    marginBottom: 20,
+    backgroundColor: Colors.white,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 15, // Adiciona padding interno
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  filterSortLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.darkBrown,
+    marginRight: 8,
+  },
+  filterButtonGroup: {
+    flexDirection: 'row',
+    gap: 8,
+    marginRight: 15,
+    paddingVertical: 5,
+  },
+  filterButtonCompact: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.mediumGray,
+    backgroundColor: Colors.lightGray,
+  },
+  filterButtonActiveCompact: {
+    backgroundColor: Colors.primaryGold,
+    borderColor: Colors.primaryGold,
+  },
+  filterButtonTextCompact: {
+    fontSize: 13,
+    color: Colors.darkGray,
+    fontWeight: '500',
+  },
+  filterButtonTextActiveCompact: {
+    color: Colors.buttonTextLight,
+    fontWeight: '700',
+  },
+  emptyResultsContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 30,
+    textAlign: 'center',
   },
-  emptyText: {
-    fontSize: 16,
-    color: '#9ca3af',
-    marginTop: 20,
+  emptyResultsText: {
+    fontSize: 17,
+    color: Colors.mediumGray,
+    marginTop: 15,
+    textAlign: 'center',
+    lineHeight: 24,
   },
-  total: {
-    fontSize: 16,
-    fontWeight: '600',
-    paddingHorizontal: 16,
-    paddingTop: 15,
-    paddingBottom: 8,
-    color: '#000',
-  },
-  searchInput: {
-    marginHorizontal: 16,
-    marginBottom: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#d0a956',
-    borderRadius: 12,
-    backgroundColor: '#f3f4f6',
-    fontSize: 15,
-  },
-  filtros: {
+  addButton: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: 16,
-    marginBottom: 16,
-    gap: 8,
+    alignItems: 'center',
+    backgroundColor: Colors.primaryGold,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    marginTop: 25,
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 5,
   },
-  filtroBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#d0a956',
+  addButtonText: {
+    color: Colors.buttonTextLight,
+    fontSize: 17,
+    fontWeight: '600',
+    marginLeft: 8,
   },
-  filtroAtivo: {
-    backgroundColor: '#d0a956',
-    borderColor: '#d0a956',
-  },
-  list: {
-    paddingHorizontal: 16,
+
+  // --- Client List & Cards ---
+  listContainer: {
+    paddingHorizontal: 20, // Mantém o padding para os cards
     paddingBottom: 30,
   },
   card: {
-    backgroundColor: '#ffffff',
-    padding: 16,
-    borderRadius: 16,
-    marginBottom: 16,
-    shadowColor: '#d0a956',
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 4,
+    backgroundColor: Colors.white,
+    borderRadius: 15,
+    padding: 18,
+    marginBottom: 15,
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: Colors.lightGray,
   },
   headerCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 15,
   },
   avatarCard: {
-    backgroundColor: '#3b82f6',
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    backgroundColor: Colors.lightBrown,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 14,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
+    marginRight: 15,
+    borderWidth: 2,
+    borderColor: Colors.primaryGold,
   },
   avatarTextCard: {
-    color: '#ffffff',
+    color: Colors.white,
     fontWeight: 'bold',
-    fontSize: 22,
+    fontSize: 24,
+  },
+  infoClienteContainer: {
+    flex: 1,
   },
   nameCard: {
-    fontWeight: '600',
-    fontSize: 18,
-    color: '#111827',
+    fontWeight: '700',
+    fontSize: 19,
+    color: Colors.darkBrown,
+    marginBottom: 2,
   },
   emailCard: {
-    color: '#6b7280',
+    color: Colors.mediumGray,
     fontSize: 14,
+    marginBottom: 5,
   },
   treinosCard: {
     marginTop: 4,
-    color: '#6b7280',
+    color: Colors.lightBrown,
     fontSize: 13,
+    fontWeight: '500',
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   buttonRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    gap: 6,
+    marginTop: 10,
+    gap: 8,
   },
-  primaryButton: {
-    backgroundColor: '#3b82f6',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    marginTop: 6,
-    flex: 1,
+  actionButton: {
+    flexDirection: 'row',
     alignItems: 'center',
-  },
-  secondaryButton: {
-    backgroundColor: '#10b981',
+    justifyContent: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     borderRadius: 10,
-    marginTop: 6,
     flex: 1,
-    alignItems: 'center',
+    minWidth: (width - 40 - 16) / 3,
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
   },
-  deleteButton: {
-    backgroundColor: '#ef4444',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    marginTop: 6,
-    flex: 1,
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: '#ffffff',
+  actionButtonText: {
+    color: Colors.buttonTextLight,
     fontWeight: '600',
-    fontSize: 14,
+    fontSize: 13,
+    marginLeft: 6,
   },
 });

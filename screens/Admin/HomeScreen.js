@@ -1,10 +1,8 @@
-// screens/Admin/HomeScreen.js
-
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, Image, SafeAreaView, ScrollView, Platform, StatusBar, TouchableOpacity, ActivityIndicator, Alert, Dimensions } from 'react-native';
 import { useUser } from '../../contexts/UserContext';
 import { useNavigation } from '@react-navigation/native';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'; // Importar MaterialCommunityIcons para as estrelas
 import { db, auth } from '../../services/firebaseConfig';
 import { collection, query, where, getDocs, onSnapshot, orderBy, limit, collectionGroup, doc, getDoc } from 'firebase/firestore';
 
@@ -17,7 +15,19 @@ const formatarDuracao = (totalSegundos) => {
     const min = Math.floor((totalSegundos % 3600) / 60);
     const seg = totalSegundos % 60;
     const pad = (num) => num.toString().padStart(2, '0');
-    return `${pad(horas)}h ${pad(min)}m ${pad(seg)}s`;
+    
+    const parts = [];
+    if (horas > 0) {
+        parts.push(`${horas}h`);
+    }
+    if (min > 0 || (horas === 0 && seg > 0)) {
+        parts.push(`${pad(min)}m`);
+    }
+    if (seg > 0 || (horas === 0 && min === 0)) {
+        parts.push(`${pad(seg)}s`);
+    }
+    
+    return parts.join(' ');
 };
 
 const { width } = Dimensions.get('window');
@@ -50,6 +60,8 @@ export default function HomeScreen() {
         pendingEvaluations: 0,
     });
     const [upcomingTrainings, setUpcomingTrainings] = useState([]);
+    // NOVO ESTADO para os últimos treinos concluídos
+    const [recentCompletedTrainings, setRecentCompletedTrainings] = useState([]); 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
@@ -189,6 +201,51 @@ export default function HomeScreen() {
         return unsubscribe;
     };
 
+    // NOVA FUNÇÃO: Busca os últimos treinos concluídos
+    const fetchRecentCompletedTrainings = () => {
+        const historicoRef = collection(db, 'historicoTreinos');
+        const q = query(
+            historicoRef,
+            orderBy('dataConclusao', 'desc'), // Ordena pela data de conclusão mais recente
+            limit(3) // Limita aos 3 mais recentes
+        );
+
+        const unsubscribe = onSnapshot(q, async (snapshot) => {
+            const completedTrainingsData = await Promise.all(snapshot.docs.map(async docSnap => {
+                const data = docSnap.data();
+                let clientName = 'Cliente Desconhecido';
+
+                if (data.userId) {
+                    try {
+                        const clientDocRef = doc(db, 'users', data.userId);
+                        const clientDocSnap = await getDoc(clientDocRef);
+                        if (clientDocSnap.exists()) {
+                            const client = clientDocSnap.data();
+                            clientName = client.name || client.firstName || client.nome || 'Cliente sem nome';
+                        }
+                    } catch (e) {
+                        console.error(`Erro ao buscar nome do cliente para treino concluído ID ${docSnap.id}:`, e);
+                    }
+                }
+
+                return {
+                    id: docSnap.id,
+                    ...data,
+                    dataConclusao: data.dataConclusao ? data.dataConclusao.toDate() : null,
+                    clientName: clientName,
+                    avaliacao: data.avaliacao || 0,
+                    observacoesUser: data.observacoesUser || '',
+                };
+            }));
+            setRecentCompletedTrainings(completedTrainingsData);
+        }, (err) => {
+            console.error("Erro ao buscar treinos concluídos recentes:", err);
+            setError(`Não foi possível carregar os últimos treinos concluídos: ${err.message}`);
+        });
+
+        return unsubscribe;
+    };
+
 
     const subscribeToUnreadMessages = () => {
         chatUnsubscribersRef.current.forEach(unsub => unsub());
@@ -214,14 +271,9 @@ export default function HomeScreen() {
                 if (change.type === 'removed') {
                     if (chatUnsubscribersRef.current[chatId]) {
                         chatUnsubscribersRef.current[chatId]();
-                        // Assuming chatUnreadCounts is a ref or state that needs to be updated
-                        // If it's a ref, it should be like: chatUnreadCounts.current[chatId]
-                        // For now, I'll keep currentUnreadCounts as a local variable as it was
-                        // but if it's meant to persist across renders, it should be a ref or state.
-                        // Given the context, it seems to be a local counter for this specific snapshot.
                         delete currentUnreadCounts[chatId]; 
                     }
-                    if (currentUnreadCounts[chatId]) { // This check might be redundant if deleted above
+                    if (currentUnreadCounts[chatId]) {
                         totalUnread -= currentUnreadCounts[chatId];
                         delete currentUnreadCounts[chatId];
                         setStats(prevStats => ({ ...prevStats, unreadMessages: totalUnread }));
@@ -274,11 +326,15 @@ export default function HomeScreen() {
         fetchStaticStats();
         const unsubscribeTrainingsToday = subscribeToTrainingsToday();
         const unsubscribeUpcomingTrainings = fetchUpcomingTrainings();
+        // NOVO: Chamar a função para buscar treinos concluídos recentes
+        const unsubscribeRecentCompletedTrainings = fetchRecentCompletedTrainings(); 
         const unsubscribeUnread = subscribeToUnreadMessages();
 
         return () => {
             unsubscribeTrainingsToday();
             unsubscribeUpcomingTrainings();
+            // NOVO: Desinscrever dos treinos concluídos recentes
+            unsubscribeRecentCompletedTrainings(); 
             unsubscribeUnread();
         };
     }, [user]);
@@ -305,6 +361,7 @@ export default function HomeScreen() {
                     fetchStaticStats();
                     subscribeToTrainingsToday();
                     fetchUpcomingTrainings();
+                    fetchRecentCompletedTrainings(); // Adicionado para tentar novamente
                     subscribeToUnreadMessages();
                 }} style={styles.retryButton}>
                     <Text style={styles.retryButtonText}>Tentar Novamente</Text>
@@ -359,8 +416,8 @@ export default function HomeScreen() {
                         <ActionButton icon="calendar-outline" text="Ver Agenda" onPress={() => navigation.navigate('Agenda')} />
                         <ActionButton icon="people-outline" text="Gerir Clientes" onPress={() => navigation.navigate('Clientes')} />
                         <ActionButton icon="chatbubbles-outline" text="Chat Online" onPress={() => navigation.navigate('Chat Online')} />
-                        {/* NOVO BOTÃO PARA O HISTÓRICO DE TREINOS CONCLUÍDOS */}
-                         <ActionButton icon="barbell-outline" text="Gerir Exercícios" onPress={() => navigation.navigate('ExerciseLibrary')} />
+                        <ActionButton icon="library-outline" text="Gerir Modelos" onPress={() => navigation.navigate('WorkoutTemplates')} />
+                        <ActionButton icon="barbell-outline" text="Gerir Exercícios" onPress={() => navigation.navigate('ExerciseLibrary')} />
                         <ActionButton icon="checkmark-done-circle-outline" text="Histórico Treinos" onPress={() => navigation.navigate('CompletedTrainingsHistory')} />
                     </ScrollView>
                 </View>
@@ -391,6 +448,60 @@ export default function HomeScreen() {
                         <TouchableOpacity onPress={() => navigation.navigate('Agenda')} style={styles.linkButton} activeOpacity={0.7}>
                             <Text style={styles.viewAllLink}>
                                 <Text>Ver todos na Agenda </Text>
+                                <Ionicons name="arrow-forward-outline" size={14} color={Colors.accentBlue} />
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+
+                {/* NOVO: ÚLTIMOS TREINOS CONCLUÍDOS */}
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Últimos Treinos Concluídos</Text>
+                    <View style={styles.card}>
+                        {recentCompletedTrainings.length > 0 ? (
+                            recentCompletedTrainings.map((training, index) => (
+                                <React.Fragment key={training.id}>
+                                    <View style={styles.trainingItem}>
+                                        <Ionicons name="checkmark-done-circle-outline" size={18} color={Colors.successGreen} style={{ marginRight: 8 }} />
+                                        <Text style={styles.trainingText}>
+                                            <Text style={styles.trainingTime}>{training.dataConclusao ? training.dataConclusao.toLocaleDateString() : 'N/A'}</Text>
+                                            <Text> | </Text>
+                                            <Text style={styles.trainingClient}>{training.clientName || 'Cliente Desconhecido'}</Text>
+                                            <Text> | </Text>
+                                            <Text>{training.nomeTreino || 'Treino'}</Text>
+                                            {training.duracao > 0 && (
+                                                <Text> ({formatarDuracao(training.duracao)})</Text>
+                                            )}
+                                        </Text>
+                                    </View>
+                                    {training.avaliacao > 0 && (
+                                        <View style={styles.ratingContainer}>
+                                            <Text style={styles.ratingText}>Avaliação: </Text>
+                                            {[1, 2, 3, 4, 5].map((star) => (
+                                                <MaterialCommunityIcons
+                                                    key={star}
+                                                    name={star <= training.avaliacao ? 'star' : 'star-outline'}
+                                                    size={16}
+                                                    color="#FFD700"
+                                                    style={styles.starIcon}
+                                                />
+                                            ))}
+                                        </View>
+                                    )}
+                                    {training.observacoesUser ? (
+                                        <View style={styles.observationSummaryContainer}>
+                                            <Text style={styles.observationSummaryText}>"{training.observacoesUser.substring(0, 50)}{training.observacoesUser.length > 50 ? '...' : ''}"</Text>
+                                        </View>
+                                    ) : null}
+                                    {index < recentCompletedTrainings.length - 1 && <View style={styles.itemSeparator} />}
+                                </React.Fragment>
+                            ))
+                        ) : (
+                            <Text style={styles.noDataText}>Nenhum treino concluído recentemente.</Text>
+                        )}
+                        <TouchableOpacity onPress={() => navigation.navigate('CompletedTrainingsHistory')} style={styles.linkButton} activeOpacity={0.7}>
+                            <Text style={styles.viewAllLink}>
+                                <Text>Ver Histórico Completo </Text>
                                 <Ionicons name="arrow-forward-outline" size={14} color={Colors.accentBlue} />
                             </Text>
                         </TouchableOpacity>
@@ -681,5 +792,36 @@ const styles = StyleSheet.create({
         fontSize: 15,
         color: Colors.accentBlue,
         fontWeight: '600',
+    },
+    // NOVOS ESTILOS para treinos concluídos
+    ratingContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 4,
+        marginBottom: 2,
+        marginLeft: 30, // Alinha com o texto do treino
+    },
+    ratingText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.darkBrown,
+        marginRight: 4,
+    },
+    starIcon: {
+        marginHorizontal: 1,
+    },
+    observationSummaryContainer: {
+        marginTop: 4,
+        marginBottom: 8,
+        marginLeft: 30,
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+        backgroundColor: Colors.lightGray,
+        borderRadius: 8,
+    },
+    observationSummaryText: {
+        fontSize: 13,
+        color: Colors.darkGray,
+        fontStyle: 'italic',
     },
 });

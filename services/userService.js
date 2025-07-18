@@ -6,7 +6,7 @@ import {
   where,
   getDocs,
   doc,
-  addDoc,
+  addDoc, // Adicionado para criar novos documentos
   orderBy,
   Timestamp,
   limit,
@@ -189,20 +189,43 @@ export const buscarAvaliacoesAgendaDoUser = async (userId) => {
 };
 
 // FUNÇÃO PARA SALVAR TREINO CONCLUÍDO NO FIRESTORE
-export const salvarTreinoConcluido = async (userId, treinoId, nomeTreino, dataOriginalTreino, duracaoSegundos) => {
+export const salvarTreinoConcluido = async (
+  userId,
+  treinoOriginal, // Agora recebe o objeto treino completo
+  duracaoSegundos,
+  rating = null,
+  observation = ''
+) => {
   try {
-    const historicoRef = collection(db, 'historicoTreinos'); // Coleção para o histórico global
-    await addDoc(historicoRef, {
+    if (!treinoOriginal || !treinoOriginal.id) {
+      throw new Error('Objeto de treino original inválido ou sem ID.');
+    }
+
+    // Criar um novo documento na coleção 'historicoTreinos'
+    // Este documento será um registo da conclusão específica, com um novo ID único.
+    const completedTrainingData = {
       userId: userId,
-      treinoId: treinoId,
-      nomeTreino: nomeTreino, // Adicionando o nome do treino
-      dataOriginalTreino: typeof dataOriginalTreino === 'string' ? new Date(dataOriginalTreino) : dataOriginalTreino, // Converte para Date se for string
-      dataConclusao: Timestamp.now(), // Momento exato da conclusão
+      originalTreinoId: treinoOriginal.id, // Guarda o ID do treino original
+      nomeTreino: treinoOriginal.nome || 'Treino Desconhecido',
+      dataAgendada: treinoOriginal.data || null, // Data/hora original agendada
+      categoria: treinoOriginal.categoria || 'N/A',
+      descricao: treinoOriginal.descricao || 'N/A',
+      // Inclui os exercícios do treino original (seja de template ou custom)
+      exercicios: treinoOriginal.templateExercises || treinoOriginal.customExercises || [], 
+      
+      status: 'concluido',
       duracao: duracaoSegundos,
-    });
-    console.log('Treino concluído salvo com sucesso no Firestore!');
+      dataConclusao: Timestamp.now(), // Timestamp da conclusão
+      avaliacao: rating,
+      observacoesUser: observation,
+    };
+
+    // Adiciona o novo documento à coleção 'historicoTreinos'
+    const docRef = await addDoc(collection(db, 'historicoTreinos'), completedTrainingData);
+    console.log(`✅ Treino concluído registado em historicoTreinos com ID: ${docRef.id}`);
+    return true;
   } catch (error) {
-    console.error('Erro ao salvar treino concluído no Firestore:', error);
+    console.error('Erro ao salvar treino concluído no Firestore (historicoTreinos):', error);
     throw error;
   }
 };
