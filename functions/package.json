@@ -1,28 +1,20 @@
 {
-  "name": "functions",
-  "description": "Cloud Functions for Firebase",
-  "scripts": {
-    "lint": "eslint .",
-    "serve": "firebase emulators:start --only functions",
-    "shell": "firebase functions:shell",
-    "start": "npm run shell",
-    "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
-  },
-  "engines": {
-    "node": "22"
-  },
+  "name": "risifit-functions",
+  "version": "1.0.0",
+  "description": "Firebase Cloud Functions para RISIFIT",
   "main": "index.js",
-  "dependencies": {
-  "firebase-functions": "^4.4.1",
-  "firebase-admin": "^11.10.1",
-  "nodemailer": "^6.9.8"
+  "scripts": {
+    "deploy": "firebase deploy --only functions",
+    "serve": "firebase emulators:start --only functions"
+  },
+ "dependencies": {
+  "firebase-functions": "^5.1.0",
+  "@sendgrid/mail": "^7.7.0",
+  "firebase-admin": "^11.10.0"
 }
 ,
-  "devDependencies": {
-    "eslint": "^8.15.0",
-    "eslint-config-google": "^0.14.0",
-    "firebase-functions-test": "^3.1.0"
+  "engines": {
+    "node": "20"
   },
-  "private": true
+  "license": "MIT"
 }

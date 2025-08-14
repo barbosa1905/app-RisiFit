@@ -1,217 +1,385 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   FlatList,
   StyleSheet,
-  TouchableOpacity,
   ActivityIndicator,
+  TouchableOpacity,
   Alert,
-  SafeAreaView, // Adicionado
-  StatusBar,    // Adicionado
-  Platform,     // Adicionado
+  SafeAreaView,
+  StatusBar,
+  Platform,
+  Dimensions,
 } from 'react-native';
-import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
+import { Picker } from '@react-native-picker/picker';
+
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  deleteDoc,
+  doc,
+  orderBy,
+  onSnapshot,
+  updateDoc,
+} from 'firebase/firestore';
 import { db } from '../../services/firebaseConfig';
-import { useRoute, useNavigation, useIsFocused } from '@react-navigation/native'; // Adicionado useIsFocused
-import { Ionicons } from '@expo/vector-icons'; // Usaremos Ionicons
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
+import moment from 'moment';
+import DetalhesTreinoConcluidoScreen from './DetalhesTreinoConcluidoScreen';
 
-// Paleta de Cores Refinada (Mantida a sua, que é boa!)
+// Paleta de Cores (assumindo que já a tens ou a importas)
 const Colors = {
-  primaryGold: '#D4AF37',   // Ouro mais clássico
-  darkBrown: '#3E2723',     // Marrom bem escuro, quase preto
-  lightBrown: '#795548',    // Marrom mais suave
-  creamBackground: '#FDF7E4', // Fundo creme claro
-  white: '#FFFFFF',
-  lightGray: '#ECEFF1',     // Cinza muito claro
-  mediumGray: '#B0BEC5',    // Cinza médio para textos secundários
-  darkGray: '#424242',      // Cinza escuro para textos principais
-  accentBlue: '#2196F3',    // Azul vibrante para links
-  successGreen: '#4CAF50',  // Verde para sucesso
-  errorRed: '#F44336',      // Vermelho para erros/alertas
-  buttonTextLight: '#FFFFFF', // Cor de texto para botões com fundo escuro
-  buttonTextDark: '#3E2723', // Cor de texto para botões com fundo claro
-  shadow: 'rgba(0,0,0,0.08)', // Sombra suave
-};
-
-export default function TreinosDoClienteScreen() {
-  const route = useRoute();
-  const navigation = useNavigation();
-  const isFocused = useIsFocused(); // Hook para verificar se a tela está focada
-
-  const { clienteId, clientename } = route.params;
-
-  const [treinos, setTreinos] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  // Função useCallback para carregar treinos, otimizando renders
-  const carregarTreinos = useCallback(async () => {
-    setLoading(true);
-    try {
-      const hoje = new Date();
-      hoje.setHours(0, 0, 0, 0); // Zera hora para comparar apenas datas
-
-      const ref = collection(db, 'users', clienteId, 'treinos');
-      const snapshot = await getDocs(ref);
-
-      const listaTreinos = snapshot.docs
-        .map((docItem) => ({ id: docItem.id, ...docItem.data() }))
-        .filter((treino) => {
-          if (!treino.data) return false;
-          // Converte Timestamp para Date ou string para Date
-          const dataTreino = treino.data.toDate ? treino.data.toDate() : new Date(treino.data);
-          // Filtra apenas treinos futuros ou do dia atual
-          return dataTreino >= hoje;
-        })
-        .sort((a, b) => { // Ordena os treinos por data, do mais próximo ao mais distante
-            const dateA = a.data.toDate ? a.data.toDate() : new Date(a.data);
-            const dateB = b.data.toDate ? b.data.toDate() : new Date(b.data);
-            return dateA.getTime() - dateB.getTime();
-        });
-
-      setTreinos(listaTreinos);
-    } catch (error) {
-      Alert.alert('Erro', 'Não foi possível carregar os treinos. Tente novamente mais tarde.');
-      console.error('Erro ao carregar treinos:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [clienteId]); // clienteId como dependência
-
-  useEffect(() => {
-    // Atualiza o título da tela
-    navigation.setOptions({ title: `Treinos de ${clientename || 'Cliente'}` });
-
-    // Carrega os treinos quando a tela é focada (útil após voltar de EditarTreino)
-    if (isFocused) {
-      carregarTreinos();
-    }
-  }, [navigation, clientename, isFocused, carregarTreinos]); // Adicionado isFocused e carregarTreinos
-
-  // Função para formatar data (similar à FichaClienteScreen para consistência)
-  const formatarData = (data) => {
-    if (!data) return 'Sem data definida';
-    if (data.seconds) {
-      return new Date(data.seconds * 1000).toLocaleDateString('pt-PT');
-    }
-    if (typeof data === 'string' && (data.includes('T') || data.includes('-'))) {
-        const parsedDate = new Date(data);
-        if (!isNaN(parsedDate)) {
-            return parsedDate.toLocaleDateString('pt-PT');
-        }
-    }
-    return new Date(data).toLocaleDateString('pt-PT'); // Fallback para outros formatos de data
+    primaryGold: '#B8860B', // Ouro mais clássico
+    darkBrown: '#3E2723', // Marrom bem escuro, quase preto
+    lightBrown: '#795548', // Marrom mais suave
+    creamBackground: '#FDF7E4', // Fundo creme claro
+    white: '#FFFFFF',
+    lightGray: '#ECEFF1', // Cinza muito claro
+    mediumGray: '#B0BEC5', // Cinza médio para textos secundários
+    darkGray: '#424242', // Cinza escuro para textos principais
+    accentBlue: '#2196F3', // Azul vibrante para links
+    successGreen: '#4CAF50', // Verde para sucesso
+    errorRed: '#F44336', // Vermelho para erros/alertos
+    buttonTextLight: '#FFFFFF', // Cor de texto para botões com fundo escuro
+    buttonTextDark: '#3E2723', // Cor de texto para botões com fundo claro
+    shadow: 'rgba(0,0,0,0.08)', // Sombra suave
+    black: '#000000', // Adicionado para o headerTitle
   };
 
-  const confirmarRemocao = (treinoId, treinoNome) => {
+  const { width } = Dimensions.get('window');
+
+  // Global Styles for consistent shadows
+  const GlobalStyles = {
+    shadow: {
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 3,
+      elevation: 2,
+    },
+    cardShadow: {
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+      elevation: 5,
+    }
+  };
+
+
+// --- Componente AppHeaderPersonalizado ---
+const AppHeaderPersonalizado = ({ title, showBackButton, onBackPress }) => {
+  return (
+    <View style={headerStyles.headerContainer}>
+      <StatusBar
+        barStyle={Platform.OS === 'ios' ? 'dark-content' : 'light-content'}
+        backgroundColor={Colors.primaryGold}
+      />
+      <View style={headerStyles.headerContent}>
+        {showBackButton && (
+          <TouchableOpacity onPress={onBackPress} style={headerStyles.backButton}>
+            <Ionicons name="arrow-back" size={24} color={Colors.black} />
+          </TouchableOpacity>
+        )}
+        <Text style={headerStyles.headerTitle}>{title}</Text>
+      </View>
+    </View>
+  );
+};
+
+const headerStyles = StyleSheet.create({
+  headerContainer: {
+    backgroundColor: Colors.primaryGold,
+    paddingHorizontal: 20,
+    paddingVertical: Platform.OS === 'ios' ? 15 : 12,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 12 : 15,
+    borderBottomLeftRadius: 15,
+    borderBottomRightRadius: 15,
+    shadowColor: Colors.darkBrown,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 6,
+    marginBottom: 5,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center', // Centraliza o título por padrão
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.black,
+    flex: 1,
+    textAlign: 'center',
+    marginLeft: -24, // Compensa o espaço do botão de voltar para centralizar melhor
+  },
+  backButton: {
+    padding: 5,
+    marginRight: 10,
+    zIndex: 1,
+  },
+});
+
+
+export default function TreinosClienteScreen() {
+  const [treinos, setTreinos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filtroStatus, setFiltroStatus] = useState('Todos');
+  const navigation = useNavigation();
+  const route = useRoute();
+ const { treinoId, clienteId,clientename, name } = route.params;
+
+  const carregarTreinos = useCallback(() => {
+    setLoading(true);
+    const treinosRef = collection(db, 'users', clienteId, 'treinos');
+    const q = query(treinosRef, orderBy('data', 'asc'));
+
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const listaTreinos = [];
+      const hoje = moment().startOf('day');
+
+      for (const docTreino of snapshot.docs) {
+        const treinoData = docTreino.data();
+        const dataTreino = treinoData.data instanceof Date
+            ? moment(treinoData.data)
+            : treinoData.data && treinoData.data.toDate
+                ? moment(treinoData.data.toDate())
+                : moment();
+
+        let status = 'Desconhecido';
+        if (dataTreino.isAfter(hoje)) {
+          status = 'Futuro';
+        } else {
+          if (treinoData.concluido === true) {
+            status = 'Completo';
+          } else {
+            status = 'NaoConcluido';
+          }
+        }
+
+        listaTreinos.push({
+          id: docTreino.id,
+          ...treinoData,
+          dataMoment: dataTreino,
+          status: status,
+        });
+      }
+      setTreinos(listaTreinos);
+      setLoading(false);
+    }, (error) => {
+      console.error('Erro ao buscar treinos:', error);
+      Alert.alert('Erro', 'Não foi possível carregar os treinos.');
+      setLoading(false);
+    });
+
+    return unsubscribe;
+  }, [clienteId]);
+
+  useEffect(() => {
+    const unsubscribe = carregarTreinos();
+    return () => unsubscribe();
+  }, [carregarTreinos]);
+
+  const toggleConcluido = async (treinoId, isConcluido) => {
+    try {
+      const treinoRef = doc(db, 'users', clienteId, 'treinos', treinoId);
+      await updateDoc(treinoRef, {
+        concluido: !isConcluido,
+      });
+    } catch (error) {
+      console.error('Erro ao atualizar treino:', error);
+      Alert.alert('Erro', 'Não foi possível atualizar o status do treino.');
+    }
+  };
+
+  const confirmarRemocaoTreino = (treino) => {
     Alert.alert(
       'Remover Treino',
-      `Tens a certeza que queres remover o treino "${treinoNome || 'sem nome'}"? Esta ação é irreversível.`,
+      `Tem certeza que quer remover o treino "${treino.name}"? Esta ação é irreversível.`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
           text: 'Apagar',
           style: 'destructive',
-          onPress: () => apagarTreino(treinoId),
+          onPress: async () => {
+            try {
+              await deleteDoc(doc(db, 'users', clienteId, 'treinos', treino.id));
+              Alert.alert('Sucesso', 'Treino removido com sucesso!');
+            } catch (error) {
+              console.error('Erro ao apagar treino:', error);
+              Alert.alert('Erro', 'Não foi possível apagar o treino.');
+            }
+          },
         },
       ]
     );
   };
 
-  const apagarTreino = useCallback(async (treinoId) => {
-    try {
-      const treinoRef = doc(db, 'users', clienteId, 'treinos', treinoId);
-      await deleteDoc(treinoRef);
-      Alert.alert('Sucesso', 'Treino removido com sucesso!');
-      carregarTreinos(); // Recarrega a lista
-    } catch (error) {
-      Alert.alert('Erro', 'Não foi possível apagar o treino. Tente novamente.');
-      console.error('Erro ao apagar treino:', error);
+
+  const treinosFiltrados = treinos.filter(treino => {
+    if (filtroStatus === 'Todos') {
+      return true;
     }
-  }, [clienteId, carregarTreinos]); // clienteId e carregarTreinos como dependências
+    return treino.status === filtroStatus;
+  });
 
-  const renderItem = ({ item }) => {
-    const dataFormatada = formatarData(item.data);
+const renderItem = ({ item }) => {
+  const isFuture = item.status === 'Futuro';
+  const isCompleted = item.status === 'Completo';
+  const isNotCompleted = item.status === 'NaoConcluido';
 
-    return (
-      <View style={styles.card}>
-        <Text style={styles.treinoNome}>
-          <Ionicons name="fitness-outline" size={18} color={Colors.darkBrown} /> {item.nome || 'Treino sem nome'}
-        </Text>
-        <Text style={styles.treinoData}>
-          <Ionicons name="calendar-outline" size={16} color={Colors.mediumGray} /> Data: {dataFormatada}
-        </Text>
-
-        <View style={styles.botoesRow}>
-          <TouchableOpacity
-            style={styles.editarBtn}
-            onPress={() =>
-              navigation.navigate('EditarTreino', {
-                clienteId,
-                treino: item,
-                reloadTreinos: carregarTreinos, // Passa a função de recarga
-              })
-            }
-          >
-            <Ionicons name="pencil-outline" size={18} color={Colors.buttonTextDark} />
-            <Text style={styles.btnText}>Editar</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.apagarBtn}
-            onPress={() => confirmarRemocao(item.id, item.nome)}
-          >
-            <Ionicons name="trash-outline" size={18} color={Colors.buttonTextLight} />
-            <Text style={styles.btnText}>Apagar</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
+  // Extrai o nome do primeiro exercício, se existir
+  const primeiroExercicio = item.customExercises && item.customExercises.length > 0
+    ? item.customExercises[0].exerciseName
+    : 'Nenhum exercício';
+  
+  // Condicionalmente renderiza os botões para "Editar" e "Remover" apenas se for um treino futuro.
+  const showEditRemoveButtons = isFuture;
+  const showCompleteButton = isNotCompleted;
+  const showDetailsButton = isCompleted;
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.creamBackground} />
-      {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={Colors.primaryGold} />
-          <Text style={styles.loadingText}>A carregar treinos...</Text>
-        </View>
-      ) : treinos.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="barbell-outline" size={60} color={Colors.mediumGray} />
-          <Text style={styles.emptyText}>Nenhum treino futuro atribuído a {clientename || 'este cliente'}!</Text>
-          <TouchableOpacity
-            style={styles.addTreinoButton}
-            onPress={() => navigation.navigate('CriarTreinoScreen', { clienteId, clientename, reloadTreinos: carregarTreinos })}
-          >
-            <Ionicons name="add-circle-outline" size={22} color={Colors.buttonTextLight} />
-            <Text style={styles.addTreinoButtonText}>Atribuir Novo Treino</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <FlatList
-          data={treinos}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
-          ListFooterComponent={() => (
-            <TouchableOpacity
-              style={styles.addTreinoButtonBottom}
-              onPress={() => navigation.navigate('CriarTreinoScreen', { clienteId, clientename, reloadTreinos: carregarTreinos })}
-            >
-              <Ionicons name="add-circle-outline" size={24} color={Colors.buttonTextLight} />
-              <Text style={styles.addTreinoButtonText}>Atribuir Novo Treino</Text>
-            </TouchableOpacity>
+    <View style={[styles.card, GlobalStyles.cardShadow]}>
+      {/* Nome do Treino */}
+      <View style={styles.cardHeader}>
+        <Text style={styles.treinoName}>{item.nome}</Text>
+        <View style={styles.statusBadgeContainer}>
+          {isFuture && (
+            <Text style={[styles.statusBadge, styles.statusFuture]}>
+              <Ionicons name="hourglass-outline" size={14} color={Colors.buttonTextLight} /> Futuro
+            </Text>
           )}
-        />
+          {isCompleted && (
+            <Text style={[styles.statusBadge, styles.statusCompleted]}>
+              <Ionicons name="checkmark-circle-outline" size={14} color={Colors.buttonTextLight} /> Concluído
+            </Text>
+          )}
+          {isNotCompleted && (
+            <Text style={[styles.statusBadge, styles.statusNotCompleted]}>
+              <Ionicons name="close-circle-outline" size={14} color={Colors.buttonTextLight} /> Não Concluído
+            </Text>
+          )}
+        </View>
+      </View>
+
+      {/* Categoria do Treino */}
+      <Text style={styles.infoText}>
+          <Ionicons name="fitness-outline" size={16} color={Colors.mediumGray} /> Categoria: {item.categoria}
+      </Text>
+
+      {/* Data do Treino */}
+      <Text style={styles.treinoDate}>
+        <Ionicons name="calendar-outline" size={16} color={Colors.mediumGray} />{' '}
+        {item.dataMoment.format('DD/MM/YYYY')}
+      </Text>
+      
+        {/* Descrição do Treino (usando a chave correta `descricao`) */}
+      {item.descricao && item.descricao.trim().length > 0 && (
+        <Text style={styles.infoRow}>
+          <Ionicons name="document-text-outline" size={16} color={Colors.mediumGray} />
+          <Text style={styles.treinoDesc}>{item.descricao}</Text>
+        </Text>
       )}
+      
+      <View style={styles.cardActions}>
+        {showDetailsButton && (
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: Colors.primaryGold }]}
+            onPress={() => navigation.navigate('DetalhesTreinoConcluidoScreen', { treino: item })}
+          >
+            <Ionicons name="eye-outline" size={20} color={Colors.buttonTextLight} />
+            <Text style={styles.actionButtonText}>Ver Detalhes</Text>
+          </TouchableOpacity>
+        )}
+
+        {showEditRemoveButtons && (
+            <>
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: Colors.accentBlue }]}
+                onPress={() => navigation.navigate('EditarTreino', { treino: item, clienteId: clienteId, reloadTreinos: carregarTreinos })}
+              >
+                <Ionicons name="pencil-outline" size={20} color={Colors.buttonTextLight} />
+                <Text style={styles.actionButtonText}>Editar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: Colors.errorRed }]}
+                onPress={() => confirmarRemocaoTreino(item)}
+              >
+                <Ionicons name="trash-outline" size={20} color={Colors.buttonTextLight} />
+                <Text style={styles.actionButtonText}>Remover</Text>
+              </TouchableOpacity>
+            </>
+        )}
+
+        
+      </View>
+    </View>
+  );
+};
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <AppHeaderPersonalizado
+        title={`Treinos de ${clientename}`}
+        showBackButton={true}
+        onBackPress={() => navigation.goBack()}
+      />
+
+      <FlatList
+        data={treinosFiltrados}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContentPadding}
+        renderItem={renderItem}
+        ListHeaderComponent={() => (
+          <View style={styles.listHeaderSection}>
+            <View style={[styles.cardWrapper, GlobalStyles.shadow]}>
+              <Text style={styles.pickerLabel}>Filtrar Treinos por Status:</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={filtroStatus}
+                  onValueChange={(itemValue) => setFiltroStatus(itemValue)}
+                  style={styles.picker}
+                  itemStyle={styles.pickerItem}
+                >
+                  <Picker.Item label="Todos os Treinos" value="Todos" />
+                  <Picker.Item label="Treinos Futuros" value="Futuro" />
+                  <Picker.Item label="Treinos Concluídos" value="Completo" />
+                  <Picker.Item label="Treinos Não Concluídos" value="NaoConcluido" />
+                </Picker>
+              </View>
+            </View>
+
+            {treinosFiltrados.length === 0 && (
+              <View style={styles.emptyResultsContainer}>
+                <Ionicons name="hourglass-outline" size={50} color={Colors.mediumGray} />
+                <Text style={styles.emptyResultsText}>
+                  Nenhum treino encontrado para o status selecionado.
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+        ListEmptyComponent={!loading && treinos.length === 0 && (
+          <View style={styles.emptyResultsContainer}>
+            <Ionicons name="barbell-outline" size={50} color={Colors.mediumGray} />
+            <Text style={styles.emptyResultsText}>
+              Ainda não há treinos atribuídos a este cliente.
+            </Text>
+          </View>
+        )}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  container: {
     flex: 1,
     backgroundColor: Colors.creamBackground,
   },
@@ -227,131 +395,166 @@ const styles = StyleSheet.create({
     color: Colors.darkBrown,
     fontWeight: '500',
   },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: Colors.creamBackground,
+  listContentPadding: {
+    paddingBottom: 30,
   },
-  emptyText: {
-    fontSize: 18,
-    color: Colors.mediumGray,
-    textAlign: 'center',
-    marginTop: 20,
-    lineHeight: 25,
-  },
-  listContent: {
+  listHeaderSection: {
     paddingHorizontal: 20,
-    paddingVertical: 20,
+    paddingBottom: 10,
   },
-  card: {
+  cardWrapper: {
     backgroundColor: Colors.white,
-    padding: 18,
+    padding: 15,
     borderRadius: 12,
     marginBottom: 15,
-    shadowColor: Colors.shadow,
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
     borderWidth: 1,
     borderColor: Colors.lightGray,
   },
-  treinoNome: {
+  pickerLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.darkBrown,
+    marginBottom: 8,
+  },
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: Colors.mediumGray,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: Colors.lightGray,
+    marginBottom: 10,
+  },
+  picker: {
+    height: 50,
+    width: '100%',
+    color: Colors.darkGray,
+  },
+  pickerItem: {
+    fontSize: 16,
+    color: Colors.darkGray,
+  },
+  card: {
+    backgroundColor: Colors.white,
+    borderRadius: 15,
+    padding: 18,
+    marginHorizontal: 20,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: Colors.lightGray,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  treinoName: {
     fontSize: 19,
     fontWeight: '700',
-    marginBottom: 8,
     color: Colors.darkBrown,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
   },
-  treinoData: {
+   treinoDate: {
     fontSize: 15,
     color: Colors.mediumGray,
-    marginBottom: 10,
+    marginBottom: 5,
     flexDirection: 'row',
     alignItems: 'center',
   },
-  botoesRow: {
+  treinoDesc: {
+    fontSize: 14,
+    color: Colors.darkGray,
+    lineHeight: 20,
+    marginBottom: 15,
+  },
+  // Adicione este novo estilo
+  infoText: {
+    fontSize: 14,
+    color: Colors.darkGray,
+    lineHeight: 20,
+    marginBottom: 5,
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: 10,
+    alignItems: 'center',
+  },
+  statusBadgeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusBadge: {
+    fontSize: 13,
+    fontWeight: '600',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+    color: Colors.buttonTextLight,
+    marginLeft: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusFuture: {
+    backgroundColor: Colors.accentBlue,
+  },
+  statusCompleted: {
+    backgroundColor: Colors.successGreen,
+  },
+  statusNotCompleted: {
+    backgroundColor: Colors.errorRed,
+  },
+  treinoDate: {
+    fontSize: 15,
+    color: Colors.mediumGray,
+    marginBottom: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  treinoDesc: {
+    fontSize: 14,
+    color: Colors.darkGray,
+    lineHeight: 20,
+    marginBottom: 15,
+  },
+  cardActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
     gap: 10, // Espaçamento entre os botões
   },
-  editarBtn: {
-    backgroundColor: Colors.lightGray, // Cor mais neutra para editar
-    paddingHorizontal: 15,
-    paddingVertical: 9,
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  apagarBtn: {
-    backgroundColor: Colors.errorRed, // Cor de erro
-    paddingHorizontal: 15,
-    paddingVertical: 9,
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  btnText: {
-    color: Colors.darkBrown, // Texto para editar (cor DarkBrown)
-    fontWeight: '600',
-    fontSize: 14,
-    marginLeft: 6, // Espaço entre ícone e texto
-  },
-  // Estilo específico para o texto do botão Apagar para ser branco
-  apagarBtnText: {
-    color: Colors.buttonTextLight,
-    fontWeight: '600',
-    fontSize: 14,
-    marginLeft: 6,
-  },
-  addTreinoButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.primaryGold,
-    paddingVertical: 12,
-    paddingHorizontal: 25,
-    borderRadius: 10,
-    marginTop: 30,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 5,
-  },
-  addTreinoButtonText: {
-    color: Colors.buttonTextLight,
-    fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 10,
-  },
-  addTreinoButtonBottom: {
+  actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.primaryGold,
-    paddingVertical: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 15,
     borderRadius: 10,
-    marginTop: 25,
-    marginBottom: 10, // Pequena margem para o final da lista
+    flex: 1,
+    // Alterado para um valor que permite 2 ou 3 por linha, dependendo do conteúdo
+    minWidth: (width - (20 * 2) - 18 * 2 - 30) / 2.5, // Ajustado para tentar 2-3 por linha
     shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 5,
-    marginHorizontal: 20, // Alinha com o padding da lista
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  actionButtonText: {
+    color: Colors.buttonTextLight,
+    fontWeight: '600',
+    fontSize: 14,
+    marginLeft: 8,
+  },
+  emptyResultsContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 30,
+    textAlign: 'center',
+  },
+  emptyResultsText: {
+    fontSize: 17,
+    color: Colors.mediumGray,
+    marginTop: 15,
+    textAlign: 'center',
+    lineHeight: 24,
   },
 });

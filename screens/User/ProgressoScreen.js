@@ -278,7 +278,7 @@ const styles = StyleSheet.create({
     height: FIXED_HEADER_HEIGHT,
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 40 : 20, // Ajuste para Android para status bar
-    backgroundColor: '#d4ac54', 
+    backgroundColor: '#B8860B', 
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',

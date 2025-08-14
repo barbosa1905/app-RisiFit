@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   SafeAreaView,
-  ScrollView,
   TouchableOpacity,
   ActivityIndicator,
   Alert,
@@ -19,20 +18,21 @@ import { db } from '../../services/firebaseConfig';
 import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 
-// Paleta de Cores Refinada (consistente com outras telas)
+// Certifique-se de que o nome da importação corresponde ao nome do arquivo real
+// Ex: Se o arquivo se chamar CreateWorkoutTemplateScreen.js, mantenha-o assim
+import CreateWorkoutTemplateScreen from './CreateWorkoutTemplateScreen';
+
+// Paleta de Cores Profissional
 const Colors = {
-    primaryGold: '#D4AF37', // Ouro mais clássico
-    darkBrown: '#3E2723',   // Marrom bem escuro, quase preto
-    lightBrown: '#795548',  // Marrom mais suave
-    creamBackground: '#FDF7E4', // Fundo creme claro
-    white: '#FFFFFF',
-    lightGray: '#ECEFF1',   // Cinza muito claro
-    mediumGray: '#B0BEC5',  // Cinza médio para textos secundários
-    darkGray: '#424242',    // Cinza escuro para textos principais
-    accentBlue: '#2196F3',  // Azul vibrante para links
-    successGreen: '#4CAF50', // Verde para sucesso
-    errorRed: '#F44336',    // Vermelho para erros/alertas
-    inputBorder: '#B0BEC5', // Cor da borda do input
+  primary: '#2A3B47',        // Azul escuro para o fundo principal
+  secondary: '#FFB800',      // Laranja vibrante como cor de destaque
+  background: '#F0F2F5',     // Cinza claro para o fundo da tela
+  cardBackground: '#FFFFFF', // Branco puro para os cartões
+  textPrimary: '#333333',    // Preto para o texto principal
+  textSecondary: '#666666',  // Cinza escuro para o texto secundário
+  success: '#4CAF50',        // Verde para ações de sucesso
+  danger: '#F44336',         // Vermelho para ações de perigo
+  info: '#2196F3',           // Azul para informações e botões
 };
 
 export default function WorkoutTemplatesScreen() {
@@ -40,8 +40,6 @@ export default function WorkoutTemplatesScreen() {
   const [workoutTemplates, setWorkoutTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adminInfo, setAdminInfo] = useState(null);
-
-  // --- Funções de Carregamento de Dados ---
 
   const fetchAdminInfo = useCallback(() => {
     const authInstance = getAuth();
@@ -93,8 +91,6 @@ export default function WorkoutTemplatesScreen() {
     };
   }, [fetchAdminInfo, fetchWorkoutTemplates]);
 
-  // --- Funções de Ação ---
-
   const handleDeleteTemplate = (templateId, templateName) => {
     Alert.alert(
       'Remover Modelo de Treino',
@@ -119,94 +115,92 @@ export default function WorkoutTemplatesScreen() {
   };
 
   const handleEditTemplate = (template) => {
-    // Navegar para a tela de criação/edição de modelo, passando o modelo para edição
     navigation.navigate('CreateWorkoutTemplate', { templateId: template.id, templateData: template });
   };
 
   const handleCreateNewTemplate = () => {
-    navigation.navigate('CreateWorkoutTemplate'); // Navega sem parâmetros para criar um novo
+    navigation.navigate('CreateWorkoutTemplate');
   };
-
-  // --- Renderização ---
 
   const adminDisplayName = adminInfo?.nome || adminInfo?.name || 'Admin';
   const adminInitial = adminDisplayName ? adminDisplayName.charAt(0).toUpperCase() : 'A';
 
+  const renderTemplate = ({ item }) => (
+    <View style={styles.templateCard}>
+      <View style={styles.templateHeader}>
+        <Ionicons name="documents-outline" size={24} color={Colors.secondary} />
+        <View style={styles.templateInfo}>
+          <Text style={styles.templateName}>{item.name}</Text>
+          {item.description ? (
+            <Text style={styles.templateDescription} numberOfLines={2}>
+              {item.description}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+      <View style={styles.templateFooter}>
+        <Text style={styles.templateExerciseCount}>
+          <Ionicons name="fitness-outline" size={14} color={Colors.textSecondary} />
+          {`  ${item.exercises?.length || 0} exercícios`}
+        </Text>
+        <View style={styles.templateActions}>
+          <TouchableOpacity
+            onPress={() => handleEditTemplate(item)}
+            style={[styles.actionButton, { backgroundColor: Colors.info }]}
+          >
+            <Ionicons name="create-outline" size={18} color={Colors.cardBackground} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => handleDeleteTemplate(item.id, item.name)}
+            style={[styles.actionButton, { backgroundColor: Colors.danger }]}
+          >
+            <Ionicons name="trash-outline" size={18} color={Colors.cardBackground} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
-      {/* Barra Fixa Superior (Header) */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={28} color={Colors.white} />
+          <Ionicons name="arrow-back" size={28} color={Colors.cardBackground} />
         </TouchableOpacity>
-        <Image
-          source={require('../../assets/logo.jpeg')}
-          style={styles.headerLogo}
-          resizeMode="contain"
-        />
+        <Text style={styles.headerTitle}>Modelos de Treino</Text>
         <View style={styles.userInfo}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{adminInitial}</Text>
           </View>
-          <Text style={styles.userNameText}>Olá, {adminDisplayName}</Text>
         </View>
       </View>
 
       <View style={styles.content}>
-        <Text style={styles.screenTitle}>Modelos de Treino</Text>
-
         <TouchableOpacity
           style={styles.createButton}
           onPress={handleCreateNewTemplate}
         >
-          <Ionicons name="add-circle-outline" size={24} color={Colors.white} />
+          <Ionicons name="add-circle-outline" size={24} color={Colors.cardBackground} />
           <Text style={styles.createButtonText}>Criar Novo Modelo</Text>
         </TouchableOpacity>
 
         {loading ? (
-          <ActivityIndicator size="large" color={Colors.primaryGold} style={styles.activityIndicator} />
+          <ActivityIndicator size="large" color={Colors.secondary} style={styles.activityIndicator} />
         ) : workoutTemplates.length === 0 ? (
           <View style={styles.noTemplatesContainer}>
-            <Ionicons name="information-circle-outline" size={50} color={Colors.mediumGray} />
-            <Text style={styles.noTemplatesText}>Nenhum modelo de treino criado ainda.</Text>
-            <Text style={styles.noTemplatesSubText}>Crie um novo modelo para começar a organizar seus treinos.</Text>
+            <Ionicons name="file-tray-outline" size={60} color={Colors.textSecondary} />
+            <Text style={styles.noTemplatesText}>Nenhum modelo de treino encontrado.</Text>
+            <Text style={styles.noTemplatesSubText}>
+              Clique no botão "Criar Novo Modelo" para começar a organizar seus treinos.
+            </Text>
           </View>
         ) : (
           <FlatList
             data={workoutTemplates}
             keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <View style={styles.templateCard}>
-                <View style={styles.templateInfo}>
-                  <Text style={styles.templateName}>{item.name}</Text>
-                  {item.description ? (
-                    <Text style={styles.templateDescription}>{item.description}</Text>
-                  ) : null}
-                  {item.exercises && item.exercises.length > 0 ? (
-                    <Text style={styles.templateExerciseCount}>
-                      {item.exercises.length} exercícios
-                    </Text>
-                  ) : (
-                    <Text style={styles.templateExerciseCount}>0 exercícios</Text>
-                  )}
-                </View>
-                <View style={styles.templateActions}>
-                  <TouchableOpacity
-                    onPress={() => handleEditTemplate(item)}
-                    style={[styles.actionButton, styles.editButton]}
-                  >
-                    <Ionicons name="create-outline" size={20} color={Colors.white} />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => handleDeleteTemplate(item.id, item.name)}
-                    style={[styles.actionButton, styles.deleteButton]}
-                  >
-                    <Ionicons name="trash-outline" size={20} color={Colors.white} />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
+            renderItem={renderTemplate}
             contentContainerStyle={styles.flatListContent}
+            showsVerticalScrollIndicator={false}
           />
         )}
       </View>
@@ -217,174 +211,169 @@ export default function WorkoutTemplatesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.creamBackground,
+    backgroundColor: Colors.background,
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    backgroundColor: Colors.primaryGold,
-    borderBottomWidth: 0,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 2 : 0,
-    shadowColor: Colors.darkBrown,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    elevation: 4,
+    shadowOpacity: 0.1,
+    shadowRadius: 5,
+    elevation: 8,
   },
   backButton: {
     padding: 5,
-    marginRight: 10,
   },
-  headerLogo: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: Colors.cardBackground,
   },
   userInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginLeft: 'auto',
   },
   avatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: Colors.darkBrown,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.secondary,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
-    borderWidth: 1.5,
-    borderColor: Colors.white,
+    borderWidth: 2,
+    borderColor: Colors.cardBackground,
   },
   avatarText: {
-    color: Colors.white,
+    color: Colors.primary,
     fontSize: 18,
-    fontWeight: '600',
-  },
-  userNameText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.white,
+    fontWeight: 'bold',
   },
   content: {
     flex: 1,
-    padding: 20,
-  },
-  screenTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: Colors.darkBrown,
-    marginBottom: 25,
-    textAlign: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 20,
   },
   createButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.successGreen,
-    paddingVertical: 12,
-    borderRadius: 10,
+    backgroundColor: Colors.secondary,
+    paddingVertical: 15,
+    borderRadius: 12,
     marginBottom: 20,
-    shadowColor: Colors.darkBrown,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 5,
+    shadowColor: Colors.secondary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 6,
   },
   createButtonText: {
-    color: Colors.white,
+    color: Colors.primary,
     fontSize: 18,
     fontWeight: 'bold',
     marginLeft: 10,
   },
   activityIndicator: {
-    marginTop: 50,
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   noTemplatesContainer: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 40,
-    backgroundColor: Colors.white,
-    borderRadius: 10,
-    elevation: 2,
-    shadowColor: Colors.darkBrown,
+    padding: 20,
+    backgroundColor: Colors.cardBackground,
+    borderRadius: 15,
+    marginVertical: 20,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    marginTop: 20,
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
   },
   noTemplatesText: {
-    fontSize: 18,
-    color: Colors.mediumGray,
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: Colors.textSecondary,
     marginTop: 15,
     textAlign: 'center',
-    fontWeight: '600',
   },
   noTemplatesSubText: {
-    fontSize: 14,
-    color: Colors.mediumGray,
-    marginTop: 5,
+    fontSize: 16,
+    color: Colors.textSecondary,
+    marginTop: 8,
     textAlign: 'center',
-    paddingHorizontal: 20,
+    lineHeight: 22,
   },
   flatListContent: {
     paddingBottom: 20,
   },
   templateCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: Colors.white,
-    borderRadius: 10,
-    padding: 15,
-    marginBottom: 10,
-    shadowColor: Colors.darkBrown,
+    backgroundColor: Colors.cardBackground,
+    borderRadius: 15,
+    padding: 20,
+    marginBottom: 15,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-    borderLeftWidth: 5,
-    borderLeftColor: Colors.primaryGold,
+    shadowRadius: 4,
+    elevation: 5,
+    borderLeftWidth: 6,
+    borderLeftColor: Colors.secondary,
+  },
+  templateHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
   },
   templateInfo: {
+    marginLeft: 15,
     flex: 1,
-    marginRight: 10,
   },
   templateName: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: Colors.darkBrown,
+    color: Colors.textPrimary,
   },
   templateDescription: {
     fontSize: 14,
-    color: Colors.mediumGray,
+    color: Colors.textSecondary,
     marginTop: 5,
   },
+  templateFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 15,
+    paddingTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#EEEEEE',
+  },
   templateExerciseCount: {
-    fontSize: 13,
-    color: Colors.lightBrown,
-    marginTop: 5,
-    fontStyle: 'italic',
+    flexDirection: 'row',
+    alignItems: 'center',
+    fontSize: 14,
+    color: Colors.textSecondary,
   },
   templateActions: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   actionButton: {
-    padding: 8,
-    borderRadius: 8,
-    marginLeft: 10,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  editButton: {
-    backgroundColor: Colors.accentBlue,
-  },
-  deleteButton: {
-    backgroundColor: Colors.errorRed,
+    marginLeft: 10,
   },
 });

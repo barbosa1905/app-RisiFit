@@ -88,12 +88,12 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace 'com.anonymous.appRisiFit'
-    defaultConfig {
+ defaultConfig {
         applicationId 'com.anonymous.appRisiFit'
-        minSdkVersion rootProject.ext.minSdkVersion
+        minSdkVersion 31
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0.0"
+        versionCode 6 // <--- MUDADO AQUI
+        versionName "1.0.6" // <--- MUDADO AQUI (exemplo)
     }
     signingConfigs {
         debug {

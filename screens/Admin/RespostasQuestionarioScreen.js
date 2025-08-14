@@ -2,180 +2,258 @@ import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
+  FlatList,
   StyleSheet,
+  TouchableOpacity,
   ActivityIndicator,
-  ScrollView,
+  SafeAreaView,
+  StatusBar,
+  Alert,
 } from 'react-native';
-import { collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
-import { db, auth } from '../../services/firebaseConfig';
-import { useRoute } from '@react-navigation/native';
+import { collection, query, getDocs, where, doc, getDoc, getFirestore } from 'firebase/firestore';
+import { useRoute, useNavigation } from '@react-navigation/native';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import AppHeader from '../../components/AppHeader';
+import { Ionicons } from '@expo/vector-icons';
 
-export default function RespostasQuestionarioScreen() {
-  const [respostasList, setRespostasList] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState('');
+// --- CONFIGURAÇÃO FIREBASE: Torna o componente auto-suficiente ---
+// Substitua com as suas credenciais
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_STORAGE_BUCKET",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId: "YOUR_APP_ID",
+};
 
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+
+// Paleta de Cores e Estilos Globais
+const Colors = {
+  primaryGold: '#B8860B',
+  darkBrown: '#3E2723',
+  lightBrown: '#795548',
+  creamBackground: '#FDF7E4',
+  white: '#FFFFFF',
+  lightGray: '#ECEFF1',
+  mediumGray: '#B0BEC5',
+  darkGray: '#424242',
+  accentBlue: '#2196F3',
+  successGreen: '#4CAF50',
+  errorRed: '#F44336',
+  buttonTextLight: '#FFFFFF',
+  buttonTextDark: '#3E2723',
+  shadow: 'rgba(0,0,0,0.08)',
+  black: '#000000',
+};
+
+const GlobalStyles = {
+  cardShadow: {
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  }
+};
+
+// O nome do componente deve ser o nome do ficheiro
+export default function RespostasQuestionariosClientesScreen() {
   const route = useRoute();
-  const questionarioId = route.params?.questionarioId || 'anamnesePadrao';
+  const navigation = useNavigation();
+  const { clienteId, clienteNome } = route.params || {};
+
+  const [questionarios, setQuestionarios] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    const carregarRespostas = async () => {
+    // Autenticação anónima para garantir que o Firestore pode ser acedido
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (!user) {
+        signInAnonymously(auth).catch(e => console.error("Erro na autenticação anónima:", e));
+      }
+    });
+
+    const carregarQuestionarios = async () => {
+      if (!clienteId) {
+        setError('ID do cliente não encontrado.');
+        setLoading(false);
+        return;
+      }
       try {
-        const adminId = auth.currentUser?.uid;
-        if (!adminId) {
-          setErrorMsg('Admin não autenticado');
-          setLoading(false);
-          return;
-        }
-
-        // Busca perguntas do questionário do admin (uma vez)
-        const questionarioDoc = await getDoc(doc(db, 'admins', adminId, 'questionarios', questionarioId));
-        const perguntas = questionarioDoc.exists() ? questionarioDoc.data().perguntas : [];
-
-        // Busca todos os usuários associados a esse admin
-        const usersSnapshot = await getDocs(
-          query(collection(db, 'users'), where('adminId', '==', adminId))
+        const q = query(
+          collection(db, 'respostasQuestionarios'),
+          where('userId', '==', clienteId)
         );
+        const querySnapshot = await getDocs(q);
+        
+        if (querySnapshot.empty) {
+          setQuestionarios([]);
+        } else {
+          const listaQuestionariosPromises = querySnapshot.docs.map(async docSnapshot => {
+            const respostaData = docSnapshot.data();
+            const questionarioId = respostaData.questionarioId;
 
-        const userDocs = usersSnapshot.docs;
-        if (userDocs.length === 0) {
-          setErrorMsg('Nenhum usuário associado ao admin.');
-          setLoading(false);
-          return;
+            // --- CORREÇÃO: Usar a coleção 'questionarios' em vez de 'questionariosPublicos' ---
+            const questionarioRef = doc(db, 'questionarios', questionarioId);
+            const questionarioSnapshot = await getDoc(questionarioRef);
+            
+            // --- CORREÇÃO: Usar 'titulo' em vez de 'nome' ---
+            const questionarioData = questionarioSnapshot.exists() ? questionarioSnapshot.data() : { titulo: 'Questionário desconhecido' };
+
+            return {
+              id: docSnapshot.id,
+              ...respostaData,
+              nomeQuestionario: questionarioData.titulo,
+            };
+          });
+
+          const listaQuestionarios = await Promise.all(listaQuestionariosPromises);
+          setQuestionarios(listaQuestionarios);
         }
-
-        const todasRespostas = [];
-
-        for (const userDoc of userDocs) {
-          const userId = userDoc.id;
-          const userName = userDoc.data().nome || 'Nome não informado';
-
-          // Busca respostas do usuário para o questionário selecionado
-          const respostasSnapshot = await getDocs(
-            query(
-              collection(db, 'users', userId, 'respostasQuestionarios'),
-              where('questionarioId', '==', questionarioId),
-              orderBy('data', 'desc')
-            )
-          );
-
-          for (const respostaDoc of respostasSnapshot.docs) {
-            const respostaData = respostaDoc.data();
-
-            todasRespostas.push({
-              id: respostaDoc.id,
-              userName,
-              data: respostaData.data,
-              respostas: respostaData.respostas,
-              perguntas,
-            });
-          }
-        }
-
-        setRespostasList(todasRespostas);
-      } catch (error) {
-        console.error(error);
-        setErrorMsg('Erro ao carregar respostas.');
+      } catch (e) {
+        console.error('Erro ao buscar questionários do cliente:', e);
+        Alert.alert('Erro', 'Ocorreu um erro ao carregar os questionários.');
+        setError('Ocorreu um erro ao carregar os questionários.');
       } finally {
         setLoading(false);
       }
     };
 
-    carregarRespostas();
-  }, [questionarioId]);
+    carregarQuestionarios();
+    return () => unsubscribeAuth();
+  }, [clienteId]);
+
+  const renderItem = ({ item }) => (
+    <TouchableOpacity
+      style={[styles.card, GlobalStyles.cardShadow]}
+      onPress={() => navigation.navigate('RespostasQuestionariosClientes', {
+        clienteId: clienteId,
+        questionarioId: item.questionarioId,
+        clienteNome: clienteNome,
+      })}
+    >
+      <Ionicons name="document-text-outline" size={24} color={Colors.darkBrown} />
+      <View style={styles.cardContent}>
+        <Text style={styles.cardTitle}>{item.nomeQuestionario || 'Questionário'}</Text>
+        <Text style={styles.cardDate}>
+          Preenchido em: {item.timestamp?.toDate?.().toLocaleDateString() || 'Data desconhecida'}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward-outline" size={24} color={Colors.mediumGray} />
+    </TouchableOpacity>
+  );
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#2563eb" />
-        <Text>Carregando respostas...</Text>
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={Colors.primaryGold} />
+        <Text style={styles.loadingText}>A carregar questionários...</Text>
       </View>
     );
   }
 
-  if (errorMsg) {
+  if (error) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.error}>{errorMsg}</Text>
-      </View>
-    );
-  }
-
-  if (respostasList.length === 0) {
-    return (
-      <View style={styles.container}>
-        <Text>Nenhuma resposta encontrada.</Text>
+      <View style={styles.center}>
+        <Ionicons name="alert-circle-outline" size={50} color={Colors.errorRed} />
+        <Text style={styles.errorText}>{error}</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>Respostas do Questionário</Text>
-      {respostasList.map(({ id, userName, data, respostas, perguntas }) => (
-        <View key={id} style={styles.respostaContainer}>
-          <Text style={styles.subTitle}>Usuário: {userName}</Text>
-          <Text style={styles.dataTexto}>
-            Respondido em: {data?.toDate?.().toLocaleString() || 'Data desconhecida'}
-          </Text>
-          {(perguntas || []).length > 0 ? (
-            perguntas.map((pergunta) => (
-              <View key={pergunta.id} style={styles.perguntaResposta}>
-                <Text style={styles.perguntaTexto}>{pergunta.pergunta}</Text>
-                <Text style={styles.respostaTexto}>
-                  {respostas?.[pergunta.id] ?? 'Sem resposta'}
-                </Text>
-              </View>
-            ))
-          ) : (
-            <Text>Nenhuma pergunta disponível</Text>
-          )}
+    <SafeAreaView style={styles.safeArea}>
+      <AppHeader
+        title={`Questionários de ${clienteNome}`}
+        showBackButton={true}
+        onBackPress={() => navigation.goBack()}
+      />
+      {questionarios.length > 0 ? (
+        <FlatList
+          data={questionarios}
+          keyExtractor={item => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={styles.listContent}
+        />
+      ) : (
+        <View style={styles.emptyContainer}>
+          <Ionicons name="reader-outline" size={50} color={Colors.mediumGray} />
+          <Text style={styles.emptyText}>Nenhum questionário respondido por este cliente.</Text>
         </View>
-      ))}
-    </ScrollView>
+      )}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#000',
+  safeArea: {
+    flex: 1,
+    backgroundColor: Colors.creamBackground,
+  },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.creamBackground,
+  },
+  loadingText: {
+    marginTop: 15,
+    fontSize: 17,
+    color: Colors.darkBrown,
+    fontWeight: '500',
+  },
+  errorText: {
+    marginTop: 15,
+    fontSize: 17,
+    color: Colors.errorRed,
     textAlign: 'center',
+    paddingHorizontal: 20,
   },
-  respostaContainer: {
-    marginBottom: 25,
-    borderBottomWidth: 1,
-    borderColor: '#ccc',
-    paddingBottom: 15,
+  listContent: {
+    padding: 20,
   },
-  subTitle: {
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.white,
+    padding: 18,
+    borderRadius: 15,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.primaryGold,
+  },
+  cardContent: {
+    flex: 1,
+    marginLeft: 15,
+  },
+  cardTitle: {
+    fontSize: 16,
     fontWeight: '700',
-    fontSize: 18,
-    marginBottom: 5,
-    color: '#d0a956',
+    color: Colors.darkBrown,
   },
-  dataTexto: {
+  cardDate: {
     fontSize: 14,
-    marginBottom: 10,
-    color: '#555',
-  },
-  perguntaResposta: {
-    marginBottom: 12,
-  },
-  perguntaTexto: {
-    fontWeight: '600',
-  },
-  respostaTexto: {
+    color: Colors.mediumGray,
     marginTop: 4,
-    fontSize: 16,
-    color: '#333',
   },
-  error: {
-    color: 'red',
-    fontSize: 16,
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+  },
+  emptyText: {
     textAlign: 'center',
+    marginTop: 20,
+    fontSize: 16,
+    color: Colors.mediumGray,
   },
 });

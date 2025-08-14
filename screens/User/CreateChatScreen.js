@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useContext, useEffect } from 'react';
+import React, { useState, useCallback, useContext, useEffect, useRef } from 'react';
 import {
-  View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Platform
+  View, Text, FlatList, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Alert
 } from 'react-native';
 import { db, auth } from '../../services/firebaseConfig';
 import {
@@ -17,21 +17,23 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import moment from 'moment';
 import { UnreadContext } from '../../contexts/UnreadContext';
 
+// --- CONSTANTES E ESTILOS ---
+
 // Altura da barra fixa do cabeçalho
 const FIXED_HEADER_HEIGHT = Platform.OS === 'android' ? 90 : 80;
 
-// Novas cores
+// Novas cores (mantidas da paleta)
 const COLORS = {
   primary: '#d4ac54',      // color1
-  lightPrimary: '#e0c892',   // color2 (não usado diretamente neste arquivo, mas mantido na paleta)
+  lightPrimary: '#e0c892',   // color2
   darkPrimary: '#69511a',    // color3
   neutralGray: '#767676',    // color4
-  lightGray: '#bdbdbd',      // color5 (não usado diretamente neste arquivo, mas mantido na paleta)
+  lightGray: '#bdbdbd',      // color5
   white: '#fff',
-  black: '#1a1a1a',          // Um preto mais genérico para textos
-  background: '#fafafa',     // Fundo geral
-  unreadRed: '#e53935',      // Cor para indicadores de não lidas (mantida)
-  avatarShadow: '#5a31f4',   // Cor da sombra do avatar (mantida)
+  black: '#1a1a1a',
+  background: '#fafafa',
+  unreadRed: '#e53935',
+  avatarShadow: 'rgba(0, 0, 0, 0.2)', // Ajustado para ser mais genérico
 };
 
 export default function CreateChatScreen() {
@@ -44,25 +46,38 @@ export default function CreateChatScreen() {
   const [userName, setUserName] = useState('');
   const [userInitial, setUserInitial] = useState('');
 
+  // useRef para armazenar os unsubscribers e garantir que são limpos
+  const unsubscribersRef = useRef([]);
+
+  const cleanupUnsubscribers = () => {
+    unsubscribersRef.current.forEach(unsub => unsub());
+    unsubscribersRef.current = [];
+  };
+
   useFocusEffect(
     useCallback(() => {
-      let unsubscribers = [];
-      setLoading(true);
-
       const fetchAdminsAndChats = async () => {
+        setLoading(true);
+        cleanupUnsubscribers(); // Limpa listeners anteriores antes de carregar novos
+
         try {
+          const currentUserId = auth.currentUser?.uid;
+          if (!currentUserId) {
+            Alert.alert('Erro', 'Usuário não autenticado.');
+            navigation.goBack();
+            return;
+          }
+
           // 1. Buscar dados do utilizador logado para o cabeçalho
-          if (auth.currentUser) {
-            const userDocRef = doc(db, 'users', auth.currentUser.uid);
-            const userDocSnap = await getDoc(userDocRef);
-            if (userDocSnap.exists()) {
-              const userData = userDocSnap.data();
-              setUserName(userData.name || 'Utilizador');
-              setUserInitial(userData.name ? userData.name.charAt(0).toUpperCase() : 'U');
-            } else {
-              setUserName('Utilizador');
-              setUserInitial('U');
-            }
+          const userDocRef = doc(db, 'users', currentUserId);
+          const userDocSnap = await getDoc(userDocRef);
+          if (userDocSnap.exists()) {
+            const userData = userDocSnap.data();
+            setUserName(userData.name || 'Utilizador');
+            setUserInitial(userData.name ? userData.name.charAt(0).toUpperCase() : 'U');
+          } else {
+            setUserName('Utilizador');
+            setUserInitial('U');
           }
 
           // 2. Buscar administradores
@@ -70,113 +85,109 @@ export default function CreateChatScreen() {
           const querySnapshot = await getDocs(q);
           const usersList = querySnapshot.docs
             .map(doc => ({ uid: doc.id, ...doc.data() }))
-            .filter(user => user.uid !== auth.currentUser.uid);
-
+            .filter(user => user.uid !== currentUserId);
+          
           setUsers(usersList);
 
-          setChatInfo({}); // Limpa info antes de carregar
-
-          usersList.forEach(async (user) => {
+          // 3. Configurar ouvintes para cada chat com um administrador
+          const newChatInfo = {};
+          let totalUnread = 0;
+          
+          usersList.forEach(adminUser => {
             const chatQuery = query(
               collection(db, 'chats'),
               where('isGroup', '==', false),
-              where('participants', 'array-contains', auth.currentUser.uid)
+              where('participants', 'array-contains', currentUserId)
             );
 
-            const chatSnapshot = await getDocs(chatQuery);
-            const existingChat = chatSnapshot.docs.find(doc => {
-              const data = doc.data();
-              const participants = data.participants || [];
-              // Confirma chat só com estes dois participantes
-              return (
-                participants.length === 2 &&
-                participants.includes(auth.currentUser.uid) &&
-                participants.includes(user.uid)
-              );
-            });
+            const unsubscribe = onSnapshot(chatQuery, (snapshot) => {
+              const existingChat = snapshot.docs.find(doc => {
+                const data = doc.data();
+                const participants = data.participants || [];
+                return (
+                  participants.length === 2 &&
+                  participants.includes(adminUser.uid)
+                );
+              });
 
-            if (existingChat) {
-              const chatId = existingChat.id;
+              if (existingChat) {
+                const chatId = existingChat.id;
 
-              const unsubscribe = onSnapshot(
-                collection(db, 'chats', chatId, 'messages'),
-                (snapshot) => {
-                  const messages = snapshot.docs.map(doc => doc.data());
-                  const lastMsg = messages[messages.length - 1];
+                // Sub-ouvinte para as mensagens do chat
+                const messagesUnsubscribe = onSnapshot(
+                  collection(db, 'chats', chatId, 'messages'),
+                  (messagesSnapshot) => {
+                    const messages = messagesSnapshot.docs.map(doc => doc.data());
+                    const lastMsg = messages[messages.length - 1];
 
-                  const unreadCount = messages.filter(
-                    msg => !msg.lida && msg.senderId !== auth.currentUser.uid
-                  ).length;
-
-                  setChatInfo(prev => {
-                    const newInfo = {
-                      ...prev,
-                      [user.uid]: {
-                        chatId,
-                        lastMessage: lastMsg?.text || '',
-                        lastSender: lastMsg?.senderId === auth.currentUser.uid ? 'Você' : user.name || 'Admin',
-                        lastTime: lastMsg?.createdAt?.toDate() || null,
-                        unreadCount,
-                      },
+                    const unreadCount = messages.filter(
+                      msg => !msg.lida && msg.senderId !== currentUserId
+                    ).length;
+                    
+                    newChatInfo[adminUser.uid] = {
+                      chatId,
+                      lastMessage: lastMsg?.text || '',
+                      lastSender: lastMsg?.senderId === currentUserId ? 'Você' : adminUser.name || 'Admin',
+                      lastTime: lastMsg?.createdAt?.toDate() || null,
+                      unreadCount,
                     };
-
-                    const totalUnread = Object.values(newInfo).reduce(
+                    
+                    // Recalcula o total de não lidas e atualiza o contexto
+                    totalUnread = Object.values(newChatInfo).reduce(
                       (sum, info) => sum + (info?.unreadCount || 0),
                       0
                     );
                     setUnreadCount(totalUnread);
-
-                    return newInfo;
-                  });
-                }
-              );
-
-              unsubscribers.push(unsubscribe);
-            }
+                    setChatInfo({ ...newChatInfo }); // Atualiza o estado
+                  }
+                );
+                unsubscribersRef.current.push(messagesUnsubscribe);
+              } else {
+                // Caso não exista chat, limpa a informação
+                setChatInfo(prev => {
+                  const newPrev = { ...prev };
+                  delete newPrev[adminUser.uid];
+                  return newPrev;
+                });
+              }
+            });
+            unsubscribersRef.current.push(unsubscribe);
           });
         } catch (error) {
-          console.error('Erro ao buscar usuários ou dados do usuário:', error);
+          console.error('Erro ao buscar dados:', error);
+          Alert.alert('Erro', `Não foi possível carregar os dados. (${error.message})`);
         } finally {
           setLoading(false);
         }
       };
-
+      
       fetchAdminsAndChats();
 
       return () => {
-        unsubscribers.forEach(unsub => unsub());
+        // A função de limpeza do useFocusEffect é chamada ao sair do ecrã
+        cleanupUnsubscribers();
       };
-    }, [])
+    }, [navigation])
   );
 
   const createChat = async (user) => {
     try {
-      const chatQuery = query(
-        collection(db, 'chats'),
-        where('isGroup', '==', false),
-        where('participants', 'array-contains', auth.currentUser.uid)
-      );
+      const currentUserId = auth.currentUser?.uid;
+      if (!currentUserId) return;
 
-      const chatSnapshot = await getDocs(chatQuery);
-      const existingChat = chatSnapshot.docs.find(doc => {
-        const participants = doc.data().participants;
-        return (
-          participants.length === 2 &&
-          participants.includes(user.uid)
-        );
-      });
-
-      if (existingChat) {
+      const info = chatInfo[user.uid];
+      if (info && info.chatId) {
         navigation.navigate('UserChatRoom', {
-          chatId: existingChat.id,
+          chatId: info.chatId,
           userId: user.uid,
         });
         return;
       }
 
+      // Se não houver chat, cria um novo
       const newChatRef = await addDoc(collection(db, 'chats'), {
         isGroup: false,
-        participants: [auth.currentUser.uid, user.uid],
+        participants: [currentUserId, user.uid],
         createdAt: serverTimestamp(),
       });
 
@@ -186,6 +197,7 @@ export default function CreateChatScreen() {
       });
     } catch (error) {
       console.error('Erro ao criar chat:', error);
+      Alert.alert('Erro', 'Não foi possível iniciar o chat.');
     }
   };
 
@@ -196,9 +208,9 @@ export default function CreateChatScreen() {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View style={[styles.loadingContainer, { paddingTop: FIXED_HEADER_HEIGHT }]}>
         <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>A carregar dados...</Text>
+        <Text style={styles.loadingText}>A carregar administradores...</Text>
       </View>
     );
   }
@@ -207,7 +219,7 @@ export default function CreateChatScreen() {
 
   return (
     <View style={styles.fullScreenContainer}>
-      {/* Cabeçalho Fixo (Barra Fixa) */}
+      {/* Cabeçalho Fixo */}
       <View style={styles.fixedHeader}>
         <View style={styles.headerUserInfo}>
           <View style={styles.headerAvatar}>
@@ -224,6 +236,7 @@ export default function CreateChatScreen() {
         renderItem={({ item }) => {
           const info = chatInfo[item.uid];
           const hasUnread = info?.unreadCount > 0;
+          const lastMessageText = info ? `${info.lastSender}: ${info.lastMessage}` : 'Iniciar nova conversa';
 
           return (
             <TouchableOpacity
@@ -238,26 +251,23 @@ export default function CreateChatScreen() {
                 <Text style={styles.avatarText}>{getInitial(item)}</Text>
               </View>
               <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Text style={styles.userName}>{item.name || item.email}</Text>
-                  {hasUnread && <View style={styles.notificationDot} />}
-                </View>
-                {info && (
-                  <View style={styles.lastMessageRow}>
-                    <Text
-                      style={[
-                        styles.lastMessageText,
-                        hasUnread && styles.lastMessageTextUnread
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {info.lastSender}: {info.lastMessage}
-                    </Text>
+                <Text style={styles.userName}>{item.name || item.email}</Text>
+                <View style={styles.lastMessageRow}>
+                  <Text
+                    style={[
+                      styles.lastMessageText,
+                      hasUnread && styles.lastMessageTextUnread
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {lastMessageText}
+                  </Text>
+                  {info?.lastTime && (
                     <Text style={styles.lastMessageTime}>
-                      {info.lastTime ? moment(info.lastTime).format('HH:mm') : ''}
+                      {moment(info.lastTime).format('HH:mm')}
                     </Text>
-                  </View>
-                )}
+                  )}
+                </View>
               </View>
               {hasUnread && (
                 <View style={styles.unreadBadge}>
@@ -269,7 +279,7 @@ export default function CreateChatScreen() {
         }}
         ItemSeparatorComponent={ItemSeparator}
         ListHeaderComponent={
-          <Text style={styles.title}>Escolha um administrador para iniciar o chat:</Text>
+          <Text style={styles.title}>Conversas com Administradores</Text>
         }
         ListEmptyComponent={
           <Text style={styles.emptyText}>Nenhum administrador encontrado.</Text>
@@ -281,6 +291,7 @@ export default function CreateChatScreen() {
   );
 }
 
+// --- ESTILOS ---
 const styles = StyleSheet.create({
   fullScreenContainer: {
     flex: 1,
@@ -294,17 +305,17 @@ const styles = StyleSheet.create({
     height: FIXED_HEADER_HEIGHT,
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 40 : 20,
-    backgroundColor: COLORS.primary, // color1
+    backgroundColor: '#B8860B', // Cor Alterada para B8860B
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderBottomLeftRadius: 15,
     borderBottomRightRadius: 15,
     elevation: 5,
-    shadowColor: '#000',
+    shadowColor: COLORS.black,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
-    shadowRadius: 5,
+    shadowRadius: 6,
     zIndex: 10,
   },
   headerUserInfo: {
@@ -319,9 +330,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
+    borderWidth: 1,
+    borderColor: COLORS.darkPrimary,
   },
   headerAvatarText: {
-    color: COLORS.primary, // color1
+    color: COLORS.primary,
     fontSize: 18,
     fontWeight: 'bold',
   },
@@ -340,34 +353,34 @@ const styles = StyleSheet.create({
     paddingTop: FIXED_HEADER_HEIGHT + 20,
     paddingBottom: 20,
   },
-  // 'container' style was removed as 'fullScreenContainer' and 'flatListContentContainer' manage layout
   title: {
     fontSize: 24,
     fontWeight: '800',
     marginBottom: 25,
-    color: COLORS.darkPrimary, // color3
+    color: COLORS.darkPrimary,
     textAlign: 'center',
     marginTop: 0,
   },
   userItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.primary, // color1
+    backgroundColor: COLORS.white,
     paddingVertical: 16,
     paddingHorizontal: 18,
     borderRadius: 12,
-    shadowColor: COLORS.primary, // color1
+    shadowColor: COLORS.black,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.1,
     shadowRadius: 6,
     elevation: 5,
   },
   userItemUnread: {
+    backgroundColor: '#fffbe5', // Um amarelo claro para destaque
     borderWidth: 2,
     borderColor: COLORS.unreadRed,
   },
   avatar: {
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.lightPrimary,
     width: 48,
     height: 48,
     borderRadius: 24,
@@ -381,14 +394,14 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   avatarText: {
-    color: COLORS.darkPrimary, // color3
+    color: COLORS.darkPrimary,
     fontSize: 22,
     fontWeight: '900',
   },
   userName: {
     fontSize: 19,
     fontWeight: '600',
-    color: COLORS.white, // Branco
+    color: COLORS.darkPrimary,
   },
   lastMessageRow: {
     flexDirection: 'row',
@@ -398,63 +411,49 @@ const styles = StyleSheet.create({
   lastMessageText: {
     flex: 1,
     fontSize: 14,
-    color: COLORS.white, // Branco
+    color: COLORS.neutralGray,
     marginRight: 10,
   },
   lastMessageTextUnread: {
     fontWeight: 'bold',
-    color: COLORS.black, // Preto para destaque
+    color: COLORS.black,
   },
   lastMessageTime: {
     fontSize: 12,
-    color: COLORS.neutralGray, // color4
+    color: COLORS.neutralGray,
   },
   unreadBadge: {
     backgroundColor: COLORS.unreadRed,
     borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    alignSelf: 'flex-start',
-    marginLeft: 8,
+    minWidth: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 10,
   },
   unreadText: {
     color: COLORS.white,
     fontSize: 12,
     fontWeight: 'bold',
   },
-  notificationDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: COLORS.unreadRed,
-    marginLeft: 8,
-    alignSelf: 'center',
-  },
   separator: {
     height: 12,
   },
   emptyText: {
     fontSize: 18,
-    color: COLORS.neutralGray, // color4
+    color: COLORS.neutralGray,
     textAlign: 'center',
     marginTop: 60,
-  },
-  emptyContainer: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: FIXED_HEADER_HEIGHT,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: COLORS.background,
-    paddingTop: FIXED_HEADER_HEIGHT,
   },
   loadingText: {
     marginTop: 10,
     fontSize: 16,
-    color: COLORS.neutralGray, // color4
+    color: COLORS.neutralGray,
   },
 });

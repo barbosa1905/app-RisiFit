@@ -7,56 +7,66 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  Dimensions, // Importar Dimensions para o gráfico
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
-import { format, parse, isValid, parseISO } from 'date-fns'; 
-import { pt } from 'date-fns/locale'; 
-import { enUS } from 'date-fns/locale'; 
+import { format, parse, isValid, parseISO, isPast, isToday } from 'date-fns';
+import { pt } from 'date-fns/locale';
+import { enUS } from 'date-fns/locale';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+
+// Importação do react-native-chart-kit
+import { PieChart } from 'react-native-chart-kit';
 
 // Importações do Firebase
-import { getFirestore, collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore'; 
-import { getUserIdLoggedIn } from '../../services/authService'; 
-import { auth } from '../../services/firebaseConfig'; 
+import { getFirestore, collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { getUserIdLoggedIn } from '../../services/authService';
+import { auth } from '../../services/firebaseConfig';
+import { buscarTodosTreinosDoUser } from '../../services/userService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Altura da barra fixa do cabeçalho
 const FIXED_HEADER_HEIGHT = Platform.OS === 'android' ? 90 : 80;
 
 // Novas cores
 const COLORS = {
-  primary: '#d4ac54',      // color1
+  primary: '#d4ac54',        // color1
   lightPrimary: '#e0c892',   // color2
   darkPrimary: '#69511a',    // color3
   neutralGray: '#767676',    // color4
   lightGray: '#bdbdbd',      // color5
   white: '#fff',
-  black: '#1a1a1a',          // Um preto mais genérico, pode ser ajustado
-  background: '#f9fafb',     // Fundo geral
-  cardBackground: '#ffffff', // Fundo dos cards
-  borderLight: '#e5e7eb',    // Borda clara
-  textLight: '#6b7280',      // Texto cinza claro
-  textDark: '#4b3e00',       // Texto escuro (usado para nome, valor)
-  pickerText: '#735c00',     // Texto do picker
-  pickerBackground: '#fff',  // Fundo do picker
-  // Cores para categorias (mantidas as originais, pois são específicas)
+  black: '#1a1a1a',
+  background: '#f9fafb',
+  cardBackground: '#ffffff',
+  borderLight: '#e5e7eb',
+  textLight: '#6b7280',
+  textDark: '#4b3e00',
+  pickerText: '#735c00',
+  pickerBackground: '#fff',
   force: '#7c3aed',
   cardio: '#10b981',
   flexibility: '#f59e0b',
   hiit: '#ef4444',
+  completedGreen: '#4CAF50', // Verde para concluído
+  missedRed: '#FF5252',      // Vermelho para perdido
 };
 
+const screenWidth = Dimensions.get('window').width;
+
 export default function HistoricoScreen() {
-  const [historico, setHistorico] = useState([]); 
+  const [historico, setHistorico] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filtroMes, setFiltroMes] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('');
 
-  const [userName, setUserName] = useState(''); 
-  const [userInitial, setUserInitial] = useState(''); 
+  const [userName, setUserName] = useState('');
+  const [userInitial, setUserInitial] = useState('');
 
   const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
   const formatDuration = (totalSegundos) => {
-    if (typeof totalSegundos !== 'number' || isNaN(totalSegundos)) return 'N/A';
+    if (typeof totalSegundos !== 'number' || isNaN(totalSegundos) || totalSegundos < 0) return 'N/A';
     const horas = Math.floor(totalSegundos / 3600);
     const min = Math.floor((totalSegundos % 3600) / 60);
     const seg = totalSegundos % 60;
@@ -66,72 +76,44 @@ export default function HistoricoScreen() {
     return `${pad(horas)}:${pad(min)}:${pad(seg)}`;
   };
 
-  const parseFlexibleDate = (dateValue) => {
-    if (dateValue && typeof dateValue === 'object' && dateValue.seconds !== undefined && dateValue.nanoseconds !== undefined) {
-        const date = new Date(dateValue.seconds * 1000 + dateValue.nanoseconds / 1000000);
-        if (isValid(date)) {
-            return date;
+  const getTreinosConcluidosMap = async () => {
+    try {
+      const userId = await getUserIdLoggedIn();
+      if (!userId) return {};
+      const chave = `treinosConcluidos_${userId}`;
+      const dados = await AsyncStorage.getItem(chave);
+      let loadedRawData = dados ? JSON.parse(dados) : {};
+      const processedConcluidos = {};
+      for (const treinoId in loadedRawData) {
+        const completionDetails = loadedRawData[treinoId];
+        if (typeof completionDetails === 'object' && completionDetails !== null && 'completed' in completionDetails) {
+          processedConcluidos[treinoId] = {
+            completed: completionDetails.completed || false,
+            duration: completionDetails.duration || 0,
+            completionDate: completionDetails.completionDate || null,
+          };
         }
+      }
+      return processedConcluidos;
+    } catch (error) {
+      console.error('Erro ao carregar treinos concluídos do AsyncStorage:', error);
+      return {};
     }
-
-    if (typeof dateValue === 'string') {
-        const isoParsed = parseISO(dateValue);
-        if (isValid(isoParsed)) {
-            return isoParsed;
-        }
-
-        let cleanedEnglishDateString = dateValue.replace(/ UTC[+-]\d+/g, '').replace(/ (AM|PM)/g, ' $1').trim();
-        const englishFormatsToTry = [
-            "MMMM dd, yyyy 'at' h:mm:ss a", 
-            "MMMM dd, yyyy 'at' H:mm:ss",   
-        ];
-        for (let formatStr of englishFormatsToTry) {
-            try {
-                const parsedDate = parse(cleanedEnglishDateString, formatStr, new Date(), { locale: enUS });
-                if (isValid(parsedDate)) {
-                    return parsedDate;
-                }
-            } catch (e) { /* continue trying */ }
-        }
-
-        let cleanedPortugueseDateString = dateValue.replace(/min/g, '').split(' UTC')[0].trim();
-        const portugueseFormatsToTry = [
-            "dd 'de' MMMM 'de' yyyy 'às' H'h'ss's'", 
-            "dd 'de' MMMM 'de' yyyy 'às' H'h'mm's'", 
-            "dd 'de' MMMM 'de' yyyy 'às' H'h'mm'min'ss's'", 
-            "dd/MM/yyyy HH:mm:ss",          
-        ];
-        for (let formatStr of portugueseFormatsToTry) {
-            try {
-                const parsedDate = parse(cleanedPortugueseDateString, formatStr, new Date(), { locale: pt });
-                if (isValid(parsedDate)) {
-                    return parsedDate;
-                }
-            } catch (e) { /* continue trying */ }
-        }
-    }
-
-    console.warn('Não foi possível parsear a data com nenhum formato:', dateValue);
-    return null; 
   };
 
   useEffect(() => {
-    const carregarHistoricoDoFirestore = async () => {
+    const carregarHistoricoCompleto = async () => {
       setLoading(true);
-      console.log('--- Iniciando carregamento do histórico do Firestore ---');
+      console.log('--- Iniciando carregamento do histórico completo ---');
       try {
-        const userIdFromAuth = await getUserIdLoggedIn(); 
-        console.log('UserID obtido de getUserIdLoggedIn():', userIdFromAuth); 
-
-        if (!userIdFromAuth) {
-          console.warn('Usuário não autenticado. Não é possível carregar o histórico.');
+        const userId = await getUserIdLoggedIn();
+        if (!userId) {
+          Alert.alert('Erro', 'Usuário não autenticado');
           setLoading(false);
           return;
         }
 
-        const dbFirestore = getFirestore(); 
-
-        // 1. Buscar dados do utilizador logado para o cabeçalho
+        const dbFirestore = getFirestore();
         if (auth.currentUser) {
           const userDocRef = doc(dbFirestore, 'users', auth.currentUser.uid);
           const userDocSnap = await getDoc(userDocRef);
@@ -143,71 +125,68 @@ export default function HistoricoScreen() {
             setUserName('Utilizador');
             setUserInitial('U');
           }
+        } else {
+          setUserName('');
+          setUserInitial('');
         }
 
-        const collectionName = 'historicoTreinos'; 
-        const historicoRef = collection(dbFirestore, collectionName); 
-        console.log('Caminho da coleção Firestore sendo usado:', historicoRef.path);
-        
-        const userIdFieldName = 'userId'; 
-        
-        const q = query(historicoRef, where(userIdFieldName, '==', userIdFromAuth)); 
-        console.log(`Query Firestore criada: Coleção '${collectionName}', Campo '${userIdFieldName}' == '${userIdFromAuth}'`); 
+        const allScheduledTreinos = await buscarTodosTreinosDoUser(userId);
+        console.log('Todos os treinos agendados carregados:', allScheduledTreinos.length);
 
-        const querySnapshot = await getDocs(q);
-        const treinosConcluidosArray = [];
-        console.log('Número de documentos encontrados pela query:', querySnapshot.size);
+        const completedTreinosMap = await getTreinosConcluidosMap();
+        console.log('Status de conclusão carregados do AsyncStorage:', Object.keys(completedTreinosMap).length);
 
-        if (querySnapshot.empty) {
-          console.log('Nenhum documento encontrado para o UserID de consulta especificado.');
-        }
+        const now = new Date();
+        const pastTreinos = [];
 
-        querySnapshot.forEach((doc) => {
-          const data = doc.data();
-          console.log('Dados brutos do documento Firestore (para ID:', doc.id, '):', data); 
+        allScheduledTreinos.forEach(treino => {
+          const treinoDateTime = parseISO(treino.data);
 
-          const dataConclusaoParsed = parseFlexibleDate(data.dataConclusao);
-          const dataOriginalTreinoParsed = parseFlexibleDate(data.dataOriginalTreino);
-          
-          if (dataConclusaoParsed && isValid(dataConclusaoParsed)) {
-            treinosConcluidosArray.push({ 
-              id: doc.id, 
-              nome: data.nomeTreino || data.nome || 'Treino sem nome', 
-              categoria: data.categoria || 'N/A', 
-              descricao: data.descricao || 'Sem descrição', 
-              exercicios: data.exercicios || [], 
-              duracaoSegundos: data.duracao || data.duracaoSegundos || 0, 
-              dataConclusao: dataConclusaoParsed.toISOString(), 
-              dataOriginalTreino: dataOriginalTreinoParsed ? dataOriginalTreinoParsed.toISOString() : null, 
-              userId: data[userIdFieldName], 
-              treinoId: data.treinoId || data['ID do treino'], 
+          if (!isValid(treinoDateTime)) {
+            console.warn(`⚠️ Data de treino inválida para parseISO: ${treino.data} (ID: ${treino.id})`);
+            return;
+          }
+
+          if (isPast(treinoDateTime) || (isToday(treinoDateTime) && treinoDateTime < now)) {
+            const completionDetails = completedTreinosMap[treino.id];
+            const isConcluido = completionDetails?.completed || false;
+
+            pastTreinos.push({
+              id: treino.id,
+              nome: treino.nome,
+              categoria: treino.categoria,
+              descricao: treino.descricao,
+              dataOriginalAgendada: treino.data,
+              dataConclusao: isConcluido ? (completionDetails.completionDate || treino.data) : treino.data,
+              duracaoSegundos: isConcluido ? completionDetails.duration : 0,
+              status: isConcluido ? 'concluido' : 'perdido',
+              exercicios: treino.templateExercises || treino.customExercises || [],
             });
-          } else {
-              console.warn("Documento de histórico ignorado (data inválida ou não parseável):", doc.id, data);
           }
         });
 
-        treinosConcluidosArray.sort((a, b) => new Date(b.dataConclusao) - new Date(a.dataConclusao));
+        pastTreinos.sort((a, b) => parseISO(b.dataConclusao).getTime() - parseISO(a.dataConclusao).getTime());
 
-        setHistorico(treinosConcluidosArray);
-        console.log('📥 Histórico carregado do Firestore com sucesso. Total de treinos processados e exibidos:', treinosConcluidosArray.length);
+        setHistorico(pastTreinos);
+        console.log('Histórico final de treinos passados (concluídos e perdidos):', pastTreinos.length);
+
       } catch (error) {
-        console.error('❌ Erro fatal ao carregar histórico do Firestore:', error);
-        Alert.alert('Erro', 'Falha ao carregar histórico de treinos. Verifique a sua conexão ou tente novamente.');
+        console.error('❌ Erro ao carregar histórico completo:', error);
+        Alert.alert('Erro', `Não foi possível carregar o histórico: ${error.message || 'Erro desconhecido.'}`);
       } finally {
         setLoading(false);
-        console.log('--- Fim do carregamento do histórico do Firestore ---');
+        console.log('--- Fim do carregamento do histórico completo ---');
       }
     };
 
-    carregarHistoricoDoFirestore();
-  }, [appId]); 
+    carregarHistoricoCompleto();
+  }, [appId]);
 
   const treinosFiltrados = historico.filter((treino) => {
     if (!treino.dataConclusao || typeof treino.dataConclusao !== 'string') {
       return false;
     }
-    const dataObj = parseISO(treino.dataConclusao); 
+    const dataObj = parseISO(treino.dataConclusao);
 
     const condicaoMes = !filtroMes || format(dataObj, 'yyyy-MM') === filtroMes;
     const condicaoCategoria =
@@ -220,25 +199,26 @@ export default function HistoricoScreen() {
   const somarDuracoes = (treinosArray) => {
     let totalSegundos = 0;
     treinosArray.forEach((treino) => {
-      if (typeof treino.duracaoSegundos === 'number' && !isNaN(treino.duracaoSegundos)) {
+      if (treino.status === 'concluido' && typeof treino.duracaoSegundos === 'number' && !isNaN(treino.duracaoSegundos)) {
         totalSegundos += treino.duracaoSegundos;
       }
     });
     return formatDuration(totalSegundos);
   };
 
-  const totalTreinos = treinosFiltrados.length;
-  const tempoTotal = somarDuracoes(treinosFiltrados);
+  const totalTreinosConcluidos = treinosFiltrados.filter(t => t.status === 'concluido').length;
+  const totalTreinosPerdidos = treinosFiltrados.filter(t => t.status === 'perdido').length;
+  const tempoTotalConcluido = somarDuracoes(treinosFiltrados.filter(t => t.status === 'concluido'));
 
   const mesesDisponiveis = [
     ...new Set(historico.map((treino) => format(parseISO(treino.dataConclusao), 'yyyy-MM'))),
-  ].sort((a, b) => new Date(a) - new Date(b)); 
+  ].sort((a, b) => new Date(a) - new Date(b));
 
   const categoriasDisponiveis = [
     ...new Set(
       historico.map((treino) => treino.categoria).filter(Boolean)
     ),
-  ].sort(); 
+  ].sort();
 
   const getCategoriaColor = (categoria) => {
     switch (String(categoria || '').toLowerCase()) {
@@ -251,13 +231,42 @@ export default function HistoricoScreen() {
       case 'hiit':
         return COLORS.hiit;
       default:
-        return COLORS.primary; // Cor padrão da nova paleta
+        return COLORS.primary;
     }
   };
 
+  const chartData = [
+    {
+      name: 'Concluídos',
+      population: totalTreinosConcluidos,
+      color: COLORS.completedGreen,
+      legendFontColor: COLORS.darkPrimary,
+      legendFontSize: 15,
+    },
+    {
+      name: 'Perdidos',
+      population: totalTreinosPerdidos,
+      color: COLORS.missedRed,
+      legendFontColor: COLORS.darkPrimary,
+      legendFontSize: 15,
+    },
+  ];
+
+  const chartConfig = {
+    backgroundColor: COLORS.cardBackground,
+    backgroundGradientFrom: COLORS.cardBackground,
+    backgroundGradientTo: COLORS.cardBackground,
+    color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+    labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+    decimalPlaces: 0,
+    propsForLabels: {
+      fontWeight: 'bold',
+    },
+  };
+
   return (
-    <View style={styles.fullScreenContainer}> 
-      
+    <View style={styles.fullScreenContainer}>
+
       <View style={styles.fixedHeader}>
         <View style={styles.headerUserInfo}>
           <View style={styles.headerAvatar}>
@@ -275,16 +284,38 @@ export default function HistoricoScreen() {
           <View style={styles.estatisticaItem}>
             <Text style={styles.estatisticaIcon}>📅</Text>
             <Text style={styles.estatisticaTexto}>
-              <Text style={styles.valor}>{totalTreinos}</Text> treinos concluídos
+              <Text style={styles.valor}>{totalTreinosConcluidos}</Text> treinos concluídos
             </Text>
           </View>
           <View style={styles.estatisticaItem}>
             <Text style={styles.estatisticaIcon}>⏱️</Text>
             <Text style={styles.estatisticaTexto}>
-              <Text style={styles.valor}>{tempoTotal}</Text> acumulado
+              <Text style={styles.valor}>{tempoTotalConcluido}</Text> acumulado
             </Text>
           </View>
         </View>
+
+        {/* Gráfico de Treinos Concluídos vs. Perdidos */}
+        {!loading && (totalTreinosConcluidos > 0 || totalTreinosPerdidos > 0) ? (
+          <View style={styles.chartContainer}>
+            <Text style={styles.chartTitle}>Visão Geral dos Treinos</Text>
+            <PieChart
+              data={chartData}
+              width={screenWidth - 40} // Largura da tela menos o padding
+              height={150} // Altura ajustada
+              chartConfig={chartConfig}
+              accessor="population"
+              backgroundColor="transparent"
+              paddingLeft="15"
+              center={[10, 0]} // Ajuste para centralizar o gráfico
+              absolute // Exibe os valores absolutos na legenda
+            />
+          </View>
+        ) : !loading && (
+          <Text style={styles.semDadosChart}>
+            Não há dados de treinos concluídos ou perdidos para exibir no gráfico.
+          </Text>
+        )}
 
         <View style={styles.filtrosContainer}>
           <View style={styles.filtroBox}>
@@ -293,13 +324,13 @@ export default function HistoricoScreen() {
               selectedValue={filtroMes}
               onValueChange={(value) => setFiltroMes(value)}
               style={styles.picker}
-              dropdownIconColor={COLORS.primary} // Cor do ícone do picker
+              dropdownIconColor={COLORS.primary}
             >
               <Picker.Item label="Todos" value="" />
               {mesesDisponiveis.map((mes) => (
                 <Picker.Item
                   key={mes}
-                  label={format(parseISO(mes + '-01'), 'MMMM yyyy', { locale: pt })} 
+                  label={format(parseISO(mes + '-01'), 'MMMM yyyy', { locale: pt })}
                   value={mes}
                 />
               ))}
@@ -312,7 +343,7 @@ export default function HistoricoScreen() {
               selectedValue={filtroCategoria}
               onValueChange={(value) => setFiltroCategoria(value)}
               style={styles.picker}
-              dropdownIconColor={COLORS.primary} // Cor do ícone do picker
+              dropdownIconColor={COLORS.primary}
             >
               <Picker.Item label="Todas" value="" />
               {categoriasDisponiveis.map((cat) => (
@@ -333,28 +364,34 @@ export default function HistoricoScreen() {
         {!loading &&
           treinosFiltrados.map((treino) => {
             const corCategoria = getCategoriaColor(treino.categoria);
+            const isConcluido = treino.status === 'concluido';
+            const isPerdido = treino.status === 'perdido';
+
             return (
               <View
-                key={treino.id} 
-                style={[styles.card, { borderLeftColor: corCategoria }]}
+                key={treino.id}
+                style={[
+                  styles.card,
+                  { borderLeftColor: isConcluido ? COLORS.completedGreen : COLORS.missedRed },
+                ]}
               >
                 <Text style={styles.data}>{format(parseISO(treino.dataConclusao), 'dd/MM/yyyy HH:mm')}</Text>
-                <Text style={styles.nome}>{String(treino.nome || treino.nomeTreino)}</Text> 
+                <Text style={[styles.nome, isPerdido && styles.nomePerdido]}>
+                  {String(treino.nome || treino.nomeTreino)}
+                  {isPerdido && (
+                    <MaterialCommunityIcons name="alert-circle" size={18} color={COLORS.missedRed} style={{ marginLeft: 5 }} />
+                  )}
+                </Text>
                 <Text style={styles.categoria}>
                   Categoria: {String(treino.categoria || 'N/A')}
                 </Text>
                 <Text style={styles.descricao}>{String(treino.descricao || 'Sem descrição')}</Text>
-                <Text style={styles.duracao}>Duração: {formatDuration(treino.duracaoSegundos)}</Text> 
 
-                {Array.isArray(treino.exercicios) && treino.exercicios.length > 0 && (
-                  <>
-                    <Text style={styles.exerciciosTitulo}>Exercícios:</Text>
-                    {treino.exercicios.map((ex, idx) => (
-                      <Text key={idx} style={styles.exercicio}>
-                        • {String(ex.nome)} — {ex.tipo === 'reps' ? 'Repetições' : 'Tempo'}: {String(ex.valor)}
-                      </Text>
-                    ))}
-                  </>
+                {isConcluido && (
+                  <Text style={styles.duracao}>Duração: {formatDuration(treino.duracaoSegundos)}</Text>
+                )}
+                {isPerdido && (
+                  <Text style={styles.statusPerdido}>Status: Perdido</Text>
                 )}
               </View>
             );
@@ -365,7 +402,7 @@ export default function HistoricoScreen() {
 }
 
 const styles = StyleSheet.create({
-  fullScreenContainer: { 
+  fullScreenContainer: {
     flex: 1,
     backgroundColor: COLORS.background,
   },
@@ -377,7 +414,7 @@ const styles = StyleSheet.create({
     height: FIXED_HEADER_HEIGHT,
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 40 : 20,
-    backgroundColor: COLORS.primary, // color1
+    backgroundColor: COLORS.primary,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -390,11 +427,11 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     zIndex: 10,
   },
-  headerUserInfo: { 
+  headerUserInfo: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  headerAvatar: { 
+  headerAvatar: {
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -403,17 +440,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 10,
   },
-  headerAvatarText: { 
-    color: COLORS.primary, // color1
+  headerAvatarText: {
+    color: COLORS.primary,
     fontSize: 18,
     fontWeight: 'bold',
   },
-  headerUserName: { 
+  headerUserName: {
     fontSize: 18,
     fontWeight: '600',
     color: COLORS.white,
   },
-  headerAppName: { 
+  headerAppName: {
     fontSize: 20,
     fontWeight: 'bold',
     color: COLORS.white,
@@ -424,23 +461,20 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
     paddingTop: FIXED_HEADER_HEIGHT + 20,
   },
-  container: { // Este estilo não é mais usado diretamente como container principal
-    minHeight: '100%',
-  },
   title: {
     fontSize: 26,
     fontWeight: 'bold',
-    color: COLORS.primary, // color1
+    color: COLORS.primary,
     marginBottom: 20,
     textAlign: 'center',
     marginTop: 0,
   },
   estatisticasBox: {
-    backgroundColor: COLORS.lightPrimary, // color2
+    backgroundColor: COLORS.lightPrimary,
     padding: 16,
     borderRadius: 12,
     marginBottom: 20,
-    borderColor: COLORS.primary, // color1
+    borderColor: COLORS.primary,
     borderWidth: 1,
   },
   estatisticaItem: {
@@ -454,11 +488,36 @@ const styles = StyleSheet.create({
   },
   estatisticaTexto: {
     fontSize: 16,
-    color: COLORS.darkPrimary, // color3
+    color: COLORS.darkPrimary,
   },
   valor: {
     fontWeight: 'bold',
-    color: COLORS.darkPrimary, // color3
+    color: COLORS.darkPrimary,
+  },
+  chartContainer: {
+    backgroundColor: COLORS.cardBackground,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  chartTitle: {
+    fontSize: 16, // Tamanho da fonte ajustado
+    fontWeight: 'bold',
+    color: COLORS.darkPrimary,
+    marginBottom: 8, // Margem inferior ajustada
+  },
+  semDadosChart: {
+    textAlign: 'center',
+    fontStyle: 'italic',
+    color: COLORS.neutralGray,
+    marginTop: 10,
+    marginBottom: 20,
   },
   filtrosContainer: {
     marginBottom: 20,
@@ -468,18 +527,18 @@ const styles = StyleSheet.create({
   },
   filtroLabel: {
     fontWeight: '600',
-    color: COLORS.darkPrimary, // color3
+    color: COLORS.darkPrimary,
     marginBottom: 4,
   },
   picker: {
     backgroundColor: COLORS.pickerBackground,
     borderRadius: 8,
-    color: COLORS.pickerText, // color3
+    color: COLORS.pickerText,
   },
   semDados: {
     textAlign: 'center',
     fontStyle: 'italic',
-    color: COLORS.neutralGray, // color4
+    color: COLORS.neutralGray,
     marginTop: 20,
   },
   card: {
@@ -496,40 +555,49 @@ const styles = StyleSheet.create({
   },
   data: {
     fontSize: 14,
-    color: COLORS.primary, // color1
+    color: COLORS.primary,
     marginBottom: 2,
   },
   nome: {
     fontSize: 20,
     fontWeight: '700',
-    color: COLORS.darkPrimary, // color3
+    color: COLORS.darkPrimary,
     marginBottom: 4,
+  },
+  nomePerdido: {
+    color: COLORS.missedRed,
   },
   categoria: {
     fontSize: 14,
-    color: COLORS.darkPrimary, // color3 (original era a38600, que é um tom de marrom/dourado)
+    color: COLORS.darkPrimary,
     marginBottom: 4,
   },
   descricao: {
     fontSize: 14,
-    color: COLORS.neutralGray, // color4 (original era 7a6a00, que é um tom de marrom/dourado)
+    color: COLORS.neutralGray,
     marginBottom: 6,
   },
   duracao: {
     fontSize: 14,
     fontWeight: '600',
-    color: COLORS.darkPrimary, // color3 (original era b77900, que é um tom de laranja/marrom)
+    color: COLORS.darkPrimary,
+    marginBottom: 6,
+  },
+  statusPerdido: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.missedRed,
     marginBottom: 6,
   },
   exerciciosTitulo: {
     fontWeight: '600',
-    color: COLORS.darkPrimary, // color3 (original era 5f4b00, que é um tom de marrom escuro)
+    color: COLORS.darkPrimary,
     marginTop: 6,
     marginBottom: 4,
   },
   exercicio: {
     marginLeft: 10,
-    color: COLORS.neutralGray, // color4 (original era 7a6a00)
+    color: COLORS.neutralGray,
     fontSize: 13,
     marginBottom: 2,
   },

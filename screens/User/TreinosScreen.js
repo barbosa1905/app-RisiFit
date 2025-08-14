@@ -22,25 +22,24 @@ import {
   endOfWeek,
   isWithinInterval,
   isToday,
-  isPast,
   isFuture,
 } from 'date-fns';
 import { getUserIdLoggedIn } from '../../services/authService';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ThemeContext } from '../ThemeContext'; // Certifique-se que este import é válido ou remova se não for usado
+// import { ThemeContext } from '../ThemeContext'; // Certifique-se que este import é válido ou remova se não for usado
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebaseConfig';
 
-// Novas cores
+// Nova paleta de cores fornecida para este ficheiro
 const COLORS = {
-  primary: '#d4ac54',        // color1
-  lightPrimary: '#e0c892',   // color2
-  darkPrimary: '#69511a',    // color3
-  neutralGray: '#767676',    // color4
-  lightGray: '#bdbdbd',      // color5
-  white: '#fff',
+  primary: '#d4ac54',        // color1 (Dourado principal)
+  lightPrimary: '#e0c892',   // color2 (Dourado claro)
+  darkPrimary: '#69511a',    // color3 (Dourado escuro)
+  neutralGray: '#767676',    // color4 (Cinza neutro)
+  lightGray: '#bdbdbd',      // color5 (Cinza claro)
+  white: '#fff',             // Branco puro
   black: '#000',             // Preto para sombras e alguns textos
   background: '#f9fafb',     // Fundo geral
   cardBackground: '#ffffff', // Fundo dos cards
@@ -107,7 +106,7 @@ export default function TreinosScreen() {
   const [avaliacoesDoDia, setAvaliacoesDoDia] = useState([]);
   const [loading, setLoading] = useState(false);
   // ALTERADO: treinosConcluidos agora usa o ID do treino como chave
-  const [treinosConcluidos, setTreinosConcluidos] = useState({}); 
+  const [treinosConcluidos, setTreinosConcluidos] = useState({});
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const navigation = useNavigation();
   const [fraseMotivacional, setFraseMotivacional] = useState('');
@@ -127,7 +126,7 @@ export default function TreinosScreen() {
       if (!userId) return;
 
       // ALTERADO: A chave no AsyncStorage é genérica para todos os treinos do user
-      const chave = `treinosConcluidos_${userId}`; 
+      const chave = `treinosConcluidos_${userId}`;
       const dados = await AsyncStorage.getItem(chave);
       // Os dados carregados devem ser um objeto onde as chaves são os IDs dos treinos
       let loadedRawData = dados ? JSON.parse(dados) : {};
@@ -136,7 +135,7 @@ export default function TreinosScreen() {
       // Itera sobre os dados carregados, que agora devem ter IDs de treino como chaves
       for (const treinoId in loadedRawData) {
         const completionDetails = loadedRawData[treinoId];
-        
+
         // Validação básica para garantir que é um objeto de conclusão válido
         if (typeof completionDetails === 'object' && completionDetails !== null && 'completed' in completionDetails) {
           processedConcluidos[treinoId] = {
@@ -217,7 +216,7 @@ export default function TreinosScreen() {
           console.log('✅ Todos os dados recarregados com sucesso.');
           console.log('Dados de Treinos FINAIS (para TreinosScreen):', finalTreinos.map(t => ({ id: t.id, data: t.data, nome: t.nome })));
           console.log('Dados de Avaliações FINAIS (para TreinosScreen):', finalAvaliacoes.map(a => ({ id: a.id, data: a.data })));
-          
+
         } catch (error) {
           console.error('❌ ERRO NO RECARREGAMENTO DE DADOS (useFocusEffect):', error);
           Alert.alert('Erro', `Não foi possível recarregar os dados: ${error.message || 'Erro desconhecido.'}`);
@@ -304,8 +303,8 @@ export default function TreinosScreen() {
         const treinoDate = parseISO(treino.data);
 
         if (isNaN(treinoDate.getTime())) {
-            console.warn(`⚠️ Data de treino inválida para parseISO: ${treino.data} (ID: ${treino.id})`);
-            return;
+          console.warn(`⚠️ Data de treino inválida para parseISO: ${treino.data} (ID: ${treino.id})`);
+          return;
         }
 
         const treinoDateLocalStartOfDay = new Date(treinoDate.getFullYear(), treinoDate.getMonth(), treinoDate.getDate());
@@ -313,73 +312,75 @@ export default function TreinosScreen() {
         todayLocalStartOfDay.setHours(0, 0, 0, 0);
 
         // ALTERADO: Acessa o objeto de conclusão para o ID específico do treino
-        const completionDetails = treinosConcluidos[treino.id]; 
+        const completionDetails = treinosConcluidos[treino.id];
         const isConcluido = completionDetails ? completionDetails.completed : false;
 
         const isTodayDate = format(treinoDateLocalStartOfDay, 'yyyy-MM-dd') === format(todayLocalStartOfDay, 'yyyy-MM-dd');
+        // A Lógica para o passado e futuro é mantida para os ícones e cor
         const isPastDate = treinoDateLocalStartOfDay < todayLocalStartOfDay;
         const isFutureDate = treinoDateLocalStartOfDay > todayLocalStartOfDay;
+        // A lógica de "perdido" é tratada separadamente na renderização dos cards
 
         console.log(`[Marcação Treino] Data: ${dataStr}, Nome: ${treino.nome}, ID: ${treino.id}, Concluido: ${isConcluido}, Hoje (str): ${isTodayDate}, Passado (date-fns): ${isPastDate}, Futuro (date-fns): ${isFutureDate}`);
         console.log(`    -> Status Calculado para ${dataStr}: Hoje: ${isTodayDate}, Passado: ${isPastDate}, Futuro: ${isFutureDate}`);
 
         // Inicializa as marcações para o dia se ainda não existirem
         if (!marcacoes[dataStr]) {
-            marcacoes[dataStr] = {
-                dots: [],
-                marked: true,
-                customStyles: {
-                    container: {
-                        backgroundColor: 'transparent',
-                        borderRadius: 8,
-                        borderColor: STATUS_COLORS.defaultBorder,
-                        borderWidth: 1,
-                    },
-                    text: {
-                        color: STATUS_COLORS.defaultText,
-                        fontWeight: 'bold',
-                    },
-                },
-            };
+          marcacoes[dataStr] = {
+            dots: [],
+            marked: true,
+            customStyles: {
+              container: {
+                backgroundColor: 'transparent',
+                borderRadius: 8,
+                borderColor: STATUS_COLORS.defaultBorder,
+                borderWidth: 1,
+              },
+              text: {
+                color: STATUS_COLORS.defaultText,
+                fontWeight: 'bold',
+              },
+            },
+          };
         }
 
         // Determina o status do dia com base nos treinos
         // Prioridade: Concluído > Hoje Pendente > Perdido > Futuro Agendado
         if (isConcluido) {
-            // Se *qualquer* treino do dia estiver concluído, o dia pode ter um indicador de "concluído"
-            // No entanto, para evitar que um treino concluído marque o dia todo,
-            // vamos focar a marcação do dia na presença de treinos em geral,
-            // e o status individual será tratado nos cards.
-            // Para o calendário, um dia com treinos concluídos pode ter um dot específico.
-            if (!marcacoes[dataStr].dots.some(dot => dot.key === 'treinoConcluido')) {
-                marcacoes[dataStr].dots.push({ key: 'treinoConcluido', color: STATUS_COLORS.completed });
-            }
+          // Se *qualquer* treino do dia estiver concluído, o dia pode ter um indicador de "concluído"
+          // No entanto, para evitar que um treino concluído marque o dia todo,
+          // vamos focar a marcação do dia na presença de treinos em geral,
+          // e o status individual será tratado nos cards.
+          // Para o calendário, um dia com treinos concluídos pode ter um dot específico.
+          if (!marcacoes[dataStr].dots.some(dot => dot.key === 'treinoConcluido')) {
+            marcacoes[dataStr].dots.push({ key: 'treinoConcluido', color: STATUS_COLORS.completed });
+          }
         } else if (isTodayDate) {
-            if (!marcacoes[dataStr].dots.some(dot => dot.key === 'treinoHoje')) {
-                marcacoes[dataStr].dots.push({ key: 'treinoHoje', color: STATUS_COLORS.todayPending });
-                // Se for hoje e ainda não foi concluído, marca a borda
-                marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.todayPending;
-                marcacoes[dataStr].customStyles.container.borderWidth = 2;
-                marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.todayPending;
-            }
+          if (!marcacoes[dataStr].dots.some(dot => dot.key === 'treinoHoje')) {
+            marcacoes[dataStr].dots.push({ key: 'treinoHoje', color: STATUS_COLORS.todayPending });
+            // Se for hoje e ainda não foi concluído, marca a borda
+            marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.todayPending;
+            marcacoes[dataStr].customStyles.container.borderWidth = 2;
+            marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.todayPending;
+          }
         } else if (isPastDate) {
-            if (!marcacoes[dataStr].dots.some(dot => dot.key === 'treinoPerdido')) {
-                marcacoes[dataStr].dots.push({ key: 'treinoPerdido', color: STATUS_COLORS.missed });
-                // Se for passado e não concluído, marca como perdido
-                marcacoes[dataStr].customStyles.container.backgroundColor = '#FFEBEE';
-                marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.missed;
-                marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.missed;
-                marcacoes[dataStr].customStyles.container.borderWidth = 1;
-            }
+          if (!marcacoes[dataStr].dots.some(dot => dot.key === 'treinoPerdido')) {
+            marcacoes[dataStr].dots.push({ key: 'treinoPerdido', color: STATUS_COLORS.missed });
+            // Se for passado e não concluído, marca como perdido
+            marcacoes[dataStr].customStyles.container.backgroundColor = '#FFEBEE';
+            marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.missed;
+            marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.missed;
+            marcacoes[dataStr].customStyles.container.borderWidth = 1;
+          }
         } else if (isFutureDate) {
-            if (!marcacoes[dataStr].dots.some(dot => dot.key === 'treinoFuturo')) {
-                marcacoes[dataStr].dots.push({ key: 'treinoFuturo', color: STATUS_COLORS.scheduledFuture });
-                // Se for futuro, marca com a cor de agendado
-                marcacoes[dataStr].customStyles.container.backgroundColor = STATUS_COLORS.scheduledFuture;
-                marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.scheduledFuture;
-                marcacoes[dataStr].customStyles.container.borderWidth = 1;
-                marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.evaluationText;
-            }
+          if (!marcacoes[dataStr].dots.some(dot => dot.key === 'treinoFuturo')) {
+            marcacoes[dataStr].dots.push({ key: 'treinoFuturo', color: STATUS_COLORS.scheduledFuture });
+            // Se for futuro, marca com a cor de agendado
+            marcacoes[dataStr].customStyles.container.backgroundColor = STATUS_COLORS.scheduledFuture;
+            marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.scheduledFuture;
+            marcacoes[dataStr].customStyles.container.borderWidth = 1;
+            marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.evaluationText;
+          }
         }
       } else {
         console.warn(`⚠️ Treino com formato de data inválido ou ausente: ${treino.data} (ID: ${treino.id})`);
@@ -390,33 +391,33 @@ export default function TreinosScreen() {
     avaliacoes.forEach((avaliacao) => {
       if (avaliacao.data && typeof avaliacao.data === 'string') {
         const dataStr = avaliacao.data;
-        
+
         const avaliacaoDate = parseISO(avaliacao.data);
         if (isNaN(avaliacaoDate.getTime())) {
-            console.warn(`⚠️ Data de avaliação inválida para parseISO: ${avaliacao.data} (ID: ${avaliacao.id})`);
-            return;
+          console.warn(`⚠️ Data de avaliação inválida para parseISO: ${avaliacao.data} (ID: ${avaliacao.id})`);
+          return;
         }
 
         console.log(`[Marcação Avaliação] Data: ${dataStr}, ID: ${avaliacao.id}`);
 
         // Garante que a data existe nas marcações antes de adicionar a avaliação
         if (!marcacoes[dataStr]) {
-            marcacoes[dataStr] = {
-                dots: [],
-                marked: true,
-                customStyles: {
-                    container: {
-                        backgroundColor: 'transparent',
-                        borderRadius: 8,
-                        borderColor: STATUS_COLORS.defaultBorder,
-                        borderWidth: 1,
-                    },
-                    text: {
-                        color: STATUS_COLORS.defaultText,
-                        fontWeight: 'bold',
-                    },
-                },
-            };
+          marcacoes[dataStr] = {
+            dots: [],
+            marked: true,
+            customStyles: {
+              container: {
+                backgroundColor: 'transparent',
+                borderRadius: 8,
+                borderColor: STATUS_COLORS.defaultBorder,
+                borderWidth: 1,
+              },
+              text: {
+                color: STATUS_COLORS.defaultText,
+                fontWeight: 'bold',
+              },
+            },
+          };
         }
 
         // Adiciona o dot de avaliação e define o estilo para a avaliação
@@ -428,7 +429,7 @@ export default function TreinosScreen() {
         marcacoes[dataStr].customStyles.container.borderColor = STATUS_COLORS.evaluationText;
         marcacoes[dataStr].customStyles.container.borderWidth = 1;
         marcacoes[dataStr].customStyles.text.color = STATUS_COLORS.evaluationText;
-        
+
         console.log(`    -> Avaliação ${dataStr}: Marcada (Fundo ${STATUS_COLORS.evaluation} / Texto ${STATUS_COLORS.evaluationText})`);
       } else {
         console.warn(`⚠️ Avaliação com formato de data inválido ou ausente: ${avaliacao.data} (ID: ${avaliacao.id})`);
@@ -551,8 +552,9 @@ export default function TreinosScreen() {
 
   return (
     <View style={styles.fullScreenContainer}>
+      {/* Barra Fixa do Cabeçalho */}
       <View style={styles.fixedHeader}>
-        <View style={styles.headerContentRow}> 
+        <View style={styles.headerContentRow}>
           <View style={styles.headerUserInfo}>
             <View style={styles.headerAvatar}>
               <Text style={styles.headerAvatarText}>{userInitial}</Text>
@@ -626,13 +628,16 @@ export default function TreinosScreen() {
 
                   {treinosDoDia.map((treino) => {
                     // ALTERADO: Verifica a conclusão pelo ID do treino
-                    const completionDetails = treinosConcluidos[treino.id]; 
+                    const completionDetails = treinosConcluidos[treino.id];
                     const isConcluido = completionDetails ? completionDetails.completed : false;
                     const duracaoTreino = completionDetails ? completionDetails.duration : null;
 
                     const treinoDateTime = parseISO(treino.data);
                     const now = new Date();
-                    const isFutureTrainingSession = treinoDateTime > now; 
+                    const isFutureTrainingSession = isFuture(treinoDateTime);
+                    const isTodayTrainingSession = isToday(treinoDateTime);
+                    // A nova lógica para "perdido" considera a data E a hora
+                    const isOverdueTrainingSession = now > treinoDateTime && !isConcluido;
 
                     return (
                       <View key={treino.id} style={[styles.treinoBox, isConcluido && styles.treinoConcluidoBox]}>
@@ -649,12 +654,16 @@ export default function TreinosScreen() {
                             {!isConcluido && isFutureTrainingSession && (
                               <MaterialCommunityIcons name="calendar-clock" size={18} color={STATUS_COLORS.scheduledFuture} style={{ marginLeft: 5 }} />
                             )}
+                            {isOverdueTrainingSession && ( // Adiciona ícone para treino perdido com a nova lógica
+                              <MaterialCommunityIcons name="alert-circle" size={18} color={STATUS_COLORS.missed} style={{ marginLeft: 5 }} />
+                            )}
                           </Text>
                         </View>
                         <Text style={styles.treinoCategoria}>
                           Categoria: {treino.categoria}
                         </Text>
-                        
+
+                        {/* Descrição e exercícios apenas para treinos passados/hoje/concluídos, não futuros */}
                         {!isFutureTrainingSession && (
                           <>
                             <Text style={styles.treinoDescricao}>{treino.descricao}</Text>
@@ -686,13 +695,19 @@ export default function TreinosScreen() {
                           </Text>
                         )}
 
-                        {!isConcluido && !isFutureTrainingSession && (
+                        {isTodayTrainingSession && !isConcluido && !isOverdueTrainingSession && ( // Mostra o botão apenas para hoje, pendente e não perdido
                           <TouchableOpacity
                             style={styles.btnIniciar}
                             onPress={() => navigation.navigate('ExecucaoTreinoScreen', { treino })}
                           >
                             <Text style={styles.btnIniciarText}>Iniciar Treino</Text>
                           </TouchableOpacity>
+                        )}
+
+                        {isOverdueTrainingSession && ( // Exibe se for um treino perdido com a nova lógica
+                          <View style={styles.treinoPerdidoContainer}>
+                            <Text style={styles.treinoPerdidoText}>Treino Perdido</Text>
+                          </View>
                         )}
                       </View>
                     );
@@ -741,7 +756,7 @@ const styles = StyleSheet.create({
     height: FIXED_HEADER_HEIGHT,
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 40 : 20,
-    backgroundColor: COLORS.primary, // color1
+    backgroundColor: '#B8860B', // Cor Alterada para B8860B
     flexDirection: 'column',
     alignItems: 'flex-start',
     justifyContent: 'flex-start',
@@ -751,13 +766,12 @@ const styles = StyleSheet.create({
     shadowColor: COLORS.black,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
-    shadowRadius: 5,
-    zIndex: 10,
+    shadowRadius: 6,
   },
   headerContentRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     width: '100%',
     marginBottom: 5,
   },
@@ -773,71 +787,83 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 10,
+    borderWidth: 1,
+    borderColor: COLORS.darkPrimary,
   },
   headerAvatarText: {
-    color: COLORS.primary, // color1
+    color: COLORS.primary,
     fontSize: 18,
     fontWeight: 'bold',
   },
   headerUserName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: COLORS.white,
-  },
-  headerAppName: {
     fontSize: 20,
     fontWeight: 'bold',
     color: COLORS.white,
   },
+  headerAppName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: COLORS.white,
+    fontStyle: 'italic',
+  },
   motivationalPhraseTextFixed: {
     fontSize: 14,
-    color: 'rgba(255,255,255,0.8)', // Mantido branco semi-transparente para contraste
+    color: 'rgba(255,255,255,0.8)',
     fontStyle: 'italic',
-    textAlign: 'center',
+    textAlign: 'left',
     width: '100%',
-  },
-  scrollViewContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-    backgroundColor: COLORS.background,
-    paddingTop: FIXED_HEADER_HEIGHT + 15,
+    paddingLeft: 50, // Alinha com o texto do nome
   },
   scrollView: {
     flex: 1,
   },
-  calendar: {
-    borderRadius: 8,
-    elevation: 3,
-    marginBottom: 25,
-    backgroundColor: COLORS.white,
+  scrollViewContent: {
+    paddingTop: FIXED_HEADER_HEIGHT + 20, // Ajusta o padding para a barra fixa
+    paddingHorizontal: 20,
+    paddingBottom: 40,
   },
   progressBarContainer: {
-    marginHorizontal: 0,
+    backgroundColor: COLORS.cardBackground,
+    borderRadius: 10,
+    padding: 15,
     marginBottom: 20,
-    marginTop: 10,
+    elevation: 3,
+    shadowColor: COLORS.black,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   progressText: {
-    fontWeight: '700',
-    marginBottom: 8,
-    color: COLORS.darkPrimary, // color3
     fontSize: 16,
+    fontWeight: 'bold',
+    color: COLORS.darkPrimary,
+    marginBottom: 10,
   },
   progressBarBackground: {
-    height: 20,
+    height: 10,
     backgroundColor: COLORS.lightGray,
-    borderRadius: 10,
+    borderRadius: 5,
     overflow: 'hidden',
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: COLORS.primary, // color1
+    backgroundColor: COLORS.primary,
+    borderRadius: 5,
+  },
+  calendar: {
     borderRadius: 10,
+    marginBottom: 20,
+    elevation: 3,
+    shadowColor: COLORS.black,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   btnLimpar: {
     backgroundColor: COLORS.lightGray,
     paddingVertical: 10,
     paddingHorizontal: 15,
-    borderRadius: 8,
+    borderRadius: 5,
     alignSelf: 'flex-start',
     marginBottom: 15,
   },
@@ -846,48 +872,41 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   subTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
     color: COLORS.darkPrimary,
     marginBottom: 15,
   },
-  noTreinos: {
-    fontSize: 16,
-    color: COLORS.neutralGray,
-    textAlign: 'center',
-    marginTop: 20,
-  },
   treinoBox: {
     backgroundColor: COLORS.cardBackground,
-    borderRadius: 10,
     padding: 15,
+    borderRadius: 10,
     marginBottom: 15,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray,
+    borderLeftWidth: 5,
+    borderColor: COLORS.primary,
+    elevation: 2,
     shadowColor: COLORS.black,
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
-    elevation: 3,
   },
   treinoConcluidoBox: {
-    borderColor: COLORS.completedGreen,
-    borderWidth: 2,
+    borderColor: STATUS_COLORS.completed,
+    backgroundColor: '#E8F5E9', // Um verde muito claro para o fundo
   },
   treinoHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   treinoNome: {
     fontSize: 18,
     fontWeight: 'bold',
     color: COLORS.darkPrimary,
     marginLeft: 10,
-    flexShrink: 1, // Permite que o texto quebre linha
   },
   treinoNomeConcluido: {
-    color: COLORS.completedGreen,
+    color: STATUS_COLORS.completed,
   },
   treinoCategoria: {
     fontSize: 14,
@@ -901,7 +920,7 @@ const styles = StyleSheet.create({
   },
   exerciciosTitle: {
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: 'bold',
     color: COLORS.darkPrimary,
     marginTop: 5,
     marginBottom: 5,
@@ -909,32 +928,38 @@ const styles = StyleSheet.create({
   exercicioItem: {
     fontSize: 14,
     color: COLORS.neutralGray,
-    marginLeft: 5,
+    marginLeft: 10,
     marginBottom: 3,
   },
   treinoHora: {
     fontSize: 14,
-    fontWeight: '500',
     color: COLORS.neutralGray,
-    marginTop: 10,
+    fontStyle: 'italic',
+    marginTop: 5,
   },
   treinoDuracao: {
     fontSize: 14,
-    fontWeight: '500',
     color: COLORS.darkPrimary,
+    fontWeight: 'bold',
     marginTop: 5,
   },
   btnIniciar: {
     backgroundColor: COLORS.primary,
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingVertical: 10,
+    borderRadius: 5,
     alignItems: 'center',
-    marginTop: 15,
+    marginTop: 10,
   },
   btnIniciarText: {
     color: COLORS.white,
-    fontSize: 16,
     fontWeight: 'bold',
+    fontSize: 16,
+  },
+  noTreinos: {
+    fontSize: 16,
+    color: COLORS.neutralGray,
+    textAlign: 'center',
+    marginTop: 20,
   },
   selecioneData: {
     fontSize: 16,
@@ -942,5 +967,23 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 50,
     paddingHorizontal: 20,
+  },
+  // NOVOS ESTILOS PARA TREINO PERDIDO
+  treinoPerdidoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFEBEE', // Fundo vermelho claro
+    paddingVertical: 10,
+    borderRadius: 5,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: STATUS_COLORS.missed,
+  },
+  treinoPerdidoText: {
+    color: STATUS_COLORS.missed,
+    fontWeight: 'bold',
+    fontSize: 16,
+    marginLeft: 5,
   },
 });

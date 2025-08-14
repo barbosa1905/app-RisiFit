@@ -16,6 +16,7 @@ import CreateChatScreen from './CreateChatScreen';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import GerirTreinosScreen from './GestaoAlunosScreen'; // Assumindo que este é o 'Agenda'
 
+
 const Tab = createBottomTabNavigator();
 const ChatStack = createNativeStackNavigator();
 
@@ -27,7 +28,7 @@ function ChatStackScreen() {
             <ChatStack.Screen
                 name="CreateChat"
                 component={CreateChatScreen}
-                options={{ title: 'Nova Conversa' }}
+                 options={{ headerShown: false }}
             />
             <ChatStack.Screen
                 name="ChatRoom"

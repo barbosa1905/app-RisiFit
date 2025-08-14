@@ -1,478 +1,538 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
+  StyleSheet,
   View,
   Text,
   TextInput,
   TouchableOpacity,
   ScrollView,
-  StyleSheet,
+  SafeAreaView,
   Alert,
-  ActivityIndicator,
 } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import { db, auth } from '../../services/firebaseConfig';
-import { doc, setDoc, updateDoc, getDoc, collection } from 'firebase/firestore';
-import uuid from 'react-native-uuid';
+
+// Importações do Firebase
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getFirestore, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+
+// Ícones FontAwesome para uso no botão "adicionar" e outros elementos.
+import { FontAwesome5 } from '@expo/vector-icons';
 
 // ============================================================================
-// Conteúdo dos Questionários Pré-definidos
+// Paleta de Cores (Cores.js)
 // ============================================================================
+const Cores = {
+  // Cores Primárias (Dourado/Preto)
+  primaria: '#B8860B', // Dourado mais escuro para a marca principal
+  primariaClara: '#D4AF37', // Dourado mais claro para destaques
+  primariaEscura: '#8B6B08', // Dourado mais profundo
 
-const PAR_Q_PREDEFINIDO_ID = 'PAR-Q_Predefinido';
-const PADRAO_PREDEFINIDO_ID = 'Padrao_Predefinido';
+  secundaria: '#000000ff', // Um preto muito escuro ou cinza carvão para secundário
+  secundariaClara: '#4A4E46', // Um cinza escuro um pouco mais claro
+  secundariaEscura: '#1C201A', // Um preto quase absoluto
 
-const PAR_Q_PREDEFINIDO_CONTENT = {
-  nome: "Anamnese PAR-Q",
-  descricao: "Questionário de Prontidão para Atividade Física (PAR-Q) - Pré-definido",
-  perguntas: [
-    { id: "parq1", pergunta: "Algum médico já lhe disse que você tem um problema cardíaco e que só deve fazer atividade física recomendada por ele?", tipo: "booleana", opcoes: ["Sim", "Não"] },
-    { id: "parq2", pergunta: "Você sente dor no peito ao fazer atividade física?", tipo: "booleana", opcoes: ["Sim", "Não"] },
-    { id: "parq3", pergunta: "Você já sentiu dor no peito no último mês?", tipo: "booleana", opcoes: ["Sim", "Não"] },
-    { id: "parq4", pergunta: "Você perde o equilíbrio por tontura ou desmaia?", tipo: "booleana", opcoes: ["Sim", "Não"] },
-    { id: "parq5", pergunta: "Você tem algum problema ósseo ou articular que possa piorar com a atividade física?", tipo: "booleana", opcoes: ["Sim", "Não"] },
-    { id: "parq6", pergunta: "Você toma algum medicamento para pressão arterial ou problema cardíaco?", tipo: "booleana", opcoes: ["Sim", "Não"] },
-    { id: "parq7", pergunta: "Você conhece alguma outra razão pela qual não deveria fazer atividade física?", tipo: "booleana", opcoes: ["Sim", "Não"] }
-  ]
+  acento: '#FFD700', // Dourado puro/ouro para ênfase forte
+  acentoClaro: '#FFE066', // Amarelo dourado mais suave
+  acentoEscuro: '#CCAA00', // Dourado mais escuro para contraste
+
+  // Cores de Fundo
+  fundo: '#F0F0F0', // Fundo geral muito claro (quase branco)
+  superficie: '#FFFFFF', // Fundo para cartões, cabeçalhos (branco puro)
+  fundoCard: '#FFFFFF', // Alias para superficie
+
+  // Cores de Texto
+  textoPrimario: '#1A1A1A', // Texto principal (preto bem escuro)
+  textoSecundario: '#505050', // Texto secundário (cinza médio-escuro)
+  textoClaro: '#8a8a8a96', // Texto mais claro (cinza claro)
+  textoNaPrimaria: '#FFFFFF', // Texto sobre o fundo primário
+  textoNaPrimariaEscura: '#1A1A1A', // Texto escuro sobre o fundo primário para contraste
+
+  // Cores Neutras (Pretos, Brancos, Tons de Cinza)
+  branco: '#FFFFFF',
+  preto: '#000000',
+
+  cinzentoClaro: '#E0E0E0', // Bordas, separadores
+  cinzentoMedio: '#C0C0C0', // Componentes desabilitados, fundos subtis
+  cinzentoEscuro: '#707070', // Texto e ícones gerais que não sejam primary/secondary
+
+  // Cores de Feedback
+  sucesso: '#4CAF50', // Mantido verde para universalidade (sucesso)
+  aviso: '#FFC107', // Mantido amarelo para universalidade (avisos)
+  erro: '#DC3545', // Mantido vermelho para universalidade (erros)
+  info: '#17A2B8', // Mantido azul para universalidade (informações/links)
+
+  // Cores de "On" (para texto/ícone sobre a cor base)
+  onPrimaria: '#FFFFFF', // Branco sobre o dourado
+  onSecundaria: '#871818ff', // Branco sobre o preto/cinza escuro
+  onAcento: '#1A1A1A', // Preto sobre o dourado de ênfase
 };
 
-const PADRAO_PREDEFINIDO_CONTENT = {
-  nome: "Anamnese Padrão",
-  descricao: "Questionário de saúde e histórico geral - Pré-definido",
-  perguntas: [
-    { id: "padrao1", pergunta: "Qual o seu objetivo principal com o treino?", tipo: "texto" },
-    { id: "padrao2", pergunta: "Você pratica alguma atividade física atualmente? Se sim, qual e com que frequência?", tipo: "texto" },
-    { id: "padrao3", pergunta: "Você tem alguma lesão ou dor crônica?", tipo: "booleana", opcoes: ["Sim", "Não"] },
-    { id: "padrao4", pergunta: "Você tem alguma condição médica (diabetes, hipertensão, asma, etc.)?", tipo: "booleana", opcoes: ["Sim", "Não"] },
-    { id: "padrao5", pergunta: "Você tem alergias?", tipo: "booleana", opcoes: ["Sim", "Não"] },
-    { id: "padrao6", pergunta: "Qual a sua alimentação típica?", tipo: "texto" },
-    { id: "padrao7", pergunta: "Quantas horas você dorme por noite, em média?", tipo: "texto" },
-    { id: "padrao8", pergunta: "Você fuma?", tipo: "booleana", opcoes: ["Sim", "Não"] },
-    { id: "padrao9", pergunta: "Você consome bebidas alcoólicas? Se sim, com que frequência?", tipo: "texto" }
-  ]
+// ============================================================================
+// Configuração do Firebase
+// Substitua com as suas credenciais do projeto Firebase
+// ============================================================================
+const firebaseConfig = {
+  apiKey: "AIzaSyDOP9sg9slVIXrkEvdTpXrL-DRAeolLI8I",
+  authDomain: "risifit-4defe.firebaseapp.com",
+  projectId: "risifit-4defe",
+  storageBucket: "risifit-4defe.firebasestorage.app",
+  messagingSenderId: "485424698583",
+  appId: "1:485424698583:web:0d6095f3ca5a071b4ccc92",
+  measurementId: "G-J7PVBCXMT5"
 };
+// Inicializa o Firebase e o Firestore, mas apenas se ainda não tiver sido inicializado.
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const db = getFirestore(app);
 
+// Componente principal para a tela de criação/edição do questionário
 export default function CriarQuestionarioScreen() {
-  const navigation = useNavigation();
-  const route = useRoute();
+  // Estado para armazenar o título do questionário
+  const [titulo, setTitulo] = useState('');
+  // Estado para armazenar a descrição do questionário
+  const [descricao, setDescricao] = useState('');
+  // Estado que armazena todas as perguntas do questionário
+  const [perguntas, setPerguntas] = useState([
+    {
+      id: '1',
+      texto: 'Qual é o seu nome completo?',
+      tipo: 'texto',
+    },
+  ]);
+  // Estado para controlar a visibilidade do menu de seleção de tipo de pergunta
+  const [menuVisivel, setMenuVisivel] = useState(false);
+  // Estado que guarda a ID da pergunta que está a ser editada
+  const [perguntaEmEdicao, setPerguntaEmEdicao] = useState(null);
 
-  const questionarioExistente = route.params?.questionario ?? null;
-  const [adminId, setAdminId] = useState(auth.currentUser?.uid ?? route.params?.adminId ?? null);
-  const [loadingPredefined, setLoadingPredefined] = useState(true);
-
-  const [nome, setNome] = useState('');
-  const [perguntas, setPerguntas] = useState([]);
-  const [questionarioId, setQuestionarioId] = useState(null);
-
-  // Efeito para obter o adminId se não estiver disponível imediatamente
-  useEffect(() => {
-    console.log('[CriarQuestionarioScreen] useEffect: Verificando adminId...');
-    if (!adminId) {
-      const unsubscribe = auth.onAuthStateChanged(user => {
-        if (user) {
-          setAdminId(user.uid);
-          console.log('[CriarQuestionarioScreen] adminId definido por onAuthStateChanged:', user.uid);
-        } else {
-          console.log('[CriarQuestionarioScreen] Nenhum usuário autenticado encontrado.');
-        }
-      });
-      return unsubscribe;
-    } else {
-      console.log('[CriarQuestionarioScreen] adminId já disponível:', adminId);
-    }
-  }, [adminId]);
-
-  // Efeito para carregar questionário existente e para semear os pré-definidos
-  useEffect(() => {
-    const initializeScreen = async () => {
-      console.log('[CriarQuestionarioScreen] useEffect: Inicializando tela...');
-      if (questionarioExistente) {
-        console.log('[CriarQuestionarioScreen] Editando questionário existente:', questionarioExistente.id);
-        setNome(questionarioExistente.nome);
-        const loadedPerguntas = questionarioExistente.perguntas.map(p => ({
-          ...p,
-          opcoes: p.opcoes || (p.tipo !== 'texto' && p.tipo !== 'booleana' ? [''] : []),
-        }));
-        setPerguntas(loadedPerguntas);
-        setQuestionarioId(questionarioExistente.id);
-        setLoadingPredefined(false);
-      } else {
-        console.log('[CriarQuestionarioScreen] Criando novo questionário. Tentando semear pré-definidos...');
-        if (adminId) {
-          await seedPredefinedQuestionarios();
-          setLoadingPredefined(false);
-        } else {
-          console.log('[CriarQuestionarioScreen] adminId ainda não disponível para semear. Aguardando...');
-        }
-      }
-    };
-
-    initializeScreen();
-  }, [questionarioExistente, adminId]);
-
-  const seedPredefinedQuestionarios = async () => {
-    console.log('[CriarQuestionarioScreen] Iniciando seedPredefinedQuestionarios...');
-    if (!adminId) {
-      console.log('[CriarQuestionarioScreen] Erro: adminId não disponível para semear questionários.');
-      return;
-    }
-
-    const dbInstance = db;
-    const predefinedQuestionarios = [
-      { id: PAR_Q_PREDEFINIDO_ID, content: PAR_Q_PREDEFINIDO_CONTENT },
-      { id: PADRAO_PREDEFINIDO_ID, content: PADRAO_PREDEFINIDO_CONTENT },
-    ];
-
-    for (const pq of predefinedQuestionarios) {
-      const publicDocRef = doc(dbInstance, 'questionariosPublicos', pq.id);
-      const publicDocSnap = await getDoc(publicDocRef);
-
-      if (!publicDocSnap.exists()) {
-        console.log(`[CriarQuestionarioScreen] Semear: Questionário '${pq.content.nome}' (ID: ${pq.id}) NÃO existe. Criando...`);
-        const now = new Date();
-        const dataToSave = {
-          ...pq.content,
-          id: pq.id,
-          criadoEm: now,
-          atualizadoEm: now,
-          criadoPor: 'sistema_predefinido',
-        };
-
-        try {
-          await setDoc(publicDocRef, dataToSave);
-          console.log(`[CriarQuestionarioScreen] Semear: '${pq.content.nome}' criado em 'questionariosPublicos'.`);
-
-          const adminDocRef = doc(dbInstance, 'admins', adminId, 'questionarios', pq.id);
-          await setDoc(adminDocRef, {
-            ...dataToSave,
-            criadoPor: adminId,
-          });
-          console.log(`[CriarQuestionarioScreen] Semear: '${pq.content.nome}' criado na subcoleção do admin (${adminId}).`);
-        } catch (error) {
-          console.error(`[CriarQuestionarioScreen] Erro ao semear '${pq.content.nome}':`, error);
-        }
-      } else {
-        console.log(`[CriarQuestionarioScreen] Semear: Questionário '${pq.content.nome}' (ID: ${pq.id}) JÁ existe. Pulando.`);
-      }
-    }
-    console.log('[CriarQuestionarioScreen] seedPredefinedQuestionarios concluído.');
-  };
-
+  // Função para adicionar uma nova pergunta ao questionário
   const adicionarPergunta = (tipo) => {
-    let novaPergunta = { id: uuid.v4(), pergunta: '', tipo: tipo };
-    if (tipo === 'unica' || tipo === 'multipla') {
-      novaPergunta.opcoes = [''];
-    } else if (tipo === 'booleana') {
-      novaPergunta.opcoes = ['Sim', 'Não'];
-    }
-    setPerguntas((prev) => [...prev, novaPergunta]);
+    // Cria uma nova pergunta com um ID único e o tipo selecionado
+    const novaPergunta = {
+      id: Date.now().toString(),
+      texto: '',
+      tipo: tipo,
+      opcoes: tipo !== 'texto' ? [{ id: 'op1', texto: 'Opção 1' }] : [],
+    };
+    // Adiciona a nova pergunta ao array de perguntas
+    setPerguntas([...perguntas, novaPergunta]);
+    // Fecha o menu de seleção de tipo de pergunta
+    setMenuVisivel(false);
   };
 
-  const atualizarPergunta = (index, campo, valor) => {
-    const novas = [...perguntas];
-    novas[index][campo] = valor;
-    setPerguntas(novas);
-  };
-
-  const atualizarOpcao = (index, idxOpcao, valor) => {
-    const novas = [...perguntas];
-    novas[index].opcoes[idxOpcao] = valor;
-    setPerguntas(novas);
-  };
-
-  const adicionarOpcao = (index) => {
-    const novas = [...perguntas];
-    if (novas[index].opcoes) {
-      novas[index].opcoes.push('');
-    } else {
-      novas[index].opcoes = [''];
-    }
-    setPerguntas(novas);
-  };
-
-  const removerPergunta = (index) => {
+  // Função para remover uma pergunta
+  const removerPergunta = (id) => {
+    // Alerta de confirmação para evitar remoções acidentais
     Alert.alert(
-      'Confirmar Exclusão',
-      'Tem certeza que deseja remover esta pergunta?',
+      'Confirmar Remoção',
+      'Tem a certeza que quer remover esta pergunta?',
       [
-        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
         {
           text: 'Remover',
           onPress: () => {
-            const novas = [...perguntas];
-            novas.splice(index, 1);
-            setPerguntas(novas);
+            // Remove a pergunta do array pelo seu ID
+            setPerguntas(perguntas.filter((pergunta) => pergunta.id !== id));
           },
-          style: 'destructive',
         },
       ],
       { cancelable: true }
     );
   };
 
-  const removerOpcao = (perguntaIndex, opcaoIndex) => {
-    const novas = [...perguntas];
-    if (novas[perguntaIndex].opcoes && novas[perguntaIndex].opcoes.length > 1) {
-      novas[perguntaIndex].opcoes.splice(opcaoIndex, 1);
-      setPerguntas(novas);
-    } else {
-      Alert.alert('Erro', 'Uma pergunta de escolha deve ter pelo menos uma opção.');
-    }
+  // Função para adicionar uma opção a uma pergunta de escolha
+  const adicionarOpcao = (perguntaId) => {
+    // Encontra a pergunta pelo seu ID
+    const pergunta = perguntas.find((p) => p.id === perguntaId);
+    if (!pergunta) return;
+
+    // Adiciona uma nova opção à pergunta
+    const novaOpcao = { id: Date.now().toString(), texto: `Nova Opção` };
+    const novasPerguntas = perguntas.map((p) =>
+      p.id === perguntaId ? { ...p, opcoes: [...p.opcoes, novaOpcao] } : p
+    );
+    setPerguntas(novasPerguntas);
   };
 
-  const validarCampos = () => {
-    if (!nome.trim()) {
-      Alert.alert('Erro', 'O nome do questionário é obrigatório.');
-      return false;
-    }
+  // Função para remover uma opção de uma pergunta de escolha
+  const removerOpcao = (perguntaId, opcaoId) => {
+    // Encontra a pergunta
+    const pergunta = perguntas.find((p) => p.id === perguntaId);
+    if (!pergunta) return;
 
+    // Remove a opção do array de opções da pergunta
+    const novasPerguntas = perguntas.map((p) =>
+      p.id === perguntaId
+        ? { ...p, opcoes: p.opcoes.filter((o) => o.id !== opcaoId) }
+        : p
+    );
+    setPerguntas(novasPerguntas);
+  };
+
+  // Função para atualizar o texto de uma pergunta
+  const atualizarTextoPergunta = (perguntaId, novoTexto) => {
+    const novasPerguntas = perguntas.map((p) =>
+      p.id === perguntaId ? { ...p, texto: novoTexto } : p
+    );
+    setPerguntas(novasPerguntas);
+  };
+
+  // Função para atualizar o texto de uma opção de pergunta
+  const atualizarTextoOpcao = (perguntaId, opcaoId, novoTexto) => {
+    const novasPerguntas = perguntas.map((p) =>
+      p.id === perguntaId
+        ? {
+            ...p,
+            opcoes: p.opcoes.map((o) =>
+              o.id === opcaoId ? { ...o, texto: novoTexto } : o
+            ),
+          }
+        : p
+    );
+    setPerguntas(novasPerguntas);
+  };
+
+  // Função que lida com o envio do questionário
+  const lidarComEnvio = async () => {
+    // Validação básica para garantir que o título e pelo menos uma pergunta existem
+    if (!titulo.trim()) {
+      Alert.alert('Erro', 'Por favor, insira um título para o questionário.');
+      return;
+    }
     if (perguntas.length === 0) {
       Alert.alert('Erro', 'O questionário deve ter pelo menos uma pergunta.');
-      return false;
-    }
-
-    for (let i = 0; i < perguntas.length; i++) {
-      const p = perguntas[i];
-      if (!p.pergunta.trim()) {
-        Alert.alert('Erro', `A pergunta ${i + 1} está vazia.`);
-        return false;
-      }
-
-      if (p.tipo === 'unica' || p.tipo === 'multipla') {
-        if (!p.opcoes || p.opcoes.length === 0 || p.opcoes.some(op => !op.trim())) {
-          Alert.alert('Erro', `A pergunta ${i + 1} precisa de pelo menos uma opção preenchida.`);
-          return false;
-        }
-      }
-    }
-    return true;
-  };
-
-  const salvarQuestionario = async () => {
-    if (!validarCampos()) return;
-
-    if (!adminId) {
-      Alert.alert('Erro', 'ID do administrador não encontrado. Tente novamente.');
       return;
     }
 
+    // Lógica para guardar os dados no Firebase.
     try {
-      const data = {
-        nome: nome.trim(),
-        perguntas: perguntas.map(p => ({
-          id: p.id,
-          pergunta: p.pergunta.trim(),
-          tipo: p.tipo,
-          ...(p.tipo === 'unica' || p.tipo === 'multipla' || p.tipo === 'booleana' ? { opcoes: p.opcoes.filter(Boolean).map(op => op.trim()) } : {}),
-        })),
-        atualizadoEm: new Date(),
-      };
-
-      const id = questionarioId || uuid.v4();
-
-      await setDoc(doc(db, 'admins', adminId, 'questionarios', id), {
-        ...data,
-        id,
-        criadoEm: questionarioExistente ? questionarioExistente.criadoEm : new Date(),
+      // Cria uma referência para a coleção 'questionarios'
+      const docRef = await addDoc(collection(db, "questionarios"), {
+        titulo: titulo,
+        descricao: descricao,
+        perguntas: perguntas,
+        dataCriacao: serverTimestamp(),
       });
-
-      await setDoc(doc(db, 'questionariosPublicos', id), {
-        ...data,
-        id,
-        criadoEm: questionarioExistente ? questionarioExistente.criadoEm : new Date(),
-        criadoPor: adminId,
-      });
-
-      Alert.alert('Sucesso', `Questionário ${questionarioId ? 'atualizado' : 'criado'}!`);
-      navigation.goBack();
+      console.log("Documento guardado com o ID: ", docRef.id);
+      Alert.alert("Sucesso", "Questionário guardado com sucesso!");
     } catch (error) {
-      console.error('Erro ao salvar questionário:', error);
-      Alert.alert('Erro', 'Não foi possível salvar o questionário.');
+      console.error("Erro ao guardar o questionário:", error);
+      Alert.alert("Erro", "Não foi possível guardar o questionário.");
     }
   };
 
-  if (loadingPredefined) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#d0a956" />
-        <Text style={styles.loadingText}>Configurando questionários pré-definidos...</Text>
-      </View>
-    );
-  }
-
   return (
-    <ScrollView style={styles.container}>
-      <TouchableOpacity onPress={() => navigation.goBack()} style={styles.botaoVoltar}>
-        <Text style={styles.voltarTexto}>⬅️ Voltar</Text>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <View style={styles.headerContent}>
+          <Text style={styles.headerTitle}>Criar Questionário</Text>
+          <Text style={styles.headerSubtitle}>Construa o seu formulário</Text>
+        </View>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Campo para o Título do Questionário */}
+        <View style={styles.card}>
+          <Text style={styles.label}>Título do Questionário</Text>
+          <TextInput
+            style={styles.input}
+            value={titulo}
+            onChangeText={setTitulo}
+            placeholder="Ex: Questionário de Satisfação do Cliente"
+            placeholderTextColor={Cores.cinzentoMedio}
+          />
+        </View>
+
+        {/* Campo para a Descrição do Questionário */}
+        <View style={styles.card}>
+          <Text style={styles.label}>Descrição (Opcional)</Text>
+          <TextInput
+            style={[styles.input, { height: 80, textAlignVertical: 'top' }]}
+            value={descricao}
+            onChangeText={setDescricao}
+            multiline
+            placeholder="Ex: Por favor, responda a estas questões para nos ajudar a melhorar o nosso serviço."
+            placeholderTextColor={Cores.cinzentoMedio}
+          />
+        </View>
+
+        {/* Mapeia e renderiza as perguntas existentes */}
+        {perguntas.map((pergunta, index) => (
+          <View key={pergunta.id} style={styles.card}>
+            {/* Cabeçalho da Pergunta com botões de ação */}
+            <View style={styles.perguntaHeader}>
+              <Text style={styles.perguntaNumero}>Pergunta {index + 1}</Text>
+              <TouchableOpacity
+                onPress={() => removerPergunta(pergunta.id)}
+                style={styles.botaoRemover}
+              >
+                <FontAwesome5 name="trash" size={16} color={Cores.erro} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Input para o texto da pergunta */}
+            <Text style={styles.label}>Texto da Pergunta</Text>
+            <TextInput
+              style={styles.input}
+              value={pergunta.texto}
+              onChangeText={(texto) => atualizarTextoPergunta(pergunta.id, texto)}
+              placeholder="Ex: Qual é a sua principal preocupação?"
+              placeholderTextColor={Cores.cinzentoMedio}
+            />
+
+            {/* Condicional para renderizar campos de opções, se aplicável */}
+            {(pergunta.tipo === 'unica' || pergunta.tipo === 'multipla') && (
+              <View style={{ marginTop: 15 }}>
+                <Text style={styles.label}>Opções</Text>
+                {/* Mapeia e renderiza as opções da pergunta */}
+                {pergunta.opcoes.map((opcao, opcaoIndex) => (
+                  <View key={opcao.id} style={styles.opcaoContainer}>
+                    <TextInput
+                      style={styles.inputOpcao}
+                      value={opcao.texto}
+                      onChangeText={(texto) =>
+                        atualizarTextoOpcao(pergunta.id, opcao.id, texto)
+                      }
+                      placeholder={`Opção ${opcaoIndex + 1}`}
+                      placeholderTextColor={Cores.cinzentoMedio}
+                    />
+                    <TouchableOpacity
+                      onPress={() => removerOpcao(pergunta.id, opcao.id)}
+                      style={styles.botaoRemoverOpcao}
+                    >
+                      <FontAwesome5 name="minus-circle" size={20} color={Cores.erro} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                {/* Botão para adicionar mais opções */}
+                <TouchableOpacity
+                  onPress={() => adicionarOpcao(pergunta.id)}
+                  style={styles.botaoAdicionarOpcao}
+                >
+                  <FontAwesome5 name="plus-circle" size={20} color={Cores.primaria} />
+                  <Text style={styles.textoBotaoAdicionarOpcao}> Adicionar Opção</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        ))}
+
+        {/* Espaçador para o botão flutuante */}
+        <View style={{ height: 100 }} />
+      </ScrollView>
+
+      {/* Botão para guardar o questionário */}
+      <TouchableOpacity
+        style={styles.botaoGuardar}
+        onPress={lidarComEnvio}
+      >
+        <Text style={styles.textoBotaoGuardar}>Guardar Questionário</Text>
       </TouchableOpacity>
 
-      <Text style={styles.titulo}>{questionarioId ? 'Editar Questionário' : 'Criar Novo Questionário'}</Text>
+      {/* Botão flutuante para adicionar nova pergunta */}
+      <TouchableOpacity
+        style={styles.botaoFlutuante}
+        onPress={() => setMenuVisivel(!menuVisivel)}
+      >
+        <FontAwesome5 name="plus" size={24} color={Cores.branco} />
+      </TouchableOpacity>
 
-      <TextInput
-        placeholder="Nome do questionário"
-        style={styles.input}
-        value={nome}
-        onChangeText={setNome}
-      />
-
-      {perguntas.map((p, index) => (
-        <View key={p.id} style={styles.perguntaBox}>
-          <Text style={styles.label}>Pergunta {index + 1}</Text>
-          <TextInput
-            placeholder="Texto da pergunta"
-            style={styles.input}
-            value={p.pergunta}
-            onChangeText={(text) => atualizarPergunta(index, 'pergunta', text)}
-          />
-
-          {(p.tipo === 'unica' || p.tipo === 'multipla') && (
-            <>
-              {p.opcoes.map((op, idx) => (
-                <View key={idx} style={styles.opcaoContainer}>
-                  <TextInput
-                    placeholder={`Opção ${idx + 1}`}
-                    style={[styles.input, { flex: 1 }]}
-                    value={op}
-                    onChangeText={(text) => atualizarOpcao(index, idx, text)}
-                  />
-                  <TouchableOpacity onPress={() => removerOpcao(index, idx)}>
-                    <Text style={styles.removerTexto}>❌</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-              <TouchableOpacity onPress={() => adicionarOpcao(index)}>
-                <Text style={styles.adicionarOpcao}>+ Adicionar opção</Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-          <Text style={styles.tipo}>
-            Tipo: {p.tipo === 'texto' ? 'Resposta livre' : p.tipo === 'unica' ? 'Escolha única' : p.tipo === 'multipla' ? 'Múltipla escolha' : 'Sim/Não'}
-          </Text>
-
-          <TouchableOpacity onPress={() => removerPergunta(index)}>
-            <Text style={styles.removerPergunta}>🗑️ Remover Pergunta</Text>
+      {/* Menu flutuante para selecionar o tipo de pergunta */}
+      {menuVisivel && (
+        <View style={styles.menuFlutuante}>
+          <TouchableOpacity
+            style={styles.opcaoMenu}
+            onPress={() => adicionarPergunta('texto')}
+          >
+            <FontAwesome5 name="align-left" size={18} color={Cores.textoSecundario} />
+            <Text style={styles.textoOpcaoMenu}>Resposta Livre</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.opcaoMenu}
+            onPress={() => adicionarPergunta('unica')}
+          >
+            <FontAwesome5 name="dot-circle" size={18} color={Cores.textoSecundario} />
+            <Text style={styles.textoOpcaoMenu}>Escolha Única</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.opcaoMenu}
+            onPress={() => adicionarPergunta('multipla')}
+            >
+            <FontAwesome5 name="check-square" size={18} color={Cores.textoSecundario} />
+            <Text style={styles.textoOpcaoMenu}>Múltipla Escolha</Text>
           </TouchableOpacity>
         </View>
-      ))}
-
-      <View style={styles.botoesContainer}>
-        <TouchableOpacity onPress={() => adicionarPergunta('texto')} style={styles.botao}>
-          <Text style={styles.botaoTexto}>+ Pergunta (resposta livre)</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => adicionarPergunta('booleana')} style={styles.botao}>
-          <Text style={styles.botaoTexto}>+ Pergunta (Sim/Não)</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => adicionarPergunta('unica')} style={styles.botao}>
-          <Text style={styles.botaoTexto}>+ Pergunta (escolha única)</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => adicionarPergunta('multipla')} style={styles.botao}>
-          <Text style={styles.botaoTexto}>+ Pergunta (múltipla escolha)</Text>
-        </TouchableOpacity>
-      </View>
-
-      <TouchableOpacity style={styles.botaoSalvar} onPress={salvarQuestionario}>
-        <Text style={styles.botaoTextoSalvar}>💾 {questionarioId ? 'Atualizar' : 'Salvar'} Questionário</Text>
-      </TouchableOpacity>
-    </ScrollView>
+      )}
+    </SafeAreaView>
   );
 }
 
+// Definição dos estilos usando StyleSheet.create
 const styles = StyleSheet.create({
   container: {
-    padding: 20,
-    backgroundColor: '#f9fafb',
-  },
-  loadingContainer: {
     flex: 1,
-    justifyContent: 'center',
+    backgroundColor: Cores.fundo,
+  },
+  header: {
+    paddingTop: 50,
+    paddingBottom: 25,
+    backgroundColor: Cores.primaria,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
+    shadowColor: Cores.cinzentoEscuro,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 5,
+    elevation: 8,
+  },
+  headerContent: {
+    paddingHorizontal: 20,
     alignItems: 'center',
-    backgroundColor: '#f9fafb',
   },
-  loadingText: {
-    marginTop: 10,
+  headerTitle: {
+    fontSize: 26,
+    fontWeight: 'bold',
+    color: Cores.branco,
+  },
+  headerSubtitle: {
     fontSize: 16,
-    color: '#333',
+    color: Cores.branco,
+    opacity: 0.8,
+    marginTop: 5,
   },
-  titulo: {
-    fontSize: 22,
-    fontWeight: '700',
-    marginBottom: 16,
-    textAlign: 'center',
+  scrollContent: {
+    padding: 20,
+    paddingBottom: 120, // Espaço extra para o botão flutuante e o de guardar
+  },
+  card: {
+    backgroundColor: Cores.branco,
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 20,
+    shadowColor: Cores.cinzentoEscuro,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  label: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Cores.textoPrimario,
+    marginBottom: 8,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 6,
-    padding: 10,
-    marginBottom: 10,
-    backgroundColor: '#fff',
-  },
-  perguntaBox: {
-    marginBottom: 20,
-    padding: 10,
-    backgroundColor: '#fff',
+    borderColor: Cores.cinzentoClaro,
     borderRadius: 8,
-    borderColor: '#d0a956',
-    borderWidth: 1,
+    padding: 12,
+    fontSize: 16,
+    color: Cores.textoPrimario,
+    backgroundColor: Cores.fundo,
   },
-  label: {
-    fontWeight: '600',
-    marginBottom: 6,
+  perguntaHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
   },
-  tipo: {
-    marginTop: 6,
-    fontStyle: 'italic',
-    color: '#555',
-  },
-  adicionarOpcao: {
-    color: '#d0a956',
-    fontWeight: '600',
-    marginTop: 6,
-  },
-  removerPergunta: {
-    color: 'red',
-    marginTop: 10,
-    fontWeight: '600',
-  },
-  removerTexto: {
-    color: 'red',
+  perguntaNumero: {
     fontSize: 18,
-    marginLeft: 8,
+    fontWeight: 'bold',
+    color: Cores.textoPrimario,
+  },
+  botaoRemover: {
+    padding: 5,
   },
   opcaoContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  botoesContainer: {
-    marginVertical: 12,
-  },
-  botao: {
-    backgroundColor: '#e0e7ff',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  botaoTexto: {
-    color: '#000',
-    fontWeight: '600',
-  },
-  botaoSalvar: {
-    backgroundColor: '#d0a956',
-    padding: 14,
-    borderRadius: 10,
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  botaoTextoSalvar: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  botaoVoltar: {
     marginBottom: 10,
   },
-  voltarTexto: {
-    color: '#007AFF',
+  inputOpcao: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: Cores.cinzentoClaro,
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 14,
+    color: Cores.textoPrimario,
+    backgroundColor: Cores.fundo,
+  },
+  botaoRemoverOpcao: {
+    marginLeft: 10,
+    padding: 5,
+  },
+  botaoAdicionarOpcao: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  textoBotaoAdicionarOpcao: {
+    marginLeft: 5,
+    fontSize: 14,
+    color: Cores.primaria,
+    fontWeight: '600',
+  },
+  botaoGuardar: {
+    position: 'absolute',
+    bottom: 30,
+    left: 20,
+    right: 20,
+    backgroundColor: Cores.primaria,
+    borderRadius: 10,
+    paddingVertical: 15,
+    alignItems: 'center',
+    shadowColor: Cores.cinzentoEscuro,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 6,
+  },
+  textoBotaoGuardar: {
+    color: Cores.branco,
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  botaoFlutuante: {
+    position: 'absolute',
+    bottom: 100,
+    right: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: Cores.primaria,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: Cores.cinzentoEscuro,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 6,
+  },
+  menuFlutuante: {
+    position: 'absolute',
+    bottom: 170,
+    right: 20,
+    width: 200,
+    backgroundColor: Cores.branco,
+    borderRadius: 12,
+    paddingVertical: 10,
+    shadowColor: Cores.cinzentoEscuro,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  opcaoMenu: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+  },
+  textoOpcaoMenu: {
+    marginLeft: 10,
     fontSize: 16,
+    color: Cores.textoPrimario,
   },
 });

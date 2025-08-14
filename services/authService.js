@@ -1,7 +1,5 @@
-import { getAuth } from 'firebase/auth';
-import { app } from './firebaseConfig'; // Certifica-te que estás a exportar `app` no firebaseConfig.js
-
-const auth = getAuth(app);
+// services/authServices.js
+import { auth } from './firebaseConfig';
 
 export function getUserIdLoggedIn() {
   const user = auth.currentUser;
@@ -12,6 +10,7 @@ export function getUserIdLoggedIn() {
     throw new Error('Usuário não autenticado.');
   }
 }
+
 export function getAdminIdLoggedIn() {
   return auth.currentUser ? auth.currentUser.uid : null;
 }

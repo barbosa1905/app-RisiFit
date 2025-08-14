@@ -11,84 +11,108 @@ import {
   Dimensions,
   ActivityIndicator,
   TextInput,
+  Platform,
+  StatusBar,
+  SafeAreaView,
+  Animated,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getUserIdLoggedIn } from '../../services/authService';
-import { salvarTreinoConcluido } from '../../services/userService'; 
+import { salvarTreinoConcluido } from '../../services/userService';
 import { WebView } from 'react-native-webview';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebaseConfig';
+import Colors from '../../constants/Colors';
+import { LinearGradient } from 'expo-linear-gradient';
 
 const { width, height } = Dimensions.get('window');
+
+const seriesTypes = {
+  reps_and_load: { label: 'Repetições e carga', fields: ['reps', 'peso', 'descanso'] },
+  reps_load_time: { label: 'Repetições, carga e tempo', fields: ['reps', 'peso', 'tempo', 'descanso'] },
+  reps_and_time: { label: 'Repetições e tempo', fields: ['reps', 'tempo', 'descanso'] },
+  time_and_incline: { label: 'Tempo e inclinação', fields: ['tempo', 'inclinacao', 'descanso'] },
+  running: { label: 'Corrida', fields: ['distancia', 'tempo', 'ritmo', 'descanso'] },
+  notes: { label: 'Observações', fields: ['notas'] },
+  cadence: { label: 'Cadência', fields: ['cadencia', 'descanso'] },
+  split_series: { label: 'Série Split', fields: ['reps', 'peso', 'descanso'] },
+};
+
+const seriesFieldLabels = {
+  reps: 'Repetições',
+  peso: 'Carga',
+  tempo: 'Tempo',
+  inclinacao: 'Inclinação',
+  distancia: 'Distância',
+  ritmo: 'Ritmo',
+  descanso: 'Descanso',
+  notas: 'Notas',
+  cadencia: 'Cadência',
+};
 
 export default function ExecucaoTreinoScreen({ route, navigation }) {
   const { treino } = route.params;
   const [tempo, setTempo] = useState(0);
   const [emExecucao, setEmExecucao] = useState(false);
   const timerRef = useRef(null);
-
   const [isAnimationModalVisible, setIsAnimationModalVisible] = useState(false);
   const [currentAnimationUrl, setCurrentAnimationUrl] = useState('');
-
   const [detailedExercises, setDetailedExercises] = useState([]);
   const [loadingExercisesDetails, setLoadingExercisesDetails] = useState(true);
-
   const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
   const [workoutRating, setWorkoutRating] = useState(0);
   const [workoutObservation, setWorkoutObservation] = useState('');
+  const [exercisesCompleted, setExercisesCompleted] = useState(0);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     const fetchExerciseDetails = async () => {
       setLoadingExercisesDetails(true);
       const exercisesInTreino = treino.templateExercises || treino.customExercises || [];
       const fetchedDetails = [];
+      const exerciseIds = exercisesInTreino.map(ex => ex.exerciseId).filter(Boolean);
+
+      const exerciseDocs = await Promise.all(exerciseIds.map(id => getDoc(doc(db, 'exercises', id))));
+      const exerciseDataMap = new Map(exerciseDocs.filter(doc => doc.exists()).map(doc => [doc.id, doc.data()]));
 
       for (const ex of exercisesInTreino) {
-        if (ex.exerciseId) {
-          try {
-            const exerciseDocRef = doc(db, 'exercises', ex.exerciseId);
-            const exerciseDocSnap = await getDoc(exerciseDocRef);
-            if (exerciseDocSnap.exists()) {
-              fetchedDetails.push({
-                ...exerciseDocSnap.data(),
-                ...ex,
-                id: ex.exerciseId,
-                exerciseName: ex.exerciseName || exerciseDocSnap.data().name,
-                repsOrDuration: ex.repsOrDuration || ex.valor,
-              });
-            } else {
-              console.warn(`Exercício com ID ${ex.exerciseId} não encontrado na biblioteca. Exibindo dados parciais.`);
-              fetchedDetails.push({
-                ...ex,
-                exerciseName: ex.exerciseName || 'Exercício Desconhecido',
-                repsOrDuration: ex.repsOrDuration || ex.valor,
-              });
-            }
-          } catch (error) {
-            console.error(`Erro ao buscar detalhes do exercício ${ex.exerciseId}:`, error);
-            fetchedDetails.push({
-              ...ex,
-              exerciseName: ex.exerciseName || 'Exercício Desconhecido',
-              repsOrDuration: ex.repsOrDuration || ex.valor,
-            });
-          }
-        } else {
-          fetchedDetails.push({
-            ...ex,
-            exerciseName: ex.exerciseName || 'Exercício Personalizado',
-            repsOrDuration: ex.repsOrDuration || ex.valor,
-          });
-        }
+        const docData = exerciseDataMap.get(ex.exerciseId) || {};
+        
+        // CORREÇÃO CRÍTICA AQUI: LER O CAMPO 'sets' em vez de 'setDetails'
+        const setsData = ex.sets || [];
+
+        const exerciseDetail = {
+          ...docData,
+          ...ex,
+          id: ex.exerciseId || '',
+          exerciseName: ex.exerciseName || docData.nome_pt || 'Exercício Personalizado',
+          description: ex.description || docData.descricao_breve || '',
+          category: ex.category || docData.category || '',
+          targetMuscles: ex.targetMuscles || (docData.musculos_alvo ? docData.musculos_alvo.map(m => m.name || m.id).filter(Boolean) : []),
+          equipment: ex.equipment || docData.equipment || [],
+          // ATUALIZAR ESTA LINHA PARA USAR setsData
+          sets: setsData,
+          notes: ex.notes || '',
+          completed: false,
+        };
+        fetchedDetails.push(exerciseDetail);
       }
+      
+      console.log('Dados detalhados dos exercícios:', fetchedDetails);
       setDetailedExercises(fetchedDetails);
       setLoadingExercisesDetails(false);
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 800,
+        useNativeDriver: true,
+      }).start();
     };
 
     if (treino) {
       fetchExerciseDetails();
     }
-  }, [treino]);
+  }, [treino, fadeAnim]);
 
   useEffect(() => {
     if (emExecucao) {
@@ -128,6 +152,8 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
   const resetarTreino = () => {
     setEmExecucao(false);
     setTempo(0);
+    setExercisesCompleted(0);
+    setDetailedExercises(detailedExercises.map(ex => ({ ...ex, completed: false })));
   };
 
   const openAnimationModal = (url) => {
@@ -138,6 +164,19 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
   const closeAnimationModal = () => {
     setIsAnimationModalVisible(false);
     setCurrentAnimationUrl('');
+  };
+
+  const toggleExerciseCompleted = (index) => {
+    const newExercises = [...detailedExercises];
+    const exercise = newExercises[index];
+    exercise.completed = !exercise.completed;
+
+    if (exercise.completed) {
+      setExercisesCompleted(prev => prev + 1);
+    } else {
+      setExercisesCompleted(prev => prev - 1);
+    }
+    setDetailedExercises(newExercises);
   };
 
   const concluirTreino = async () => {
@@ -175,18 +214,15 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
         return;
       }
 
-      // Atualiza o AsyncStorage com o status de conclusão
       const chaveAsyncStorage = `treinosConcluidos_${userId}`;
       const dadosAtuaisJson = await AsyncStorage.getItem(chaveAsyncStorage);
       const dadosAtuais = dadosAtuaisJson ? JSON.parse(dadosAtuaisJson) : {};
-      dadosAtuais[treino.id] = { completed: true, duration: tempo }; 
+      dadosAtuais[treino.id] = { completed: true, duration: tempo };
       await AsyncStorage.setItem(chaveAsyncStorage, JSON.stringify(dadosAtuais));
-      console.log(`✅ Treino ID ${treino.id} marcado como concluído no AsyncStorage.`);
 
-      // *** CORREÇÃO AQUI: Passa o objeto treino completo para salvarTreinoConcluido ***
       await salvarTreinoConcluido(
         userId,
-        treino, // Passa o objeto treino completo, como esperado pela função em userService.js
+        treino,
         tempo,
         workoutRating,
         workoutObservation
@@ -201,348 +237,528 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
     }
   };
 
+  const renderSetDetail = (set, type) => {
+    const detailText = [];
+    const fields = seriesTypes[type]?.fields || [];
+
+    fields.forEach(field => {
+      // Usar 'type' do objeto set para compatibilidade com o CriarTreinosScreen.js
+      if (set[field]) {
+        const label = seriesFieldLabels[field] || field.charAt(0).toUpperCase() + field.slice(1);
+        detailText.push(`${label}: ${set[field]}`);
+      }
+    });
+
+    return detailText.join(' | ');
+  };
+
+  const progress = detailedExercises.length > 0 ? (exercisesCompleted / detailedExercises.length) * 100 : 0;
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.titulo}>{String(treino.nome)}</Text>
-      <Text style={styles.subtitulo}>{String(treino.categoria)}</Text>
-      <Text style={styles.descricao}>{String(treino.descricao)}</Text>
-
-      <View style={styles.tempoContainer}>
-        <Text style={styles.tempo}>{formatarTempo(tempo)}</Text>
-
-        <View style={styles.buttonRow}>
-          <TouchableOpacity
-            style={[
-              styles.botao,
-              styles.botaoIniciar,
-              emExecucao && styles.botaoDesabilitado,
-            ]}
-            onPress={iniciarTreino}
-            disabled={emExecucao}
-          >
-            <Text style={styles.botaoTexto}>Iniciar</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <LinearGradient
+        colors={[Colors.background, Colors.surface]}
+        style={styles.gradientBackground}
+      >
+        <View style={styles.headerContainer}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color={Colors.primaryDark} />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.botao,
-              styles.botaoPausar,
-              !emExecucao && styles.botaoDesabilitado,
-            ]}
-            onPress={pausarTreino}
-            disabled={!emExecucao}
-          >
-            <Text style={styles.botaoTexto}>Pausar</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.botao, styles.botaoResetar]}
-            onPress={resetarTreino}
-          >
-            <Text style={styles.botaoTexto}>Reiniciar</Text>
-          </TouchableOpacity>
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.titulo}>{String(treino.nome)}</Text>
+          </View>
         </View>
-      </View>
+        <View style={styles.progressBarContainer}>
+          <View style={styles.progressBarBackground} />
+          <Animated.View style={[styles.progressBar, { width: `${progress}%` }]} />
+        </View>
 
-      <Text style={styles.exerciciosTitulo}>Exercícios</Text>
+        <ScrollView style={styles.scrollView}>
+          <Animated.View style={[styles.scrollContentContainer, { opacity: fadeAnim }]}>
+            <View style={styles.infoCard}>
+              <Text style={styles.subtitulo}>{String(treino.categoria)}</Text>
+              <Text style={styles.descricao}>{String(treino.descricao)}</Text>
+            </View>
 
-      {loadingExercisesDetails ? (
-        <ActivityIndicator size="large" color="#eab308" style={{ marginTop: 20 }} />
-      ) : (
-        detailedExercises.length > 0 ? (
-          detailedExercises.map((ex, idx) => (
-            <View key={idx} style={styles.exercicioCard}>
-              <Text style={styles.exercicioNome}>{String(ex.exerciseName)}</Text>
-              <Text style={styles.exercicioTipo}>
-                {ex.sets ? `${String(ex.sets)} séries de ` : ''}
-                {ex.repsOrDuration} {ex.tipo === 'reps' ? 'repetições' : 'segundos'}
-              </Text>
-              {ex.rest ? (
-                <Text style={styles.exercicioDetail}>Descanso: {ex.rest}</Text>
-              ) : null}
-              {ex.notes ? (
-                <Text style={styles.exercicioDetail}>Notas: {ex.notes}</Text>
-              ) : null}
-              {ex.description ? (
-                <Text style={styles.exercicioDescription}>{ex.description}</Text>
-              ) : null}
-              {ex.category ? (
-                <Text style={styles.exercicioDetail}>Categoria: {ex.category}</Text>
-              ) : null}
-              {ex.targetMuscles && ex.targetMuscles.length > 0 ? (
-                <Text style={styles.exercicioDetail}>Músculos: {ex.targetMuscles.join(', ')}</Text>
-              ) : null}
-              {ex.equipment && ex.equipment.length > 0 ? (
-                <Text style={styles.exercicioDetail}>Equipamento: {ex.equipment.join(', ')}</Text>
-              ) : null}
+            <View style={styles.exercisesSection}>
+              <Text style={styles.sectionTitle}>Exercícios</Text>
+              {loadingExercisesDetails ? (
+                <ActivityIndicator size="large" color={Colors.accent} style={{ marginTop: 20 }} />
+              ) : (
+                detailedExercises.length > 0 ? (
+                  detailedExercises.map((ex, idx) => (
+                    <TouchableOpacity
+                      key={idx}
+                      style={[styles.exercicioCard, ex.completed && styles.exercicioCardCompleted]}
+                      onPress={() => toggleExerciseCompleted(idx)}
+                    >
+                      <View style={styles.exercicioHeader}>
+                        <Text style={styles.exercicioNome}>
+                          {`${idx + 1}. ${String(ex.exerciseName)}`}
+                        </Text>
+                        {ex.animationUrl && (
+                          <TouchableOpacity
+                            onPress={() => openAnimationModal(ex.animationUrl)}
+                            style={styles.animationIcon}
+                          >
+                            <Ionicons name="play-circle-outline" size={30} color={Colors.primaryLight} />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                      {ex.imageUrl ? (
+                        <Image
+                          source={{ uri: ex.imageUrl }}
+                          style={styles.exercicioImage}
+                          resizeMode="cover"
+                        />
+                      ) : null}
+                      {ex.description ? (
+                        <Text style={styles.exercicioDescription}>{ex.description}</Text>
+                      ) : null}
+                      {/* ALTERAR ESTA CONDIÇÃO PARA USAR A NOVA PROPRIEDADE 'sets' */}
+                      {ex.sets && ex.sets.length > 0 && (
+                        <View style={styles.seriesContainer}>
+                          <Text style={styles.seriesTitle}>Séries:</Text>
+                          {ex.sets.map((set, setIndex) => (
+                            <View key={setIndex} style={styles.setCard}>
+                              {/* USAR set.type para obter o rótulo */}
+                              <Text style={styles.setCardTitle}>
+                                {seriesTypes[set.type]?.label || 'Série Personalizada'} {setIndex + 1}
+                              </Text>
+                              {/* USAR set.type para obter o detalhe correto */}
+                              <Text style={styles.setDetailText}>{renderSetDetail(set, set.type)}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                      {ex.completed && (
+                        <View style={styles.completedOverlay}>
+                          <Ionicons name="checkmark-circle-outline" size={50} color={Colors.success} />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  ))
+                ) : (
+                  <Text style={styles.semExercicios}>Nenhum exercício cadastrado.</Text>
+                )
+              )}
+            </View>
+          </Animated.View>
+        </ScrollView>
 
-              {ex.imageUrl ? (
-                <Image
-                  source={{ uri: ex.imageUrl }}
-                  style={styles.exercicioImage}
-                  resizeMode="contain"
-                  onError={(e) => console.log('Erro ao carregar imagem do exercício:', e.nativeEvent.error, ex.imageUrl)}
+        <View style={styles.bottomBar}>
+          <TouchableOpacity onPress={concluirTreino} style={styles.botaoConcluir}>
+            <Ionicons name="checkmark-circle-outline" size={24} color={Colors.secondaryDark} />
+            <Text style={styles.botaoTextoConcluir}>Concluir Treino</Text>
+          </TouchableOpacity>
+          <View style={styles.timerControlContainer}>
+            <Text style={styles.tempo}>{formatarTempo(tempo)}</Text>
+            <View style={styles.timerButtonRow}>
+              <TouchableOpacity style={[styles.botao, styles.botaoIniciar]} onPress={iniciarTreino} disabled={emExecucao}>
+                <Ionicons name="play" size={24} color={Colors.surface} />
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.botao, styles.botaoPausar]} onPress={pausarTreino} disabled={!emExecucao}>
+                <Ionicons name="pause" size={24} color={Colors.surface} />
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.botao, styles.botaoResetar]} onPress={resetarTreino}>
+                <Ionicons name="refresh" size={24} color={Colors.surface} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
+        {/* Modal de Animação */}
+        <Modal
+          animationType="fade"
+          transparent={true}
+          visible={isAnimationModalVisible}
+          onRequestClose={closeAnimationModal}
+        >
+          <View style={styles.animationModalOverlay}>
+            <View style={styles.animationModalContent}>
+              {currentAnimationUrl ? (
+                <WebView
+                  source={{
+                    html: `
+                      <html>
+                      <head>
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+                        <style>
+                          body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: black; overflow: hidden; }
+                          img, video { max-width: 100%; max-height: 100%; object-fit: contain; }
+                        </style>
+                      </head>
+                      <body>
+                        ${currentAnimationUrl.endsWith('.gif') ?
+                        `<img src="${currentAnimationUrl}" loop autoplay>` :
+                        `<video src="${currentAnimationUrl}" autoplay loop controls style="width:100%; height:100%;"></video>`
+                      }
+                      </body>
+                      </html>
+                    `
+                  }}
+                  style={styles.webView}
+                  allowsFullscreenVideo={true}
+                  mediaPlaybackRequiresUserAction={false}
+                  javaScriptEnabled={true}
+                  domStorageEnabled={true}
+                  containerStyle={{ width: width * 0.9, height: height * 0.6 }}
                 />
-              ) : null}
-
-              {ex.animationUrl ? (
-                <TouchableOpacity
-                  style={styles.animationButton}
-                  onPress={() => openAnimationModal(ex.animationUrl)}
-                >
-                  <Ionicons name="play-circle-outline" size={24} color="#fff" />
-                  <Text style={styles.animationButtonText}>Ver Animação</Text>
-                </TouchableOpacity>
-              ) : null}
+              ) : (
+                <Text style={styles.noAnimationText}>Nenhuma animação disponível.</Text>
+              )}
+              <TouchableOpacity onPress={closeAnimationModal} style={styles.animationModalCloseButton}>
+                <Text style={styles.animationModalCloseButtonText}>Fechar</Text>
+              </TouchableOpacity>
             </View>
-          ))
-        ) : (
-          <Text style={styles.semExercicios}>Nenhum exercício cadastrado.</Text>
-        )
-      )}
+          </View>
+        </Modal>
 
-      <TouchableOpacity style={styles.botaoConcluir} onPress={concluirTreino}>
-        <Text style={styles.botaoTexto}>Concluir Treino</Text>
-      </TouchableOpacity>
-
-      {/* Modal de Animação */}
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={isAnimationModalVisible}
-        onRequestClose={closeAnimationModal}
-      >
-        <View style={styles.animationModalOverlay}>
-          <View style={styles.animationModalContent}>
-            {currentAnimationUrl ? (
-              <WebView
-                source={{ html: `
-                  <html>
-                  <head>
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-                    <style>
-                      body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: black; overflow: hidden; }
-                      img, video { max-width: 100%; max-height: 100%; object-fit: contain; }
-                    </style>
-                  </head>
-                  <body>
-                    ${currentAnimationUrl.endsWith('.gif') ?
-                      `<img src="${currentAnimationUrl}" loop autoplay>` :
-                      `<video src="${currentAnimationUrl}" autoplay loop controls style="width:100%; height:100%;"></video>`
-                    }
-                  </body>
-                  </html>
-                `}}
-                style={styles.webView}
-                allowsFullscreenVideo={true}
-                mediaPlaybackRequiresUserAction={false}
-                javaScriptEnabled={true}
-                domStorageEnabled={true}
-                containerStyle={{ width: width * 0.9, height: height * 0.6 }}
+        {/* Modal de Feedback do Treino */}
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={feedbackModalVisible}
+          onRequestClose={() => setFeedbackModalVisible(false)}
+        >
+          <View style={styles.feedbackModalOverlay}>
+            <View style={styles.feedbackModalContent}>
+              <Text style={styles.feedbackModalTitle}>Avalie o Treino</Text>
+              <Text style={styles.feedbackModalSubtitle}>Como foi o seu treino?</Text>
+              <View style={styles.starRatingContainer}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <TouchableOpacity key={star} onPress={() => setWorkoutRating(star)}>
+                    <MaterialCommunityIcons
+                      name={star <= workoutRating ? 'star' : 'star-outline'}
+                      size={40}
+                      color={star <= workoutRating ? Colors.accent : Colors.secondaryLight}
+                      style={styles.starIcon}
+                    />
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.feedbackModalSubtitle}>Observações (Opcional):</Text>
+              <TextInput
+                style={styles.observationInput}
+                placeholder="Ex: Treino desafiador, gostei dos exercícios de perna."
+                placeholderTextColor={Colors.secondaryLight}
+                multiline
+                numberOfLines={4}
+                value={workoutObservation}
+                onChangeText={setWorkoutObservation}
               />
-            ) : (
-              <Text style={styles.noAnimationText}>Nenhuma animação disponível.</Text>
-            )}
-            <TouchableOpacity onPress={closeAnimationModal} style={styles.animationModalCloseButton}>
-              <Text style={styles.animationModalCloseButtonText}>Fechar</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Modal de Feedback do Treino */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={feedbackModalVisible}
-        onRequestClose={() => setFeedbackModalVisible(false)}
-      >
-        <View style={styles.feedbackModalOverlay}>
-          <View style={styles.feedbackModalContent}>
-            <Text style={styles.feedbackModalTitle}>Avalie o Treino</Text>
-            <Text style={styles.feedbackModalSubtitle}>Como foi o seu treino?</Text>
-
-            <View style={styles.starRatingContainer}>
-              {[1, 2, 3, 4, 5].map((star) => (
-                <TouchableOpacity key={star} onPress={() => setWorkoutRating(star)}>
-                  <MaterialCommunityIcons
-                    name={star <= workoutRating ? 'star' : 'star-outline'}
-                    size={40}
-                    color={star <= workoutRating ? '#FFD700' : '#ccc'}
-                    style={styles.starIcon}
-                  />
+              <View style={styles.feedbackModalButtons}>
+                <TouchableOpacity
+                  style={[styles.feedbackButton, { backgroundColor: Colors.error }]}
+                  onPress={() => setFeedbackModalVisible(false)}
+                >
+                  <Text style={styles.feedbackButtonText}>Cancelar</Text>
                 </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.feedbackModalSubtitle}>Observações (Opcional):</Text>
-            <TextInput
-              style={styles.observationInput}
-              placeholder="Ex: Treino desafiador, gostei dos exercícios de perna."
-              placeholderTextColor="#999"
-              multiline
-              numberOfLines={4}
-              value={workoutObservation}
-              onChangeText={setWorkoutObservation}
-            />
-
-            <View style={styles.feedbackModalButtons}>
-              <TouchableOpacity
-                style={[styles.feedbackButton, styles.feedbackButtonCancel]}
-                onPress={() => setFeedbackModalVisible(false)}
-              >
-                <Text style={styles.feedbackButtonText}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.feedbackButton, styles.feedbackButtonSubmit]}
-                onPress={handleSendFeedback}
-              >
-                <Text style={styles.feedbackButtonText}>Enviar Feedback</Text>
-              </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.feedbackButton, { backgroundColor: Colors.success }]}
+                  onPress={handleSendFeedback}
+                >
+                  <Text style={styles.feedbackButtonText}>Enviar Feedback</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
-      </Modal>
-    </ScrollView>
+        </Modal>
+      </LinearGradient>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 20,
-    backgroundColor: '#f1f5f9',
-    flexGrow: 1,
+  safeArea: {
+    flex: 1,
+  },
+  gradientBackground: {
+    flex: 1,
+  },
+  headerContainer: {
+    backgroundColor: Colors.primary,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+    paddingBottom: 15,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    ...Platform.select({
+      ios: {
+        shadowColor: Colors.secondary,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 5,
+      },
+    }),
+  },
+  backButton: {
+    position: 'absolute',
+    left: 20,
+    top: Platform.OS === 'android' ? StatusBar.currentHeight + 10 : 10,
+    zIndex: 1,
+    padding: 5,
+  },
+  headerTitleContainer: {
+    flex: 1,
+    alignItems: 'center',
+    marginHorizontal: 50,
   },
   titulo: {
-    fontSize: 28,
+    fontSize: 22,
     fontWeight: 'bold',
-    color: '#0f172a',
-    marginBottom: 6,
+    color: Colors.primaryDark,
     textAlign: 'center',
+  },
+  progressBarContainer: {
+    height: 5,
+    width: '100%',
+    backgroundColor: Colors.background,
+  },
+  progressBarBackground: {
+    height: 5,
+    width: '100%',
+    backgroundColor: Colors.secondaryLight,
+    position: 'absolute',
+    borderRadius: 5,
+  },
+  progressBar: {
+    height: 5,
+    backgroundColor: Colors.accent,
+    borderRadius: 5,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContentContainer: {
+    padding: 20,
+    paddingBottom: 100,
+  },
+  infoCard: {
+    backgroundColor: Colors.surface,
+    padding: 20,
+    borderRadius: 20,
+    marginBottom: 20,
+    ...Platform.select({
+      ios: {
+        shadowColor: Colors.secondary,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 5,
+      },
+    }),
   },
   subtitulo: {
     fontSize: 18,
-    color: '#3b82f6',
-    marginBottom: 4,
+    color: Colors.primary,
     textAlign: 'center',
+    marginBottom: 8,
+    fontStyle: 'italic',
   },
   descricao: {
     fontSize: 16,
-    color: '#64748b',
-    marginBottom: 20,
+    color: Colors.secondaryLight,
     textAlign: 'center',
   },
-  tempoContainer: {
-    alignItems: 'center',
-    marginBottom: 30,
+  exercisesSection: {
+    marginTop: 10,
   },
-  tempo: {
-    fontSize: 40,
-    fontWeight: 'bold',
-    color: '#eab308',
-    marginBottom: 15,
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
-  },
-  botao: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    elevation: 3,
-    minWidth: 100,
-    alignItems: 'center',
-  },
-  botaoIniciar: {
-    backgroundColor: '#2563eb',
-  },
-  botaoPausar: {
-    backgroundColor: '#f87171',
-  },
-  botaoResetar: {
-    backgroundColor: '#64748b',
-  },
-  botaoDesabilitado: {
-    opacity: 0.5,
-  },
-  botaoConcluir: {
-    backgroundColor: '#10b981',
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginTop: 30,
-    elevation: 2,
-  },
-  botaoTexto: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  exerciciosTitulo: {
+  sectionTitle: {
     fontSize: 22,
-    fontWeight: '600',
-    marginBottom: 10,
-    color: '#0f172a',
+    fontWeight: '700',
+    marginBottom: 15,
+    color: Colors.secondaryDark,
   },
   exercicioCard: {
-    backgroundColor: '#ffffff',
-    padding: 15,
-    borderRadius: 10,
+    backgroundColor: Colors.cardBackground,
+    padding: 20,
+    borderRadius: 20,
+    marginBottom: 15,
+    position: 'relative',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'transparent',
+    ...Platform.select({
+      ios: {
+        shadowColor: Colors.secondary,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
+  },
+  exercicioCardCompleted: {
+    borderColor: Colors.success,
+    backgroundColor: '#F0F9F5',
+  },
+  completedOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  exercicioHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 10,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowOffset: { width: 0, height: 1 },
-    shadowRadius: 4,
-    elevation: 2,
   },
   exercicioNome: {
-    fontSize: 17,
+    fontSize: 19,
     fontWeight: '600',
-    color: '#1e293b',
-    marginBottom: 5,
+    color: Colors.primary,
+    flexShrink: 1,
   },
-  exercicioTipo: {
-    fontSize: 15,
-    color: '#475569',
-    marginBottom: 8,
+  animationIcon: {
+    padding: 5,
   },
   exercicioDescription: {
     fontSize: 14,
-    color: '#64748b',
-    marginBottom: 5,
-  },
-  exercicioDetail: {
-    fontSize: 13,
-    color: '#64748b',
-    marginBottom: 2,
+    color: Colors.secondaryLight,
+    marginBottom: 10,
+    fontStyle: 'italic',
   },
   exercicioImage: {
     width: '100%',
     height: 200,
-    borderRadius: 8,
+    borderRadius: 15,
     marginTop: 10,
     marginBottom: 10,
-    backgroundColor: '#e0e0e0',
+    backgroundColor: Colors.background,
   },
-  animationButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#3b82f6',
-    paddingVertical: 10,
-    borderRadius: 8,
-    marginTop: 10,
+  seriesContainer: {
+    marginTop: 15,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.background,
   },
-  animationButtonText: {
-    color: '#fff',
-    fontSize: 16,
+  seriesTitle: {
+    fontSize: 17,
     fontWeight: 'bold',
-    marginLeft: 8,
+    color: Colors.secondaryDark,
+    marginBottom: 10,
+  },
+  setCard: {
+    backgroundColor: Colors.background,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.accent,
+  },
+  setCardTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.secondaryDark,
+    marginBottom: 5,
+  },
+  setDetailText: {
+    fontSize: 14,
+    color: Colors.secondaryLight,
   },
   semExercicios: {
     fontStyle: 'italic',
-    color: '#6b7280',
+    color: Colors.secondaryLight,
     textAlign: 'center',
+    marginTop: 20,
+  },
+  bottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    paddingBottom: Platform.OS === 'ios' ? 30 : 15,
+    alignItems: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: Colors.secondary,
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 8,
+      },
+    }),
+  },
+  botaoConcluir: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.accent,
+    width: '100%',
+    paddingVertical: 16,
+    borderRadius: 15,
+    elevation: 3,
+    marginBottom: 15,
+  },
+  botaoTextoConcluir: {
+    color: Colors.secondaryDark,
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginLeft: 10,
+  },
+  timerControlContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  tempo: {
+    fontSize: 30,
+    fontWeight: 'bold',
+    color: Colors.accent,
+    fontVariant: ['tabular-nums'],
+    flex: 1,
+    textAlign: 'center',
+  },
+  timerButtonRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  botao: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    marginHorizontal: 5,
+    elevation: 5,
+    shadowColor: Colors.secondary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+  },
+  botaoIniciar: {
+    backgroundColor: Colors.success,
+  },
+  botaoPausar: {
+    backgroundColor: Colors.warning,
+  },
+  botaoResetar: {
+    backgroundColor: Colors.error,
   },
   animationModalOverlay: {
     flex: 1,
@@ -551,7 +767,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.8)',
   },
   animationModalContent: {
-    backgroundColor: '#000',
+    backgroundColor: Colors.secondaryDark,
     borderRadius: 15,
     width: '95%',
     height: '70%',
@@ -562,22 +778,22 @@ const styles = StyleSheet.create({
   webView: {
     flex: 1,
     width: '100%',
-    backgroundColor: '#000',
+    backgroundColor: Colors.secondaryDark,
   },
   noAnimationText: {
-    color: '#fff',
+    color: Colors.surface,
     fontSize: 18,
     textAlign: 'center',
   },
   animationModalCloseButton: {
     marginTop: 15,
-    backgroundColor: '#eab308',
+    backgroundColor: Colors.accent,
     paddingVertical: 10,
     paddingHorizontal: 20,
     borderRadius: 8,
   },
   animationModalCloseButtonText: {
-    color: '#fff',
+    color: Colors.secondaryDark,
     fontSize: 16,
     fontWeight: 'bold',
   },
@@ -588,26 +804,32 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.6)',
   },
   feedbackModalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: Colors.surface,
     borderRadius: 15,
     padding: 25,
     width: '90%',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 10,
+    ...Platform.select({
+      ios: {
+        shadowColor: Colors.secondary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 10,
+      },
+    }),
   },
   feedbackModalTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#0f172a',
+    color: Colors.primaryDark,
     marginBottom: 10,
   },
   feedbackModalSubtitle: {
     fontSize: 16,
-    color: '#64748b',
+    color: Colors.secondaryDark,
     marginBottom: 15,
     textAlign: 'center',
   },
@@ -620,15 +842,16 @@ const styles = StyleSheet.create({
   },
   observationInput: {
     borderWidth: 1,
-    borderColor: '#ccc',
+    borderColor: Colors.primaryLight,
     borderRadius: 8,
     padding: 10,
     width: '100%',
     minHeight: 100,
     textAlignVertical: 'top',
     fontSize: 16,
-    color: '#333',
+    color: Colors.secondary,
     marginBottom: 20,
+    backgroundColor: Colors.background,
   },
   feedbackModalButtons: {
     flexDirection: 'row',
@@ -636,6 +859,9 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   feedbackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,
@@ -644,15 +870,10 @@ const styles = StyleSheet.create({
     marginHorizontal: 5,
     elevation: 3,
   },
-  feedbackButtonCancel: {
-    backgroundColor: '#ef4444',
-  },
-  feedbackButtonSubmit: {
-    backgroundColor: '#10b981',
-  },
   feedbackButtonText: {
-    color: '#fff',
+    color: Colors.surface,
     fontSize: 16,
     fontWeight: 'bold',
+    marginLeft: 8,
   },
 });

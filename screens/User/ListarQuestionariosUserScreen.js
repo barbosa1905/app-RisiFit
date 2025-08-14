@@ -65,7 +65,7 @@ export default function ListarQuestionariosUserScreen() {
   const carregarQuestionarios = async (currentUserId) => {
     try {
       console.log("Buscando questionários públicos...");
-      const snapshot = await getDocs(collection(db, 'questionariosPublicos'));
+      const snapshot = await getDocs(collection(db, 'questionarios'));
       const lista = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
@@ -122,7 +122,7 @@ export default function ListarQuestionariosUserScreen() {
         }}
       >
         <View style={styles.cardContent}>
-          <Text style={styles.titulo}>{item.nome || 'Sem título'}</Text>
+          <Text style={styles.titulo}>{item.titulo || 'Sem título'}</Text>
           {item.descricao && <Text style={styles.descricao}>{item.descricao}</Text>}
         </View>
         {isResponded && (

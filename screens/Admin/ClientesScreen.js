@@ -6,12 +6,10 @@ import {
   StyleSheet,
   ActivityIndicator,
   TouchableOpacity,
-  TextInput,
   Alert,
   SafeAreaView,
   StatusBar,
   Platform,
-  Image,
   Dimensions,
 } from 'react-native';
 import {
@@ -26,34 +24,96 @@ import {
 import { db } from '../../services/firebaseConfig';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
-import { Ionicons } from '@expo/vector-icons'; // Importar ícones
+import { Ionicons } from '@expo/vector-icons';
+
+// Importar o novo componente de cabeçalho
+import SearchHeader from '../../components/SearchHeader';
 
 // Paleta de Cores Refinada
 const Colors = {
-  primaryGold: '#D4AF37',   // Ouro mais clássico
-  darkBrown: '#3E2723',     // Marrom bem escuro, quase preto
-  lightBrown: '#795548',    // Marrom mais suave
-  creamBackground: '#FDF7E4', // Fundo creme claro
+  primaryGold: '#B8860B',
+  darkBrown: '#3E2723',
+  lightBrown: '#795548',
+  creamBackground: '#FDF7E4',
   white: '#FFFFFF',
-  lightGray: '#ECEFF1',     // Cinza muito claro
-  mediumGray: '#B0BEC5',    // Cinza médio para textos secundários
-  darkGray: '#424242',      // Cinza escuro para textos principais
-  accentBlue: '#2196F3',    // Azul vibrante para links
-  successGreen: '#4CAF50',  // Verde para sucesso
-  errorRed: '#F44336',      // Vermelho para erros/alertas
-  buttonTextLight: '#FFFFFF', // Cor de texto para botões com fundo escuro
-  buttonTextDark: '#3E2723', // Cor de texto para botões com fundo claro
-  shadow: 'rgba(0,0,0,0.08)', // Sombra suave
+  lightGray: '#ECEFF1',
+  mediumGray: '#B0BEC5',
+  darkGray: '#424242',
+  accentBlue: '#2196F3',
+  successGreen: '#4CAF50',
+  errorRed: '#F44336',
+  buttonTextLight: '#FFFFFF',
+  buttonTextDark: '#3E2723',
+  shadow: 'rgba(0,0,0,0.08)',
+  black: '#000000',
 };
 
 const { width } = Dimensions.get('window');
+
+// Global Styles for consistent shadows
+const GlobalStyles = {
+  shadow: {
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  cardShadow: {
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+};
+
+// --- Componente AppHeaderPersonalizado (Mantido) ---
+const AppHeaderPersonalizado = ({ title }) => {
+  return (
+    <View style={headerStyles.headerContainer}>
+      <StatusBar
+        barStyle={Platform.OS === 'ios' ? 'dark-content' : 'light-content'}
+        backgroundColor={Colors.primaryGold}
+      />
+      <View style={headerStyles.headerContent}>
+        <Text style={headerStyles.headerTitle}>{title}</Text>
+      </View>
+    </View>
+  );
+};
+
+const headerStyles = StyleSheet.create({
+  headerContainer: {
+    backgroundColor: Colors.primaryGold,
+    paddingHorizontal: 20,
+    paddingVertical: Platform.OS === 'ios' ? 15 : 12,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 12 : 15,
+    borderBottomLeftRadius: 15,
+    borderBottomRightRadius: 15,
+    shadowColor: Colors.darkBrown,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 6,
+    marginBottom: 5,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.black,
+  },
+});
 
 export default function ClientesScreen() {
   const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pesquisa, setPesquisa] = useState('');
-  const [filtroTipo, setFiltroTipo] = useState('Todos');
-  const [ordem, setOrdem] = useState('recente');
   const [adminInfo, setAdminInfo] = useState(null);
   const navigation = useNavigation();
   const route = useRoute();
@@ -77,7 +137,7 @@ export default function ClientesScreen() {
       return unsubscribe;
     } else {
       setAdminInfo({ name: 'Visitante', email: '', nome: 'Visitante' });
-      return () => {};
+      return () => { };
     }
   }, []);
 
@@ -86,7 +146,6 @@ export default function ClientesScreen() {
     try {
       const q = query(collection(db, 'users'), where('role', '==', 'user'));
       const snapshot = await getDocs(q);
-
       const lista = await Promise.all(
         snapshot.docs.map(async (docUser) => {
           const userData = docUser.data();
@@ -101,7 +160,6 @@ export default function ClientesScreen() {
           };
         })
       );
-
       setClientes(lista);
     } catch (error) {
       console.error('Erro ao buscar clientes:', error);
@@ -114,11 +172,9 @@ export default function ClientesScreen() {
   useEffect(() => {
     const unsubscribeAdmin = fetchAdminInfo();
     carregarClientes();
-
     const unsubscribeFocus = navigation.addListener('focus', () => {
       carregarClientes();
     });
-
     return () => {
       unsubscribeAdmin();
       unsubscribeFocus();
@@ -152,40 +208,20 @@ export default function ClientesScreen() {
   const clientesFiltrados = clientes
     .filter((cliente) => {
       const termo = pesquisa.toLowerCase();
-      const nameOk =
-        cliente.name && cliente.name.toLowerCase().includes(termo);
-      const emailOk =
-        cliente.email && cliente.email.toLowerCase().includes(termo);
-      const tipoOk =
-        filtroTipo === 'Todos' ||
-        (filtroTipo === 'ComTreinos' && cliente.totalTreinos > 0) ||
-        (filtroTipo === 'SemTreinos' && cliente.totalTreinos === 0);
-      return (nameOk || emailOk) && tipoOk;
+      return cliente.name && cliente.name.toLowerCase().includes(termo);
     })
     .sort((a, b) => {
       const dateA = a.dataCriacao instanceof Date ? a.dataCriacao.getTime() : new Date(0).getTime();
       const dateB = b.dataCriacao instanceof Date ? b.dataCriacao.getTime() : new Date(0).getTime();
-
-      if (ordem === 'recente') {
-        return dateB - dateA;
-      } else {
-        return dateA - dateB;
-      }
+      return dateB - dateA;
     });
 
-
   const renderItem = ({ item }) => {
-    const iniciais = item.name
-      ? item.name
-          .split(' ')
-          .map((parte) => parte[0])
-          .join('')
-          .toUpperCase()
-      : '??';
+    const iniciais = item.name && item.name.length > 0 ? item.name[0].toUpperCase() : '?';
 
     return (
       <TouchableOpacity
-        style={styles.card}
+        style={[styles.card, GlobalStyles.cardShadow]}
         onPress={() => navigation.navigate('FichaCliente', { clienteId: item.id, clientename: item.name })}
         activeOpacity={0.8}
       >
@@ -203,8 +239,9 @@ export default function ClientesScreen() {
         </View>
 
         <View style={styles.buttonRow}>
+          {/* BOTÃO DE TREINOS */}
           <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: Colors.primaryGold }]}
+            style={[styles.actionButton, { backgroundColor: Colors.accentBlue }]}
             onPress={() =>
               navigation.navigate('TreinosCliente', {
                 clienteId: item.id,
@@ -213,9 +250,24 @@ export default function ClientesScreen() {
             }
           >
             <Ionicons name="fitness-outline" size={18} color={Colors.buttonTextLight} />
-            <Text style={styles.actionButtonText}>Ver Treinos</Text>
+            <Text style={styles.actionButtonText}>Treinos</Text>
           </TouchableOpacity>
 
+          {/* NOVO BOTÃO DE QUESTIONÁRIOS */}
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: Colors.primaryGold }]}
+            onPress={() =>
+              navigation.navigate('RespostasQuestionario', {
+                clienteId: item.id,
+                clienteNome: item.name,
+              })
+            }
+          >
+            <Ionicons name="document-text-outline" size={18} color={Colors.buttonTextLight} />
+            <Text style={styles.actionButtonText}>Questionários</Text>
+          </TouchableOpacity>
+          
+          {/* BOTÃO DE FICHA */}
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: Colors.lightBrown }]}
             onPress={() =>
@@ -225,10 +277,11 @@ export default function ClientesScreen() {
               })
             }
           >
-            <Ionicons name="document-text-outline" size={18} color={Colors.buttonTextLight} />
-            <Text style={styles.actionButtonText}>Ver Ficha</Text>
+            <Ionicons name="person-circle-outline" size={18} color={Colors.buttonTextLight} />
+            <Text style={styles.actionButtonText}>Ficha</Text>
           </TouchableOpacity>
 
+          {/* BOTÃO DE REMOVER */}
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: Colors.errorRed }]}
             onPress={() => confirmarRemocao(item)}
@@ -250,131 +303,37 @@ export default function ClientesScreen() {
     );
   }
 
-  const adminDisplayName = adminInfo?.nome || adminInfo?.name || 'Admin';
-  const adminInitial = adminDisplayName ? adminDisplayName.charAt(0).toUpperCase() : 'A';
+  const searchHeaderProps = {
+    pesquisa: pesquisa,
+    setPesquisa: setPesquisa,
+    clientesFiltradosCount: clientesFiltrados.length,
+    showEmptyResults: clientesFiltrados.length === 0 && (pesquisa !== ''),
+    emptyResultsText: "Nenhum cliente corresponde ao seu critério de pesquisa.",
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Barra Fixa Superior (Header) */}
-      <View style={styles.header}>
-        <Image
-          source={require('../../assets/logo.jpeg')}
-          style={styles.headerLogo}
-          resizeMode="contain"
-        />
-        <View style={styles.userInfo}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{adminInitial}</Text>
-          </View>
-          <Text style={styles.userNameText}>Olá, {adminDisplayName.split(' ')[0]}</Text>
-        </View>
-      </View>
-
+      <AppHeaderPersonalizado title="Os Meus Alunos" />
       <FlatList
         data={clientesFiltrados}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContainer}
+        contentContainerStyle={styles.listContentPadding}
         renderItem={renderItem}
-        ListHeaderComponent={() => (
-          <View>
-            {/* Contagem de Clientes - Agora sem margin horizontal */}
-            <View style={styles.totalClientsContainer}>
-              <Text style={styles.totalClientsText}>
-                <Ionicons name="people-outline" size={20} color={Colors.darkBrown} /> {clientesFiltrados.length} clientes encontrados
-              </Text>
-            </View>
-
-            {/* Campo de Pesquisa - Agora sem margin horizontal */}
-            <View style={styles.searchInputContainer}>
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="🔍 Pesquisar por nome ou email..."
-                  placeholderTextColor={Colors.mediumGray}
-                  value={pesquisa}
-                  onChangeText={setPesquisa}
-                />
-            </View>
-
-
-            {/* Filtros e Ordenação (Compactos e Horizontais) - Agora sem margin horizontal */}
-            <View style={styles.filterSortRow}>
-              <Text style={styles.filterSortLabel}>Filtrar:</Text>
-              <View style={styles.filterButtonGroup}>
-                <TouchableOpacity
-                  style={[
-                    styles.filterButtonCompact,
-                    filtroTipo === 'Todos' && styles.filterButtonActiveCompact,
-                  ]}
-                  onPress={() => setFiltroTipo('Todos')}
-                >
-                  <Text style={[styles.filterButtonTextCompact, filtroTipo === 'Todos' && styles.filterButtonTextActiveCompact]}>Todos</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.filterButtonCompact,
-                    filtroTipo === 'ComTreinos' && styles.filterButtonActiveCompact,
-                  ]}
-                  onPress={() => setFiltroTipo('ComTreinos')}
-                >
-                  <Text style={[styles.filterButtonTextCompact, filtroTipo === 'ComTreinos' && styles.filterButtonTextActiveCompact]}>Com Treinos</Text>
-                </TouchableOpacity>
-                 <TouchableOpacity
-                  style={[
-                    styles.filterButtonCompact,
-                    filtroTipo === 'SemTreinos' && styles.filterButtonActiveCompact,
-                  ]}
-                  onPress={() => setFiltroTipo('SemTreinos')}
-                >
-                  <Text style={[styles.filterButtonTextCompact, filtroTipo === 'SemTreinos' && styles.filterButtonTextActiveCompact]}>Sem Treinos</Text>
-                </TouchableOpacity>
-              </View>
-
-              <Text style={styles.filterSortLabel}>Ordenar:</Text>
-              <View style={styles.filterButtonGroup}>
-                <TouchableOpacity
-                  style={[
-                    styles.filterButtonCompact,
-                    ordem === 'recente' && styles.filterButtonActiveCompact,
-                  ]}
-                  onPress={() => setOrdem('recente')}
-                >
-                  <Text style={[styles.filterButtonTextCompact, ordem === 'recente' && styles.filterButtonTextActiveCompact]}>Recentes</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.filterButtonCompact,
-                    ordem === 'antigo' && styles.filterButtonActiveCompact,
-                  ]}
-                  onPress={() => setOrdem('antigo')}
-                >
-                  <Text style={[styles.filterButtonTextCompact, ordem === 'antigo' && styles.filterButtonTextActiveCompact]}>Antigos</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-             {clientesFiltrados.length === 0 && (
-                <View style={styles.emptyResultsContainer}>
-                  <Ionicons name="sad-outline" size={50} color={Colors.mediumGray} />
-                  <Text style={styles.emptyResultsText}>
-                    Nenhum cliente corresponde aos seus critérios de pesquisa/filtro.
-                  </Text>
-                </View>
-              )}
-          </View>
-        )}
+        ListHeaderComponent={<SearchHeader {...searchHeaderProps} />}
         ListEmptyComponent={!loading && clientes.length === 0 && (
-            <View style={styles.emptyResultsContainer}>
-                <Ionicons name="people-outline" size={50} color={Colors.mediumGray} />
-                <Text style={styles.emptyResultsText}>
-                    Ainda não há clientes registados.
-                </Text>
-                <TouchableOpacity
-                    style={styles.addButton}
-                    onPress={() => navigation.navigate('CadastroCliente')}
-                >
-                    <Ionicons name="add-circle-outline" size={24} color={Colors.buttonTextLight} />
-                    <Text style={styles.addButtonText}>Adicionar Primeiro Cliente</Text>
-                </TouchableOpacity>
-            </View>
+          <View style={styles.emptyResultsContainer}>
+            <Ionicons name="people-outline" size={50} color={Colors.mediumGray} />
+            <Text style={styles.emptyResultsText}>
+              Ainda não há clientes registados.
+            </Text>
+            <TouchableOpacity
+              style={[styles.addButton, GlobalStyles.shadow]}
+              onPress={() => navigation.navigate('CadastroCliente')}
+            >
+              <Ionicons name="add-circle-outline" size={24} color={Colors.buttonTextLight} />
+              <Text style={styles.addButtonText}>Adicionar Primeiro Cliente</Text>
+            </TouchableOpacity>
+          </View>
         )}
       />
     </SafeAreaView>
@@ -385,7 +344,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.creamBackground,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   loadingContainer: {
     flex: 1,
@@ -399,197 +357,18 @@ const styles = StyleSheet.create({
     color: Colors.darkBrown,
     fontWeight: '500',
   },
-  // --- Header ---
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: Colors.primaryGold,
-    borderBottomLeftRadius: 15,
-    borderBottomRightRadius: 15,
-    shadowColor: Colors.darkBrown,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 6,
-    marginBottom: 5,
-  },
-  headerLogo: {
-    width: 45,
-    height: 45,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.white,
-  },
-  userInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: Colors.darkBrown,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-    borderWidth: 2,
-    borderColor: Colors.white,
-  },
-  avatarText: {
-    color: Colors.white,
-    fontSize: 19,
-    fontWeight: '700',
-  },
-  userNameText: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: Colors.white,
-  },
-
-  // --- List Header Components (Search, Filters, Total) ---
-  // Novo contêiner para o total de clientes
-  totalClientsContainer: {
-    width: '100%', // Ocupa a largura total
-    backgroundColor: Colors.creamBackground, // Fundo transparente ou da tela
-    paddingVertical: 20, // Mantém o padding vertical
-    paddingHorizontal: 20, // Adiciona padding interno
-    marginBottom: 15, // Mantém a margem inferior
-  },
-  totalClientsText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: Colors.darkBrown,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  // Novo contêiner para a barra de pesquisa
-  searchInputContainer: {
-    width: '100%',
-    backgroundColor: Colors.white, // Fundo branco
-    paddingHorizontal: 20, // Adiciona padding interno
-    paddingVertical: 12, // Mantém o padding vertical
-    marginBottom: 20,
-    borderRadius: 10, // Arredonda as bordas
-    shadowColor: Colors.shadow, // Sombra
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
-    marginHorizontal: 0, // Remove a margem horizontal
-  },
-  searchInput: {
-    // Estilos internos do TextInput
-    flex: 1, // Ocupa o espaço disponível
-    fontSize: 16,
-    color: Colors.darkGray,
-    padding: 0, // Remover padding interno do TextInput se já tiver no container
-  },
-  // Contêiner de filtros e ordenação - Alterado para ter padding interno
-  filterSortRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    marginHorizontal: 0, // Remove a margem horizontal
-    marginBottom: 20,
-    backgroundColor: Colors.white,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 15, // Adiciona padding interno
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  filterSortLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: Colors.darkBrown,
-    marginRight: 8,
-  },
-  filterButtonGroup: {
-    flexDirection: 'row',
-    gap: 8,
-    marginRight: 15,
-    paddingVertical: 5,
-  },
-  filterButtonCompact: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: Colors.mediumGray,
-    backgroundColor: Colors.lightGray,
-  },
-  filterButtonActiveCompact: {
-    backgroundColor: Colors.primaryGold,
-    borderColor: Colors.primaryGold,
-  },
-  filterButtonTextCompact: {
-    fontSize: 13,
-    color: Colors.darkGray,
-    fontWeight: '500',
-  },
-  filterButtonTextActiveCompact: {
-    color: Colors.buttonTextLight,
-    fontWeight: '700',
-  },
-  emptyResultsContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 40,
-    paddingHorizontal: 30,
-    textAlign: 'center',
-  },
-  emptyResultsText: {
-    fontSize: 17,
-    color: Colors.mediumGray,
-    marginTop: 15,
-    textAlign: 'center',
-    lineHeight: 24,
-  },
-  addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.primaryGold,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    marginTop: 25,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 5,
-    elevation: 5,
-  },
-  addButtonText: {
-    color: Colors.buttonTextLight,
-    fontSize: 17,
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-
-  // --- Client List & Cards ---
-  listContainer: {
-    paddingHorizontal: 20, // Mantém o padding para os cards
+  listContentPadding: {
     paddingBottom: 30,
+    paddingTop: 10,
   },
   card: {
     backgroundColor: Colors.white,
     borderRadius: 15,
     padding: 18,
     marginBottom: 15,
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
     borderWidth: 1,
     borderColor: Colors.lightGray,
+    marginHorizontal: 20,
   },
   headerCard: {
     flexDirection: 'row',
@@ -649,7 +428,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 10,
     flex: 1,
-    minWidth: (width - 40 - 16) / 3,
+    minWidth: (width - (20 * 2) - (8 * 3)) / 4, // Ajustado para 4 botões
     shadowColor: Colors.shadow,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -661,5 +440,36 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 13,
     marginLeft: 6,
+    textAlign: 'center',
+  },
+  emptyResultsContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 30,
+    textAlign: 'center',
+  },
+  emptyResultsText: {
+    fontSize: 17,
+    color: Colors.mediumGray,
+    marginTop: 15,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  addButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primaryGold,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    marginTop: 25,
+  },
+  addButtonText: {
+    color: Colors.buttonTextLight,
+    fontSize: 17,
+    fontWeight: '600',
+    marginLeft: 8,
   },
 });

@@ -1,466 +1,308 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ActivityIndicator,
   ScrollView,
+  TouchableOpacity,
   TextInput,
   Alert,
-  TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
+  SafeAreaView,
 } from 'react-native';
-import {
-  doc,
-  getDoc,
-  collection,
-  query,
-  where,
-  getDocs,
-  setDoc, 
-  Timestamp,
-} from 'firebase/firestore';
-import { db, auth } from '../../services/firebaseConfig';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { getUserIdLoggedIn } from '../../services/authService'; 
+import { doc, getDoc, addDoc, collection } from 'firebase/firestore';
+import { db } from '../../services/firebaseConfig';
+import { getUserIdLoggedIn } from '../../services/authService';
+
+const COLORS = {
+  primary: '#FBBF24',
+  background: '#F9FAFB',
+  card: '#FFFFFF',
+  textDark: '#1F2937',
+  textMedium: '#4B5563',
+  textLight: '#9CA3AF',
+  border: '#E5E7EB',
+  error: '#EF4444',
+  selected: '#D1FAE5',
+};
 
 export default function ResponderQuestionarioScreen() {
   const route = useRoute();
   const navigation = useNavigation();
- 
-  const questionarioId = route.params?.questionarioId;
+  const { questionarioId } = route.params;
 
-  const [questionario, setQuestionario] = useState(null); // Alterado para null, pois é um objeto
+  const [questionario, setQuestionario] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState('');
-  const [jaRespondeu, setJaRespondeu] = useState(false);
   const [respostas, setRespostas] = useState({});
-  const [userId, setUserId] = useState(null); // Estado para armazenar o userId logado
+  const [userId, setUserId] = useState(null);
 
-  // Efeito para obter o userId assim que o componente monta
   useEffect(() => {
-    async function loadUserId() {
-      const currentUserId = await getUserIdLoggedIn();
-      setUserId(currentUserId);
-      if (!currentUserId) {
-        setErrorMsg('Usuário não autenticado.');
+    async function fetchData() {
+      try {
+        const uid = await getUserIdLoggedIn();
+        if (!uid) throw new Error('Usuário não autenticado');
+        setUserId(uid);
+
+        const docRef = doc(db, 'questionarios', questionarioId);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setQuestionario(data);
+        } else {
+          Alert.alert('Erro', 'Questionário não encontrado.');
+          navigation.goBack();
+        }
+      } catch (error) {
+        console.error('Erro ao carregar questionário:', error);
+        Alert.alert('Erro', 'Não foi possível carregar o questionário.');
+      } finally {
         setLoading(false);
       }
     }
-    loadUserId();
+
+    fetchData();
   }, []);
-
-  const carregarQuestionario = useCallback(async () => {
-    if (!userId || !questionarioId) {
-      // Espera o userId e questionarioId estarem disponíveis
-      return;
-    }
-
-    setLoading(true);
-    setErrorMsg(''); // Limpa mensagens de erro anteriores
-    setJaRespondeu(false); // Reseta o status de respondido
-
-    try {
-      // 1. Verificar se o usuário já respondeu a este questionário
-      const respostasQuery = query(
-        collection(db, 'respostasQuestionarios'), // Coleção raiz para respostas
-        where('questionarioId', '==', questionarioId),
-        where('userId', '==', userId)
-      );
-      const respostasSnapshot = await getDocs(respostasQuery);
-      if (!respostasSnapshot.empty) {
-        setJaRespondeu(true);
-        setLoading(false);
-        return; // Sai da função se já respondeu
-      }
-
-      // 2. Carregar o questionário da coleção 'questionariosPublicos'
-      const questionarioSnap = await getDoc(
-        doc(db, 'questionariosPublicos', questionarioId) // Caminho corrigido
-      );
-
-      if (questionarioSnap.exists()) {
-        const data = questionarioSnap.data();
-        // Garante que 'perguntas' e 'opcoes' são arrays
-        const perguntasComOpcoesSeguras = (data.perguntas || []).map((p) => ({
-          ...p,
-          opcoes: Array.isArray(p.opcoes) ? p.opcoes : [],
-        }));
-        setQuestionario({ id: questionarioSnap.id, ...data, perguntas: perguntasComOpcoesSeguras });
-        
-        // Inicializa as respostas para cada pergunta
-        const initialRespostas = {};
-        perguntasComOpcoesSeguras.forEach(pergunta => {
-            if (pergunta.tipo === 'multipla') {
-                initialRespostas[pergunta.id] = [];
-            } else {
-                initialRespostas[pergunta.id] = '';
-            }
-        });
-        setRespostas(initialRespostas);
-
-      } else {
-        setErrorMsg('Questionário não encontrado.');
-      }
-    } catch (error) {
-      console.error("Erro ao carregar questionário:", error);
-      setErrorMsg('Erro ao carregar questionário. Tente novamente.');
-    } finally {
-      setLoading(false);
-    }
-  }, [userId, questionarioId]); // Dependências: recarrega se userId ou questionarioId mudar
-
-  // Chama a função de carregamento quando userId ou questionarioId estiverem prontos
-  useEffect(() => {
-    carregarQuestionario();
-  }, [carregarQuestionario]);
-
 
   const handleChangeResposta = (perguntaId, valor, tipo) => {
     setRespostas((prev) => {
       if (tipo === 'multipla') {
-        const respostasAtuais = prev[perguntaId] || [];
-        if (respostasAtuais.includes(valor)) {
-          return { ...prev, [perguntaId]: respostasAtuais.filter((v) => v !== valor) };
+        const atual = prev[perguntaId] || [];
+        if (atual.includes(valor)) {
+          return {
+            ...prev,
+            [perguntaId]: atual.filter((v) => v !== valor),
+          };
         } else {
-          return { ...prev, [perguntaId]: [...respostasAtuais, valor] };
+          return {
+            ...prev,
+            [perguntaId]: [...atual, valor],
+          };
         }
       } else {
-        return { ...prev, [perguntaId]: valor };
+        return {
+          ...prev,
+          [perguntaId]: valor,
+        };
       }
     });
   };
 
-  const handleEnviar = async () => {
-    if (!userId) {
-      Alert.alert('Erro', 'Usuário não autenticado.');
+ const handleSubmit = async () => {
+  if (!questionario || !questionario.perguntas) return;
+
+  // Validar se todas foram respondidas
+  for (const pergunta of questionario.perguntas) {
+    const resposta = respostas[pergunta.id];
+    const estaVazia =
+      resposta === undefined ||
+      (typeof resposta === 'string' && resposta.trim() === '') ||
+      (Array.isArray(resposta) && resposta.length === 0);
+
+    if (estaVazia) {
+      Alert.alert('Atenção', 'Responda todas as perguntas antes de enviar.');
       return;
     }
-    if (!questionario) {
-      Alert.alert('Erro', 'Questionário não carregado.');
-      return;
-    }
+  }
 
-    // Validação de todas as perguntas respondidas
-    for (let pergunta of questionario.perguntas) {
-      const resposta = respostas[pergunta.id];
-      if (
-        resposta === undefined ||
-        resposta === null ||
-        (Array.isArray(resposta) && resposta.length === 0) ||
-        (typeof resposta === 'string' && resposta.trim() === '')
-      ) {
-        Alert.alert('Atenção', `Por favor, responda a pergunta: "${pergunta.pergunta}"`);
-        return;
-      }
-    }
+  try {
+    // Montar respostas detalhadas com pergunta + resposta
+    const respostasDetalhadas = questionario.perguntas.map((pergunta) => ({
+      pergunta: pergunta.texto,
+      resposta: respostas[pergunta.id],
+    }));
 
-    setLoading(true);
-    try {
-      // Salva a resposta na coleção raiz 'respostasQuestionarios'
-      // Usa um ID composto para garantir unicidade por usuário e questionário
-      const respostaDocRef = doc(db, 'respostasQuestionarios', `${questionarioId}_${userId}`);
-      await setDoc(respostaDocRef, {
-        questionarioId: questionarioId,
-        userId: userId,
-        respostas: respostas,
-        dataEnvio: Timestamp.now(),
-      });
-      
-      Alert.alert('Sucesso', 'Questionário enviado com sucesso!');
-      setJaRespondeu(true); // Marca como respondido
-      navigation.goBack(); // Volta para a tela anterior (ListarQuestionariosUserScreen)
+    await addDoc(collection(db, 'respostasQuestionarios'), {
+      userId,
+      questionarioId,
+      nomeQuestionario: questionario.titulo || 'Sem nome',
+      respostasDetalhadas,
+      timestamp: new Date(),
+    });
 
-    } catch (error) {
-      console.error("Erro ao enviar respostas:", error);
-      Alert.alert('Erro', 'Falha ao enviar respostas. Tente novamente.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    Alert.alert('Sucesso', 'Respostas enviadas com sucesso!', [
+      { text: 'OK', onPress: () => navigation.goBack() },
+    ]);
+  } catch (error) {
+    console.error('Erro ao enviar respostas:', error);
+    Alert.alert('Erro', 'Não foi possível enviar suas respostas.');
+  }
+};
+
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#d0a956" />
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={styles.loadingText}>Carregando questionário...</Text>
       </View>
     );
   }
 
-  if (errorMsg) {
-    return (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>{errorMsg}</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Text style={styles.backButtonText}>Voltar</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  if (jaRespondeu) {
-    return (
-      <View style={styles.messageContainer}>
-        <Text style={styles.messageText}>Você já respondeu a este questionário. Obrigado!</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Text style={styles.backButtonText}>Voltar</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  // Se questionario é null (não encontrado ou erro)
   if (!questionario) {
     return (
-      <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>Nenhum questionário disponível ou encontrado.</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Text style={styles.backButtonText}>Voltar</Text>
-        </TouchableOpacity>
+      <View style={styles.centered}>
+        <Text style={styles.errorText}>Questionário não encontrado.</Text>
       </View>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0} // Ajuste o offset conforme necessário
-    >
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.title}>{questionario.nome || 'Questionário'}</Text> 
-        {questionario.descricao && <Text style={styles.description}>{questionario.descricao}</Text>}
-
-        {questionario.perguntas && questionario.perguntas.length > 0 ? (
-          questionario.perguntas.map((pergunta) => {
-            const opcoes = Array.isArray(pergunta.opcoes) ? pergunta.opcoes : [];
-            const perguntaId = pergunta.id || pergunta.pergunta; // Usar ID único se disponível, senão o texto da pergunta
-
-            return (
-              <View key={perguntaId} style={styles.perguntaContainer}>
-                <Text style={styles.perguntaTexto}>{pergunta.pergunta}</Text>
-
-                {pergunta.tipo === 'texto' && (
-                  <TextInput
-                    style={styles.input}
-                    value={respostas[perguntaId] || ''}
-                    onChangeText={(text) => handleChangeResposta(perguntaId, text, 'texto')}
-                    placeholder="Digite sua resposta"
-                    multiline={true} // Para textos longos
-                    numberOfLines={4}
-                    textAlignVertical="top"
-                  />
-                )}
-
-                {(pergunta.tipo === 'unica' || pergunta.tipo === 'multipla') && opcoes.length > 0 ? (
-                  opcoes.map((opcao) => {
-                    const selecionado =
-                      pergunta.tipo === 'multipla'
-                        ? (respostas[perguntaId] || []).includes(opcao)
-                        : respostas[perguntaId] === opcao;
-
-                    return (
-                      <TouchableOpacity
-                        key={opcao}
-                        style={[
-                          styles.opcaoButton,
-                          selecionado && styles.opcaoButtonSelected,
-                        ]}
-                        onPress={() => handleChangeResposta(perguntaId, opcao, pergunta.tipo)}
-                      >
-                        <Text style={[styles.opcaoTexto, selecionado && { color: '#fff' }]}>
-                          {opcao}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })
-                ) : (pergunta.tipo === 'unica' || pergunta.tipo === 'multipla') && (
-                  <Text style={styles.warningText}>
-                    ⚠ Opções não encontradas para esta pergunta.
-                  </Text>
-                )}
-              </View>
-            );
-          })
-        ) : (
-          <Text style={styles.emptyText}>Nenhuma pergunta disponível neste questionário.</Text>
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.scroll}>
+        <Text style={styles.title}>{questionario.nome}</Text>
+        {questionario.descricao && (
+          <Text style={styles.descricao}>{questionario.descricao}</Text>
         )}
 
-        <View style={styles.buttonWrapper}>
-          <TouchableOpacity style={styles.enviarButton} onPress={handleEnviar} disabled={loading}>
-            <Text style={styles.enviarButtonText}>Enviar Respostas</Text>
-          </TouchableOpacity>
-        </View>
+        {questionario.perguntas?.map((pergunta) => (
+          <View key={pergunta.id} style={styles.perguntaContainer}>
+            <Text style={styles.perguntaTexto}>{pergunta.texto}</Text>
+
+            {/* Perguntas de texto */}
+            {pergunta.tipo === 'texto' && (
+              <TextInput
+                style={styles.inputTexto}
+                placeholder="Digite sua resposta"
+                value={respostas[pergunta.id] || ''}
+                onChangeText={(texto) =>
+                  handleChangeResposta(pergunta.id, texto, 'texto')
+                }
+                multiline
+              />
+            )}
+
+            {/* Perguntas de opção única ou múltipla */}
+            {(pergunta.tipo === 'unica' || pergunta.tipo === 'multipla') &&
+              pergunta.opcoes?.map((opcao) => {
+                const selecionado =
+                  pergunta.tipo === 'multipla'
+                    ? (respostas[pergunta.id] || []).includes(opcao.texto)
+                    : respostas[pergunta.id] === opcao.texto;
+
+                return (
+                  <TouchableOpacity
+                    key={opcao.id}
+                    style={[
+                      styles.opcaoButton,
+                      selecionado && styles.opcaoSelecionada,
+                    ]}
+                    onPress={() =>
+                      handleChangeResposta(
+                        pergunta.id,
+                        opcao.texto,
+                        pergunta.tipo
+                      )
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.opcaoTexto,
+                        selecionado && styles.opcaoTextoSelecionado,
+                      ]}
+                    >
+                      {opcao.texto}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+          </View>
+        ))}
+
+        <TouchableOpacity style={styles.enviarButton} onPress={handleSubmit}>
+          <Text style={styles.enviarTexto}>Enviar Respostas</Text>
+        </TouchableOpacity>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  loadingContainer: {
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  scroll: {
+    padding: 20,
+    paddingBottom: 40,
+  },
+  centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f9fafb',
+    backgroundColor: COLORS.background,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: COLORS.textDark,
+    marginBottom: 10,
+  },
+  descricao: {
+    fontSize: 16,
+    color: COLORS.textMedium,
+    marginBottom: 20,
+  },
+  perguntaContainer: {
+    marginBottom: 25,
+  },
+  perguntaTexto: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginBottom: 10,
+  },
+  inputTexto: {
+    backgroundColor: COLORS.card,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 16,
+    marginBottom: 10,
+    minHeight: 60,
+    textAlignVertical: 'top',
+  },
+  opcaoButton: {
+    backgroundColor: COLORS.card,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginBottom: 10,
+  },
+  opcaoSelecionada: {
+    backgroundColor: COLORS.selected,
+    borderColor: COLORS.primary,
+  },
+  opcaoTexto: {
+    fontSize: 16,
+    color: COLORS.textMedium,
+  },
+  opcaoTextoSelecionado: {
+    color: COLORS.textDark,
+    fontWeight: 'bold',
+  },
+  enviarButton: {
+    marginTop: 20,
+    backgroundColor: COLORS.primary,
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  enviarTexto: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#FFF',
   },
   loadingText: {
     marginTop: 10,
     fontSize: 16,
-    color: '#6b7280',
-  },
-  errorContainer: { // Novo estilo para mensagens de erro
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#fef2f2', // Fundo vermelho claro
-    borderColor: '#ef4444',
-    borderWidth: 1,
-    borderRadius: 10,
-    margin: 20,
+    color: COLORS.textMedium,
   },
   errorText: {
     fontSize: 18,
-    color: '#ef4444',
-    textAlign: 'center',
-    marginBottom: 20,
-    fontWeight: 'bold',
-  },
-  messageContainer: { // Novo estilo para mensagens de "já respondeu"
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#ecfdf5', // Fundo verde claro
-    borderColor: '#10b981',
-    borderWidth: 1,
-    borderRadius: 10,
-    margin: 20,
-  },
-  messageText: {
-    fontSize: 18,
-    color: '#065f46',
-    textAlign: 'center',
-    marginBottom: 20,
-    fontWeight: 'bold',
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#f9fafb',
-  },
-  emptyText: {
-    fontSize: 16,
-    color: '#6b7280',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  backButton: {
-    backgroundColor: '#d0a956',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    marginTop: 10,
-  },
-  backButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 100, // Espaço extra para o teclado
-    backgroundColor: '#f9fafb', // Cor de fundo consistente
-  },
-  title: {
-    fontSize: 28, // Maior
-    fontWeight: 'bold',
-    marginBottom: 10,
-    color: '#1f2937', // Mais escuro
-    textAlign: 'center',
-  },
-  description: { // Novo estilo para descrição do questionário
-    fontSize: 16,
-    color: '#4b5563',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  perguntaContainer: {
-    marginBottom: 25, // Mais espaço entre perguntas
-    backgroundColor: '#fff',
-    padding: 18, // Mais padding
-    borderRadius: 12,
-    borderColor: '#e5e7eb', // Borda mais suave
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  perguntaTexto: {
-    fontSize: 17, // Ligeiramente maior
-    fontWeight: '600',
-    marginBottom: 12, // Mais espaço
-    color: '#374151',
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: 12, // Mais padding
-    fontSize: 16,
-    backgroundColor: '#fafafa',
-    color: '#1f2937',
-    minHeight: 100, // Altura mínima para texto longo
-    textAlignVertical: 'top',
-  },
-  opcaoButton: {
-    borderWidth: 1,
-    borderColor: '#d0a956',
-    borderRadius: 8,
-    paddingVertical: 12, // Mais padding
-    paddingHorizontal: 16,
-    marginVertical: 6, // Mais espaço vertical
-    backgroundColor: '#fff',
-    alignItems: 'center', // Centraliza o texto
-  },
-  opcaoButtonSelected: {
-    backgroundColor: '#d0a956',
-    borderColor: '#d0a956', // Borda da mesma cor
-  },
-  opcaoTexto: {
-    color: '#d0a956',
-    fontWeight: '600',
-    fontSize: 16, // Ligeiramente maior
-  },
-  warningText: { // Estilo para avisos de opções ausentes
-    color: '#f59e0b', // Amarelo/Laranja
-    fontSize: 14,
-    fontStyle: 'italic',
-    marginTop: 10,
-    textAlign: 'center',
-  },
-  buttonWrapper: {
-    marginTop: 30,
-    marginBottom: 50,
-  },
-  enviarButton: {
-    backgroundColor: '#d0a956',
-    paddingVertical: 16, // Mais padding
-    borderRadius: 10,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.15, // Sombra mais forte
-    shadowRadius: 6,
-    elevation: 5,
-  },
-  enviarButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
+    color: COLORS.error,
   },
 });

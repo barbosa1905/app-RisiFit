@@ -14,7 +14,7 @@ import {
 // 🔍 Salvar questionário
 export async function salvarQuestionario(adminId, questionario) {
   try {
-    const collectionRef = collection(db, "admins", adminId, "questionarios");
+    const collectionRef = collection(db, "admin", adminId, "questionarios");
     await addDoc(collectionRef, questionario);
     return true;
   } catch (error) {

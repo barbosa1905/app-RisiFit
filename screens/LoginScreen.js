@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
@@ -17,9 +18,11 @@ import {
 } from 'react-native';
 import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { auth, db } from '../services/firebaseConfig';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc,updateDoc } from 'firebase/firestore';
 import { Ionicons } from '@expo/vector-icons';
 import { useUser } from '../contexts/UserContext';
+// IMPORTAR A NOVA TELA DE REDEFINIÇÃO DE SENHA
+import PasswordResetRequiredScreen from './PasswordResetRequiredScreen'; // <<< ADICIONE ESTA LINHA
 
 export default function LoginScreen({ navigation }) {
   const { setUser, setRole } = useUser();
@@ -57,90 +60,98 @@ export default function LoginScreen({ navigation }) {
   }, []);
 
   const handleLogin = useCallback(async () => {
-    const trimmedEmail = email.trim();
-    const trimmedPassword = password.trim();
+  const trimmedEmail = email.trim();
+  const trimmedPassword = password.trim();
 
-    if (!trimmedEmail || !trimmedPassword) {
-      setErrorMsg('Preencha o email e a senha.');
-      return;
-    }
-
-    if (!selectedLoginRole) {
-      setErrorMsg('Erro: Tipo de utilizador não selecionado. Por favor, reinicie.');
-      return;
-    }
-
-    try {
-      const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
-      const user = userCredential.user;
-
-      const userDocRef = doc(db, 'users', user.uid);
-      const userDocSnap = await getDoc(userDocRef);
-
-      if (!userDocSnap.exists()) {
-        setErrorMsg('Dados do utilizador não encontrados no Firebase.');
-        return;
-      }
-
-      const userData = userDocSnap.data();
-      const firebaseRole = userData.role;
-
-      let expectedSelectedRoleType = null;
-      if (firebaseRole === 'user') {
-        expectedSelectedRoleType = 'aluno';
-      } else if (firebaseRole === 'admin') {
-        expectedSelectedRoleType = 'personalTrainer';
-      } else {
-        setErrorMsg('Tipo de utilizador desconhecido no Firebase. Contacte o suporte.');
-        return;
-      }
-
-      if (selectedLoginRole !== expectedSelectedRoleType) {
-        setErrorMsg(`A sua conta é de ${expectedSelectedRoleType === 'aluno' ? 'Aluno' : 'Personal Trainer'}. Por favor, selecione o tipo correto.`);
-        return;
-      }
-
-      setUser(user);
-      setRole(firebaseRole);
-      setErrorMsg('');
-
-      if (firebaseRole === 'admin') {
-        navigation.replace('AdminTabs', { user });
-      } else if (firebaseRole === 'user') {
-        navigation.replace('UserTabs', { user });
-      } else {
-        setErrorMsg('Erro de navegação: Papel do utilizador não reconhecido.');
-      }
-    } catch (error) {
-      handleAuthError(error);
-    }
-  }, [email, password, navigation, setRole, setUser, selectedLoginRole]);
-
-const handleAuthError = (error) => {
-  switch (error.code) {
-    case 'auth/user-not-found':
-      setErrorMsg('Utilizador não encontrado. Verifique o email.');
-      break;
-    case 'auth/wrong-password':
-      setErrorMsg('Senha incorreta. Tente novamente ou redefina a senha.');
-      break;
-    case 'auth/invalid-email':
-      setErrorMsg('Email inválido. Verifique o formato do email.');
-      break;
-    case 'auth/invalid-credential': // Adicione esta linha
-      setErrorMsg('Credenciais inválidas. Verifique o email e a senha.'); // Mensagem mais clara
-      break;
-    case 'auth/too-many-requests':
-      setErrorMsg('Muitas tentativas de login falhadas. Tente novamente mais tarde.');
-      break;
-    case 'auth/user-disabled': // Adicione este caso também, caso um utilizador seja desativado
-      setErrorMsg('A sua conta foi desativada. Contacte o suporte.');
-      break;
-    default:
-      setErrorMsg('Erro ao fazer login. Tente novamente.');
-      console.error('Erro de autenticação:', error);
+  if (!trimmedEmail || !trimmedPassword) {
+    setErrorMsg('Preencha o email e a senha.');
+    return;
   }
-};
+
+  if (!selectedLoginRole) {
+    setErrorMsg('Erro: Tipo de utilizador não selecionado. Por favor, reinicie.');
+    return;
+  }
+
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
+    const user = userCredential.user; // O usuário autenticado
+
+    const userDocRef = doc(db, 'users', user.uid);
+    const userDocSnap = await getDoc(userDocRef);
+
+    if (!userDocSnap.exists()) {
+      setErrorMsg('Dados do utilizador não encontrados no Firebase.');
+      return;
+    }
+
+    const userData = userDocSnap.data();
+    const firebaseRole = userData.role;
+
+    // ======================================================================
+    // LÓGICA DE VERIFICAÇÃO passwordResetRequired - REDIRECIONAR PARA TELA NA APP
+    // ======================================================================
+    if (userData.PasswordResetRequiredScreen) { // Use o nome exato da sua propriedade
+      // Se a flag estiver true, navega para a tela de redefinição de senha DENTRO DA APP
+      navigation.replace('PasswordResetRequiredScreen', { userId: user.uid, email: user.email });
+      return; // Impede o login normal e a navegação para AdminTabs/UserTabs
+    }
+    // ======================================================================
+    // FIM DA LÓGICA DE VERIFICAÇÃO E TRATAMENTO DA passwordResetRequired
+    // ======================================================================
+
+    // Se a flag PasswordResetRequiredScreen não for true, o login é normal.
+    // Prossiga com a verificação de papel e navegação.
+    let expectedSelectedRoleType = null;
+    if (firebaseRole === 'user') {
+      expectedSelectedRoleType = 'aluno';
+    } else if (firebaseRole === 'admin') {
+      expectedSelectedRoleType = 'personalTrainer';
+    } else {
+      setErrorMsg('Tipo de utilizador desconhecido no Firebase. Contacte o suporte.');
+      return;
+    }
+
+    if (selectedLoginRole !== expectedSelectedRoleType) {
+      setErrorMsg(`A sua conta é de ${expectedSelectedRoleType === 'aluno' ? 'Aluno' : 'Personal Trainer'}. Por favor, selecione o tipo correto.`);
+      return;
+    }
+
+    setUser(user);
+    setRole(firebaseRole);
+    setErrorMsg('');
+
+    if (firebaseRole === 'admin') {
+      navigation.replace('AdminTabs', { user });
+    } else if (firebaseRole === 'user') {
+      navigation.replace('UserTabs', { user });
+    } else {
+      setErrorMsg('Erro de navegação: Papel do utilizador não reconhecido.');
+    }
+  } catch (error) {
+    handleAuthError(error);
+  }
+}, [email, password, navigation, setRole, setUser, selectedLoginRole]);
+
+   const handleAuthError = (error) => {
+    switch (error.code) {
+      case 'auth/user-not-found':
+        setErrorMsg('Utilizador não encontrado.');
+        break;
+      case 'auth/wrong-password':
+        setErrorMsg('Senha incorreta.');
+        break;
+      case 'auth/invalid-email':
+        setErrorMsg('Email inválido.');
+        break;
+      case 'auth/too-many-requests':
+        setErrorMsg('Muitas tentativas. Tente novamente mais tarde.');
+        break;
+      default:
+        setErrorMsg('Erro ao fazer login. Tente novamente.');
+        console.error('Erro de autenticação:', error);
+    }
+  };
 
   const handlePasswordReset = useCallback(async () => {
     try {
@@ -185,7 +196,7 @@ const handleAuthError = (error) => {
           keyboardShouldPersistTaps="handled"
         >
           <Image
-            source={require('../assets/logo.jpeg')}
+            source={require('../assets/logo.png')}
             style={styles.logo}
             resizeMode="contain"
           />

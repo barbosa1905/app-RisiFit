@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,24 +6,114 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   Alert,
-  // Removido: Image, // Não precisamos mais do componente Image diretamente para o avatar
   ScrollView,
   Platform,
+  SafeAreaView,
+  StatusBar,
 } from 'react-native';
-import { useUser } from '../../contexts/UserContext';
-import { doc, getDoc } from 'firebase/firestore';
-import { db, auth } from '../../services/firebaseConfig';
-import { signOut } from 'firebase/auth';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { doc, getDoc, getFirestore } from 'firebase/firestore';
+import { getAuth, signOut, onAuthStateChanged } from 'firebase/auth';
+import { useNavigation, useFocusEffect, CommonActions } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+
+// --- FIREBASE CONFIGURATION: Makes the component self-sufficient ---
+// Replace with your credentials
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_STORAGE_BUCKET",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId: "YOUR_APP_ID",
+};
+
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+// --- PALETA DE CORES E ESTILOS GLOBAIS ---
+const Colors = {
+  primary: '#B8860B',
+  primaryLight: '#D4AF37',
+  primaryDark: '#8B6B08',
+  secondary: '#000000ff',
+  secondaryLight: '#4A4E46',
+  secondaryDark: '#1C201A',
+  accent: '#FFD700',
+  accentLight: '#FFE066',
+  accentDark: '#CCAA00',
+  background: '#F0F0F0',
+  surface: '#FFFFFF',
+  cardBackground: '#FFFFFF',
+  textPrimary: '#1A1A1A',
+  textSecondary: '#505050',
+  textLight: '#8a8a8a96',
+  white: '#FFFFFF',
+  black: '#000000',
+  lightGray: '#E0E0E0',
+  mediumGray: '#C0C0C0',
+  darkGray: '#707070',
+  success: '#4CAF50',
+  warning: '#FFC107',
+  error: '#DC3545',
+  info: '#17A2B8',
+  onPrimary: '#FFFFFF',
+  onSecondary: '#871818ff',
+  onAccent: '#1A1A1A',
+};
+
+const GlobalStyles = {
+  shadow: {
+    shadowColor: Colors.black,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 7,
+  },
+  cardShadow: {
+    shadowColor: Colors.black,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 14,
+  }
+};
+
+const AppHeader = ({ title, showBackButton = false, onBackPress = () => {} }) => {
+  return (
+    <View style={headerStyles.headerContainer}>
+      <StatusBar
+        barStyle={Platform.OS === 'ios' ? 'dark-content' : 'light-content'}
+        backgroundColor={Colors.primary}
+      />
+      <View style={headerStyles.headerContent}>
+        {showBackButton && (
+          <TouchableOpacity onPress={onBackPress} style={headerStyles.backButton}>
+            <Ionicons name="arrow-back" size={22} color={Colors.onPrimary} />
+          </TouchableOpacity>
+        )}
+        <Text style={[headerStyles.headerTitle, !showBackButton && { marginLeft: 0 }]}>{title}</Text>
+      </View>
+    </View>
+  );
+};
 
 export default function PerfilAdminScreen() {
-  const { user } = useUser();
+  const [user, setUser] = useState(auth.currentUser);
   const [adminData, setAdminData] = useState(null);
   const [loading, setLoading] = useState(true);
   const navigation = useNavigation();
 
-  // Função para obter a inicial do nome
+  // OTIMIZAÇÃO: Removido o código de signInAnonymously daqui
+  // Este useEffect agora apenas define o estado do usuário.
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, []);
+
   const getInitial = useCallback((name) => {
     return name ? name.charAt(0).toUpperCase() : '?';
   }, []);
@@ -51,11 +141,15 @@ export default function PerfilAdminScreen() {
         setLoading(false);
       }
     }
-
     getData();
   }, [user?.uid]);
 
-  useFocusEffect(fetchAdminData);
+  useFocusEffect(
+    useCallback(() => {
+        fetchAdminData();
+        return () => {};
+    }, [fetchAdminData])
+  );
 
   const handleLogout = () => {
     Alert.alert(
@@ -69,16 +163,15 @@ export default function PerfilAdminScreen() {
           onPress: async () => {
             try {
               await signOut(auth);
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'Login' }],
-              });
-            } catch (error) {
-              console.error('Erro ao terminar sessão:', error);
-              Alert.alert(
-                'Erro ao sair',
-                'Ocorreu um problema ao terminar a sessão. Tente novamente.'
+              navigation.dispatch(
+                CommonActions.reset({
+                  index: 0,
+                  routes: [{ name: 'Login' }],
+                })
               );
+            } catch (error) {
+              console.error('Erro durante o logout:', error);
+              Alert.alert('Erro ao sair', 'Ocorreu um problema ao terminar a sessão. Tente novamente.');
             }
           },
         },
@@ -90,16 +183,25 @@ export default function PerfilAdminScreen() {
   const irParaCadastroCliente = () => {
     navigation.navigate('CadastroCliente', { adminId: user.uid });
   };
-
   const handleEditarPerfil = () => {
     navigation.navigate('EditarPerfilAdmin');
+  };
+  const irParaCriarAvaliacao = () => {
+    navigation.navigate('CriarAvaliacao', { adminId: user.uid });
+  };
+  const irParaListarQuestionarios = () => {
+    navigation.navigate('ListarQuestionarios');
+  };
+  const handleEditarDadosPessoais = () => {
+    // Corrigido para passar os dados corretos
+    navigation.navigate('EditarDadosPessoais', { adminData: adminData });
   };
 
   if (loading) {
     return (
       <View style={styles.centeredContainer}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.loadingText}>A carregar dados do administrador...</Text>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={styles.loadingText}>A carregar dados do Personal Trainer...</Text>
       </View>
     );
   }
@@ -107,7 +209,7 @@ export default function PerfilAdminScreen() {
   if (!adminData) {
     return (
       <View style={styles.centeredContainer}>
-        <Text style={styles.errorText}>Administrador não encontrado ou erro ao carregar.</Text>
+        <Text style={styles.errorText}>Personal Trainer não encontrado ou erro ao carregar.</Text>
         <TouchableOpacity onPress={fetchAdminData} style={styles.retryButton}>
           <Text style={styles.retryButtonText}>Tentar Novamente</Text>
         </TouchableOpacity>
@@ -115,89 +217,128 @@ export default function PerfilAdminScreen() {
     );
   }
 
-  // Obter a inicial do nome para o avatar
-  const avatarInitial = getInitial(adminData.nome);
+  // Corrigido para usar adminData.name em vez de adminData.nome
+  const avatarInitial = getInitial(adminData.name);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-      {/* Header com Avatar e Nome */}
-      <View style={styles.header}>
-        <View style={styles.avatarContainer}>
-          {/* Avatar com a inicial do nome */}
-          <View style={styles.initialsAvatar}>
-            <Text style={styles.initialsText}>{avatarInitial}</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <AppHeader title="Meu Perfil" />
+      <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+        <View style={styles.header}>
+          <View style={styles.avatarContainer}>
+            <View style={[styles.initialsAvatar, GlobalStyles.cardShadow]}>
+              <Text style={styles.initialsText}>{avatarInitial}</Text>
+            </View>
           </View>
-          {/* Removido: TouchableOpacity do botão de edição do avatar */}
+          {/* Corrigido para usar adminData.name */}
+          <Text style={styles.nome}>{adminData.name || 'Sem Nome'}</Text>
+          <Text style={styles.roleTag}>Personal Trainer</Text>
         </View>
-        <Text style={styles.nome}>{adminData.nome || 'Sem Nome'}</Text>
-        <Text style={styles.roleTag}>Administrador</Text>
-      </View>
 
-      {/* Detalhes do Perfil */}
-      <View style={styles.detailsCard}>
-        <View style={styles.detailRow}>
-          <Ionicons name="mail-outline" size={20} color={colors.primary} style={styles.detailIcon} />
-          <Text style={styles.info}>Email: {user?.email || 'N/A'}</Text>
+        <View style={[styles.personalDataCard, GlobalStyles.cardShadow]}>
+          <Text style={styles.personalDataTitle}>Dados Pessoais</Text>
+          
+          <View style={styles.detailRow}>
+            <Ionicons name="person-outline" size={22} color={Colors.darkGray} style={styles.detailIcon} />
+            <Text style={styles.info}>Nome Completo: {adminData.name || 'N/A'}</Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Ionicons name="mail-outline" size={22} color={Colors.darkGray} style={styles.detailIcon} />
+            <Text style={styles.info}>Email: {user?.email || 'N/A'}</Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Ionicons name="call-outline" size={22} color={Colors.darkGray} style={styles.detailIcon} />
+            <Text style={styles.info}>Telefone: {adminData.telefone || 'N/A'}</Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Ionicons name="location-outline" size={22} color={Colors.darkGray} style={styles.detailIcon} />
+            <Text style={styles.info}>Morada: {adminData.morada || 'N/A'}</Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Ionicons name="calendar-outline" size={22} color={Colors.darkGray} style={styles.detailIcon} />
+            <Text style={styles.info}>Data de Nascimento: {adminData.dataNascimento || 'N/A'}</Text>
+          </View>
+
+          <TouchableOpacity style={[styles.editPersonalDataButton, GlobalStyles.shadow]} onPress={handleEditarPerfil}>
+            <Ionicons name="pencil-outline" size={22} color={Colors.onPrimary} style={styles.editPersonalDataIcon} />
+            <Text style={styles.editPersonalDataButtonText}>Alterar a palavra-passe</Text>
+          </TouchableOpacity>
         </View>
-        <View style={styles.detailRow}>
-          <Ionicons name="card-outline" size={20} color={colors.primary} style={styles.detailIcon} />
-          <Text style={styles.info}>ID: {user?.uid || 'N/A'}</Text>
+
+        <View style={styles.actionGroup}>
+          <Text style={styles.sectionTitle}>Ações Rápidas</Text>
+
+          <TouchableOpacity style={[styles.actionButton, GlobalStyles.shadow]} onPress={irParaCadastroCliente}>
+            <Ionicons name="person-add-outline" size={24} color={Colors.primaryDark} style={styles.actionIcon} />
+            <Text style={styles.actionButtonText}>Cadastrar Novo Cliente</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.actionButton, GlobalStyles.shadow]} onPress={irParaCriarAvaliacao}>
+            <Ionicons name="create-outline" size={24} color={Colors.primaryDark} style={styles.actionIcon} />
+            <Text style={styles.actionButtonText}>Criar Nova Avaliação</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity style={[styles.actionButton, GlobalStyles.shadow]} onPress={irParaListarQuestionarios}>
+            <Ionicons name="list-outline" size={24} color={Colors.primaryDark} style={styles.actionIcon} />
+            <Text style={styles.actionButtonText}>Gerir Questionários</Text>
+          </TouchableOpacity>
         </View>
-      </View>
 
-      {/* Grupo de Ações */}
-      <View style={styles.actionGroup}>
-        <Text style={styles.sectionTitle}>Ações Rápidas</Text>
-
-        <TouchableOpacity style={styles.actionButton} onPress={irParaCadastroCliente}>
-          <Ionicons name="person-add-outline" size={22} color={colors.primaryDark} style={styles.actionIcon} />
-          <Text style={styles.actionButtonText}>Cadastrar Novo Cliente</Text>
+        <TouchableOpacity style={[styles.logoutButton, GlobalStyles.cardShadow]} onPress={handleLogout}>
+          <Ionicons name="log-out-outline" size={24} color={Colors.white} style={styles.logoutIcon} />
+          <Text style={styles.logoutButtonText}>Terminar Sessão</Text>
         </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('CriarAvaliacao')}>
-          <Ionicons name="create-outline" size={22} color={colors.primaryDark} style={styles.actionIcon} />
-          <Text style={styles.actionButtonText}>Criar Nova Avaliação</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionButton} onPress={handleEditarPerfil}>
-          <Ionicons name="build-outline" size={22} color={colors.primaryDark} style={styles.actionIcon} />
-          <Text style={styles.actionButtonText}>Gerir Perfil</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('ListarQuestionarios')}>
-          <Ionicons name="list-outline" size={22} color={colors.primaryDark} style={styles.actionIcon} />
-          <Text style={styles.actionButtonText}>Gerir Questionários</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Botão de Terminar Sessão */}
-      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-        <Ionicons name="log-out-outline" size={22} color={colors.backgroundLight} style={styles.logoutIcon} />
-        <Text style={styles.logoutButtonText}>Terminar Sessão</Text>
-      </TouchableOpacity>
-    </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
-// --- Definição da Paleta de Cores ---
-const colors = {
-  primary: '#D4AC54',       // Dourado principal - Para botões, ícones, títulos
-  primaryDark: '#A88433',   // Dourado mais escuro - Para texto em destaque
-  secondary: '#69511A',     // Castanho escuro - Para texto principal
-  textMuted: '#767676',     // Cinzento médio - Para texto secundário
-  background: '#F8F8F8',    // Fundo geral claro
-  backgroundLight: '#FFFFFF',// Fundo de cards/elementos brancos
-  border: '#E0E0E0',        // Cor para bordas sutis
-  shadow: 'rgba(0,0,0,0.08)', // Sombra suave
-  danger: '#D32F2F',        // Vermelho para ações destrutivas (logout)
-  textLight: '#FFFFFF',     // Texto para fundos escuros
-};
+// --- ESTILOS ---
+const headerStyles = StyleSheet.create({
+  headerContainer: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 10 : 12,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+    shadowColor: Colors.black,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 5,
+    marginBottom: 15,
+    width: '100%',
+    alignItems: 'center',
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.onPrimary,
+    textAlign: 'center',
+    flex: 1,
+  },
+  backButton: {
+    position: 'absolute',
+    left: 0,
+    padding: 5,
+  }
+});
 
-// --- Estilos Profissionais ---
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: Colors.background,
   },
   contentContainer: {
     padding: 20,
@@ -208,204 +349,181 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: colors.background,
+    backgroundColor: Colors.background,
   },
   loadingText: {
     marginTop: 10,
-    color: colors.secondary,
+    color: Colors.textPrimary,
     fontSize: 16,
+    fontWeight: '500',
   },
   errorText: {
     fontSize: 17,
-    color: colors.danger,
+    color: Colors.error,
     marginBottom: 15,
     textAlign: 'center',
+    fontWeight: '500',
   },
   retryButton: {
-    backgroundColor: colors.primary,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    elevation: 3,
-    ...Platform.select({
-      ios: {
-        shadowColor: colors.shadow,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-      },
-    }),
+    backgroundColor: Colors.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 25,
+    borderRadius: 10,
+    ...GlobalStyles.shadow,
   },
   retryButtonText: {
-    color: colors.textLight,
+    color: Colors.onPrimary,
     fontSize: 16,
     fontWeight: 'bold',
   },
 
-  // --- Header Section ---
   header: {
     width: '100%',
     alignItems: 'center',
     paddingBottom: 25,
-    marginBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    marginBottom: 25,
   },
   avatarContainer: {
     position: 'relative',
     marginBottom: 15,
   },
-  // Novo estilo para o avatar com as iniciais
   initialsAvatar: {
     width: 130,
     height: 130,
     borderRadius: 65,
     borderWidth: 4,
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryDark, // Fundo do avatar com a cor dourado escuro
+    borderColor: Colors.primary,
+    backgroundColor: Colors.secondaryDark,
     justifyContent: 'center',
     alignItems: 'center',
-    ...Platform.select({
-      ios: {
-        shadowColor: colors.shadow,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 10,
-      },
-    }),
   },
   initialsText: {
-    color: colors.textLight, // Cor branca para o texto das iniciais
-    fontSize: 60, // Tamanho grande para a inicial
+    color: Colors.onPrimary,
+    fontSize: 60,
     fontWeight: 'bold',
   },
-  // Removido: editAvatarButton e seus estilos
-
   nome: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: colors.secondary,
-    marginBottom: 5,
+    fontSize: 30,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    marginBottom: 8,
     textAlign: 'center',
   },
   roleTag: {
-    backgroundColor: colors.primary,
-    color: colors.textLight,
-    paddingVertical: 4,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    fontSize: 14,
-    fontWeight: '600',
+    backgroundColor: Colors.primaryLight,
+    color: Colors.textPrimary,
+    paddingVertical: 7,
+    paddingHorizontal: 18,
+    borderRadius: 30,
+    fontSize: 15,
+    fontWeight: '700',
+    marginTop: 5,
   },
 
-  // --- Details Card ---
-  detailsCard: {
-    width: '100%',
-    backgroundColor: colors.backgroundLight,
-    borderRadius: 12,
-    padding: 18,
-    marginBottom: 25,
-    ...Platform.select({
-      ios: {
-        shadowColor: colors.shadow,
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.15,
-        shadowRadius: 6,
-      },
-      android: {
-        elevation: 8,
-      },
-    }),
-  },
   detailRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   detailIcon: {
-    marginRight: 10,
+    marginRight: 15,
+    color: Colors.darkGray,
   },
   info: {
     fontSize: 16,
-    color: colors.textMuted,
+    color: Colors.textSecondary,
     flexShrink: 1,
   },
 
-  // --- Action Group ---
+  personalDataCard: {
+    width: '100%',
+    backgroundColor: Colors.surface,
+    borderRadius: 15,
+    padding: 20,
+    marginBottom: 30,
+    ...GlobalStyles.cardShadow,
+  },
+  personalDataTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: 18,
+    textAlign: 'left',
+    width: '100%',
+  },
+  editPersonalDataButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
+    paddingVertical: 14,
+    paddingHorizontal: 25,
+    borderRadius: 12,
+    marginTop: 20,
+    ...GlobalStyles.shadow,
+  },
+  editPersonalDataIcon: {
+    marginRight: 12,
+    color: Colors.onPrimary,
+  },
+  editPersonalDataButtonText: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: Colors.onPrimary,
+  },
+
   actionGroup: {
     width: '100%',
-    marginBottom: 25,
+    marginBottom: 30,
   },
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: colors.secondary,
-    marginBottom: 15,
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: 20,
     textAlign: 'left',
     width: '100%',
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.backgroundLight,
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    marginBottom: 12,
+    backgroundColor: Colors.surface,
+    paddingVertical: 18,
+    paddingHorizontal: 25,
+    borderRadius: 15,
+    marginBottom: 15,
     borderWidth: 1,
-    borderColor: colors.border,
-    ...Platform.select({
-      ios: {
-        shadowColor: colors.shadow,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 4,
-      },
-    }),
+    borderColor: Colors.lightGray,
+    ...GlobalStyles.shadow,
   },
   actionIcon: {
-    marginRight: 15,
+    marginRight: 18,
+    color: Colors.primaryDark,
   },
   actionButtonText: {
-    fontSize: 17,
-    fontWeight: '500',
-    color: colors.secondary,
+    fontSize: 18,
+    fontWeight: '600',
+    color: Colors.textPrimary,
   },
 
-  // --- Logout Button ---
   logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     width: '100%',
-    backgroundColor: colors.danger,
-    paddingVertical: 16,
-    borderRadius: 10,
-    marginTop: 10,
-    ...Platform.select({
-      ios: {
-        shadowColor: colors.shadow,
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.2,
-        shadowRadius: 5,
-      },
-      android: {
-        elevation: 7,
-      },
-    }),
+    backgroundColor: Colors.error,
+    paddingVertical: 18,
+    borderRadius: 15,
+    marginTop: 25,
+    ...GlobalStyles.cardShadow,
   },
   logoutIcon: {
-    marginRight: 10,
+    marginRight: 12,
+    color: Colors.white,
   },
   logoutButtonText: {
-    color: colors.textLight,
-    fontSize: 18,
-    fontWeight: '600',
+    color: Colors.white,
+    fontSize: 19,
+    fontWeight: '700',
   },
 });

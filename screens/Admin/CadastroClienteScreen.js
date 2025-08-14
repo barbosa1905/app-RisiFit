@@ -5,24 +5,167 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert, // Já importado, mas reforço o uso
+  Alert,
   Platform,
   ScrollView,
   Switch,
   ActivityIndicator,
+  SafeAreaView,
+  StatusBar,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, collection, getDocs } from 'firebase/firestore';
-import { auth, db } from '../../services/firebaseConfig'; // Verifique o caminho para firebaseConfig
+import { doc, setDoc, collection, getDocs, getDoc, getFirestore } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { Picker } from '@react-native-picker/picker';
+import { Ionicons } from '@expo/vector-icons';
+
+// --- FIREBASE CONFIGURATION: Torna o componente auto-suficiente ---
+// Substitua com as suas credenciais
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_STORAGE_BUCKET",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId: "YOUR_APP_ID",
+};
+
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+
+// Paleta de Cores (constants/Colors.js) - Usando a paleta fornecida
+const Colors = {
+  // Cores Primárias (Dourado/Preto)
+  primary: '#B8860B', // Dourado mais escuro para a marca principal
+  primaryLight: '#D4AF37', // Dourado mais claro para destaques
+  primaryDark: '#8B6B08', // Dourado mais profundo
+
+  secondary: '#000000ff', // Um preto muito escuro ou cinza carvão para secundário
+  secondaryLight: '#4A4E46', // Um cinza escuro um pouco mais claro
+  secondaryDark: '#1C201A', // Um preto quase absoluto
+
+  accent: '#FFD700', // Dourado puro/ouro para ênfase forte
+  accentLight: '#FFE066', // Amarelo dourado mais suave
+  accentDark: '#CCAA00', // Dourado mais escuro para contraste
+
+  // Cores de Fundo
+  background: '#F0F0F0', // Fundo geral muito claro (quase branco)
+  surface: '#FFFFFF', // Fundo para cartões, headers (branco puro)
+  cardBackground: '#FFFFFF', // Alias para surface
+
+  // Cores de Texto
+  textPrimary: '#1A1A1A', // Texto principal (preto bem escuro)
+  textSecondary: '#505050', // Texto secundário (cinza médio-escuro)
+  textLight: '#8a8a8a96', // Texto mais claro (cinza claro)
+
+  // Cores Neutras (Pretos, Brancos, Tons de Cinza)
+  white: '#FFFFFF',
+  black: '#000000',
+
+  lightGray: '#E0E0E0', // Bordas, separadores
+  mediumGray: '#C0C0C0', // Componentes desabilitados, fundos sutis
+  darkGray: '#707070', // Texto e ícones gerais que não sejam primary/secondary
+
+  // Cores de Feedback
+  success: '#4CAF50', // Mantido verde para universalidade (sucesso)
+  warning: '#FFC107', // Mantido amarelo para universalidade (avisos)
+  error: '#DC3545', // Mantido vermelho para universalidade (erros)
+  info: '#17A2B8', // Mantido azul para universalidade (informações/links)
+  
+  // Cores de "On" (para texto/ícone sobre a cor base)
+  onPrimary: '#FFFFFF', // Branco sobre o dourado
+  onSecondary: '#871818ff', // Branco sobre o preto/cinza escuro
+  onAccent: '#1A1A1A', // Preto sobre o dourado de ênfase
+};
+
+// Global Styles (para sombras consistentes)
+const GlobalStyles = {
+  shadow: {
+    shadowColor: Colors.black,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 7,
+  },
+  cardShadow: {
+    shadowColor: Colors.black,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 14,
+  }
+};
+
+// Componente AppHeader (copiado do PerfilAdminScreen para consistência)
+const AppHeader = ({ title, showBackButton = false, onBackPress = () => {} }) => {
+  return (
+    <View style={headerStyles.headerContainer}>
+      <StatusBar
+        barStyle={Platform.OS === 'ios' ? 'dark-content' : 'light-content'}
+        backgroundColor={Colors.primary}
+      />
+      <View style={headerStyles.headerContent}>
+        {showBackButton && (
+          <TouchableOpacity onPress={onBackPress} style={headerStyles.backButton}>
+            <Ionicons name="arrow-back" size={22} color={Colors.onPrimary} />
+          </TouchableOpacity>
+        )}
+        <Text style={[headerStyles.headerTitle, !showBackButton && { marginLeft: 0 }]}>{title}</Text>
+      </View>
+    </View>
+  );
+};
+
+// Estilos para o AppHeader
+const headerStyles = StyleSheet.create({
+  headerContainer: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 10 : 12,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+    shadowColor: Colors.black,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 5,
+    marginBottom: 10,
+    width: '100%',
+    alignItems: 'center',
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.onPrimary,
+    textAlign: 'center',
+    flex: 1,
+  },
+  backButton: {
+    position: 'absolute',
+    left: 0,
+    padding: 5,
+  }
+});
+
 
 // Lista abrangente de códigos de país (mantida do último update)
 const countryCodes = [
   { label: '🇦🇫 Afeganistão (+93)', value: '+93' },
   { label: '🇦🇱 Albânia (+355)', value: '+355' },
   { label: '🇩🇿 Argélia (+213)', value: '+213' },
-  { label: '🇦🇩 Andorra (+376)', value: '+376' },
+  { label: '�🇩 Andorra (+376)', value: '+376' },
   { label: '🇦🇴 Angola (+244)', value: '+244' },
   { label: '🇦🇷 Argentina (+54)', value: '+54' },
   { label: '🇦🇲 Arménia (+374)', value: '+374' },
@@ -31,7 +174,7 @@ const countryCodes = [
   { label: '🇦🇿 Azerbaijão (+994)', value: '+994' },
   { label: '🇧🇸 Bahamas (+1-242)', value: '+1-242' },
   { label: '🇧🇭 Barém (+973)', value: '+973' },
-  { label: '�🇩 Bangladesh (+880)', value: '+880' },
+  { label: '🇧🇩 Bangladesh (+880)', value: '+880' },
   { label: '🇧🇧 Barbados (+1-246)', value: '+1-246' },
   { label: '🇧🇾 Bielorrússia (+375)', value: '+375' },
   { label: '🇧🇪 Bélgica (+32)', value: '+32' },
@@ -204,7 +347,7 @@ const countryCodes = [
 ];
 
 // IDs dos questionários pré-definidos (devem ser os mesmos que em CriarQuestionarioScreen.js)
-const PREDEFINED_ANAMNESE_IDS = ['PAR-Q_Predefinido', 'Padrao_Predefinido'];
+// Removido PREDEFINED_ANAMNESE_IDS e relacionado, pois a funcionalidade de anamnese foi removida.
 
 export default function RegistoClienteScreen({ navigation }) {
   const [email, setEmail] = useState('');
@@ -216,36 +359,41 @@ export default function RegistoClienteScreen({ navigation }) {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [genero, setGenero] = useState(null);
   const [grupo, setGrupo] = useState(null);
-  const [enviarAcesso, setEnviarAcesso] = useState(true); // Estado para o switch de envio de acesso
-  const [enviarAnamnese, setEnviarAnamnese] = useState(null);
-  const [tipoAnamneseId, setTipoAnamneseId] = useState(null);
-  const [availableQuestionarios, setAvailableQuestionarios] = useState([]);
-  const [loadingQuestionarios, setLoadingQuestionarios] = useState(true);
+  const [enviarAcesso, setEnviarAcesso] = useState(true);
+  // Removido enviarAnamnese e tipoAnamneseId
+  // Removido availableQuestionarios e loadingQuestionarios
+  const [nomePersonalTrainer, setNomePersonalTrainer] = useState('');
+  const [loadingPTName, setLoadingPTName] = useState(true);
 
+  // Efeito para carregar o nome do Personal Trainer logado
   useEffect(() => {
-    const fetchQuestionarios = async () => {
+    const fetchPersonalTrainerName = async () => {
       try {
-        setLoadingQuestionarios(true);
-        const querySnapshot = await getDocs(collection(db, 'questionariosPublicos'));
-        const allQuestionarios = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          nome: doc.data().nome,
-        }));
+        setLoadingPTName(true);
+        if (auth.currentUser) {
+          const adminId = auth.currentUser.uid;
+          const adminDocRef = doc(db, 'users', adminId);
+          const adminDocSnap = await getDoc(adminDocRef);
 
-        // Filtra para incluir APENAS os questionários pré-definidos
-        const filteredQuestionarios = allQuestionarios.filter(q =>
-          PREDEFINED_ANAMNESE_IDS.includes(q.id)
-        );
-        setAvailableQuestionarios(filteredQuestionarios);
+          if (adminDocSnap.exists()) {
+            setNomePersonalTrainer(adminDocSnap.data().name || 'Personal Trainer');
+          } else {
+            console.warn('Documento do Personal Trainer não encontrado no Firestore. Usando fallback.');
+            setNomePersonalTrainer('Personal Trainer'); // Fallback
+          }
+        } else {
+          console.warn('Nenhum utilizador logado para buscar o nome do Personal Trainer. Usando fallback.');
+          setNomePersonalTrainer('Personal Trainer'); // Fallback se não houver user logado
+        }
       } catch (error) {
-        console.error('Erro ao carregar questionários:', error);
-        Alert.alert('Erro', 'Não foi possível carregar os questionários de anamnese disponíveis.');
+        console.error('Erro ao buscar o nome do Personal Trainer:', error);
+        setNomePersonalTrainer('Personal Trainer'); // Fallback em caso de erro
       } finally {
-        setLoadingQuestionarios(false);
+        setLoadingPTName(false);
       }
     };
 
-    fetchQuestionarios();
+    fetchPersonalTrainerName();
   }, []);
 
   const onChangeDate = (event, selectedDate) => {
@@ -274,17 +422,27 @@ export default function RegistoClienteScreen({ navigation }) {
       return;
     }
 
-    if (enviarAnamnese === 'Sim' && !tipoAnamneseId) {
-      Alert.alert('Erro', 'Por favor, selecione o tipo de questionário de anamnese.');
+    // Removida a validação de anamnese
+    // if (enviarAnamnese === 'Sim' && !tipoAnamneseId) {
+    //   Alert.alert('Erro', 'Por favor, selecione o tipo de questionário de anamnese.');
+    //   return;
+    // }
+
+    if (loadingPTName) {
+      Alert.alert('Aguarde', 'Estamos a carregar os dados do Personal Trainer. Por favor, tente novamente em um instante.');
       return;
     }
 
+    let userId = null;
     try {
       const adminId = auth.currentUser.uid;
-      const userCredential = await createUserWithEmailAndPassword(auth, email, senha);
-      const userId = userCredential.user.uid;
 
-      await setDoc(doc(db, 'users', userId), {
+      // Tenta criar o utilizador no Firebase Authentication
+      const userCredential = await createUserWithEmailAndPassword(auth, email, senha);
+      userId = userCredential.user.uid; // Obtém o UID do novo utilizador
+
+      // Salva os detalhes do utilizador no Firestore
+      const userData = {
         email,
         name: nome,
         role: 'user',
@@ -292,286 +450,273 @@ export default function RegistoClienteScreen({ navigation }) {
         dataNascimento: dataNascimento ? formatDate(dataNascimento) : '',
         genero: genero,
         grupo: grupo,
-        enviarAcesso: enviarAcesso, // Salva o estado do switch no Firestore
-        enviarAnamnese: enviarAnamnese,
-        tipoAnamneseId: enviarAnamnese === 'Sim' ? tipoAnamneseId : null,
+        enviarAcesso: enviarAcesso,
+        // Removido enviarAnamnese e tipoAnamneseId
         adminId: adminId,
         criadoEm: new Date().toISOString(),
-      });
+        PasswordResetRequiredScreen: true, // Mantido como estava, ajuste se for um nome de campo diferente
+      };
+      await setDoc(doc(db, 'users', userId), userData);
+      console.log('Dados do utilizador salvos no Firestore:', userData);
 
-      // =====================================================================
-      // INÍCIO DA NOVA LÓGICA: CHAMADA AO SERVIDOR BACKEND PARA ENVIO DE E-MAIL
-      // =====================================================================
-      if (enviarAcesso) {
-        // ATENÇÃO: Para testes em dispositivo físico, 'localhost' não funcionará.
-        // Use o IP da sua máquina de desenvolvimento (ex: 'http://192.168.1.100:3000')
-        // Em produção, use o URL do seu servidor backend hospedado (ex: 'https://api.seusite.com')
-        const backendApiUrl = 'http://192.168.1.223:3000';
+      const functions = getFunctions(app);
+      const enviarEmailBoasVindas = httpsCallable(functions, 'enviarEmailBoasVindas');
 
-        try {
-          const response = await fetch(`${backendApiUrl}/register-and-send-email`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              email: email,
-              password: senha, // ATENÇÃO: Enviar a senha assim por HTTP não é seguro!
-                               // Considere enviar uma senha temporária gerada pelo backend,
-                               // ou um link de redefinição de senha.
-              clientName: nome
-            })
+      try {
+        if (enviarAcesso) { // Enviar email de acesso apenas se a opção estiver ativada
+          const result = await enviarEmailBoasVindas({
+            email: email,
+            password: senha,
+            nome_cliente: nome,
+            username: email,
+            link_plataforma: 'https://risifit.com',
+            nome_personal_trainer: nomePersonalTrainer, // <--- Enviando o nome do PT
           });
 
-          const data = await response.json();
-
-          if (response.ok) {
-            Alert.alert('Sucesso', 'Cliente registado e email de acesso enviado com sucesso!');
-            console.log('Email enviado com sucesso via backend:', data.message);
-          } else {
-            Alert.alert('Erro no Envio de Email', `Falha ao enviar email de acesso: ${data.message || 'Erro desconhecido'}`);
-            console.error('Erro ao enviar email via backend:', data.message, data.error);
-          }
-        } catch (emailError) {
-          Alert.alert('Erro de Conexão', 'Não foi possível conectar ao servidor de email. Verifique sua conexão ou o status do servidor.');
-          console.error('Erro de rede ao chamar o backend de email:', emailError);
+          Alert.alert('Sucesso', 'Cliente registado e email de acesso enviado com sucesso!');
+          console.log('Resposta da Cloud Function (SendGrid):', result.data);
+        } else {
+          Alert.alert('Sucesso', 'Cliente registado com sucesso (email de acesso não enviado).');
         }
-      } else {
-        Alert.alert('Sucesso', 'Cliente registado com sucesso!');
-      }
-      // =====================================================================
-      // FIM DA NOVA LÓGICA
-      // =====================================================================
 
-      navigation.goBack(); // Volta para a tela anterior após o registo (e tentativa de envio de email)
+        // Limpar os campos do formulário após o registo bem-sucedido
+        setEmail('');
+        setSenha('');
+        setNome('');
+        setPrefixoTelefone('+351'); // Resetar para o valor padrão
+        setTelefone('');
+        setDataNascimento(null);
+        setGenero(null);
+        setGrupo(null);
+        setEnviarAcesso(true);
+        // Removido setEnviarAnamnese e setTipoAnamneseId
+
+      } catch (error) {
+        Alert.alert('Erro ao enviar email', error.message);
+        console.error('Erro na chamada da Cloud Function (SendGrid):', error);
+      }
     } catch (error) {
-      console.error('Erro ao registar cliente no Firebase:', error);
-      Alert.alert('Erro no Registo', error.message);
+      console.error('ERRO (Frontend): Erro ao registar cliente no Firebase Authentication ou Firestore:', error);
+      let errorMessage = 'Ocorreu um erro ao registar o cliente.';
+
+      if (error.code === 'auth/email-already-in-use') {
+        errorMessage = 'Este email já está em uso por outra conta. Por favor, use um email diferente ou verifique se o cliente já está registado.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = 'O formato do email é inválido.';
+      } else if (error.code === 'auth/weak-password') {
+        errorMessage = 'A senha é muito fraca. Use pelo menos 6 caracteres.';
+      }
+
+      Alert.alert('Erro no Registo', errorMessage);
     }
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Registar Novo Cliente</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <AppHeader title="Registar Novo Cliente" showBackButton={true} onBackPress={() => navigation.goBack()} />
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <Text style={styles.sectionTitle}>Dados do Cliente</Text>
 
-      {/* Nome Completo */}
-      <Text style={styles.label}>Nome completo</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Nome completo"
-        value={nome}
-        onChangeText={setNome}
-      />
-
-      {/* E-mail */}
-      <Text style={styles.label}>E-mail</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="E-mail"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        autoCapitalize="none"
-      />
-
-      {/* Senha */}
-      <Text style={styles.label}>Senha</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Palavra-passe"
-        value={senha}
-        onChangeText={setSenha}
-        secureTextEntry
-      />
-
-      {/* Selecione um grupo */}
-      <Text style={styles.label}>Selecione um grupo</Text>
-      <View style={styles.pickerContainer}>
-        <Picker
-          selectedValue={grupo}
-          onValueChange={(itemValue) => setGrupo(itemValue)}
-          style={styles.picker}
-        >
-          <Picker.Item label="Selecione..." value={null} />
-          <Picker.Item label="Online" value="Online" />
-          <Picker.Item label="Presencial" value="Presencial" />
-        </Picker>
-      </View>
-
-      {/* Data de nascimento */}
-      <Text style={styles.label}>Data de nascimento</Text>
-      <TouchableOpacity
-        style={styles.dateInput}
-        onPress={() => setShowDatePicker(true)}
-      >
-        <Text style={{ color: dataNascimento ? '#000' : '#888' }}>
-          {dataNascimento ? formatDate(dataNascimento) : 'DD/MM/YYYY'}
-        </Text>
-      </TouchableOpacity>
-      {showDatePicker && (
-        <DateTimePicker
-          value={dataNascimento || new Date(2000, 0, 1)}
-          mode="date"
-          display="default"
-          onChange={onChangeDate}
-          maximumDate={new Date()}
+        {/* Nome Completo */}
+        <Text style={styles.label}>Nome completo</Text>
+        <TextInput
+          style={[styles.input, GlobalStyles.shadow]}
+          placeholder="Nome completo"
+          placeholderTextColor={Colors.textLight}
+          value={nome}
+          onChangeText={setNome}
         />
-      )}
 
-      {/* WhatsApp / Telefone */}
-      <Text style={styles.label}>WhatsApp / Telefone</Text>
-      <View style={styles.phoneInputContainer}>
-        <View style={styles.countryCodePickerContainer}>
+        {/* E-mail */}
+        <Text style={styles.label}>E-mail</Text>
+        <TextInput
+          style={[styles.input, GlobalStyles.shadow]}
+          placeholder="E-mail"
+          placeholderTextColor={Colors.textLight}
+          value={email}
+          onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+        />
+
+        {/* Senha */}
+        <Text style={styles.label}>Senha</Text>
+        <TextInput
+          style={[styles.input, GlobalStyles.shadow]}
+          placeholder="Palavra-passe"
+          placeholderTextColor={Colors.textLight}
+          value={senha}
+          onChangeText={setSenha}
+          secureTextEntry
+        />
+
+        {/* Selecione um grupo */}
+        <Text style={styles.label}>Selecione um grupo</Text>
+        <View style={[styles.pickerContainer, GlobalStyles.shadow]}>
           <Picker
-            selectedValue={prefixoTelefone}
-            onValueChange={(itemValue) => setPrefixoTelefone(itemValue)}
-            style={styles.countryCodePicker}
+            selectedValue={grupo}
+            onValueChange={(itemValue) => setGrupo(itemValue)}
+            style={styles.picker}
+            itemStyle={styles.pickerItem} // Estilo para os itens do Picker
           >
-            {countryCodes.map((country, index) => (
-              <Picker.Item key={index} label={country.label} value={country.value} />
-            ))}
+            <Picker.Item label="Selecione..." value={null} />
+            <Picker.Item label="Online" value="Online" />
+            <Picker.Item label="Presencial" value="Presencial" />
           </Picker>
         </View>
-        <TextInput
-          style={styles.phoneTextInput}
-          placeholder="Número de telefone"
-          value={telefone}
-          onChangeText={setTelefone}
-          keyboardType="phone-pad"
-        />
-      </View>
 
-      {/* Gênero */}
-      <Text style={styles.label}>Gênero</Text>
-      <View style={styles.pickerContainer}>
-        <Picker
-          selectedValue={genero}
-          onValueChange={(itemValue) => setGenero(itemValue)}
-          style={styles.picker}
+        {/* Data de nascimento */}
+        <Text style={styles.label}>Data de nascimento</Text>
+        <TouchableOpacity
+          style={[styles.dateInput, GlobalStyles.shadow]}
+          onPress={() => setShowDatePicker(true)}
         >
-          <Picker.Item label="Selecione..." value={null} />
-          <Picker.Item label="Masculino" value="Masculino" />
-          <Picker.Item label="Feminino" value="Feminino" />
-          <Picker.Item label="Outro" value="Outro" />
-        </Picker>
-      </View>
+          <Text style={{ color: dataNascimento ? Colors.textPrimary : Colors.textLight, fontSize: 16 }}>
+            {dataNascimento ? formatDate(dataNascimento) : 'DD/MM/YYYY'}
+          </Text>
+        </TouchableOpacity>
+        {showDatePicker && (
+          <DateTimePicker
+            value={dataNascimento || new Date(2000, 0, 1)}
+            mode="date"
+            display="default"
+            onChange={onChangeDate}
+            maximumDate={new Date()}
+          />
+        )}
 
-      {/* Enviar informações de acesso ao cliente */}
-      <View style={styles.switchRow}>
-        <Text style={styles.label}>Enviar informações de acesso ao cliente</Text>
-        <Switch
-          onValueChange={setEnviarAcesso}
-          value={enviarAcesso}
-          trackColor={{ false: '#767577', true: '#d0a956' }}
-          thumbColor={enviarAcesso ? '#f4f3f4' : '#f4f3f4'}
-        />
-      </View>
-
-      {/* Enviar anamnese */}
-      <Text style={styles.label}>Enviar anamnese</Text>
-      <View style={styles.pickerContainer}>
-        <Picker
-          selectedValue={enviarAnamnese}
-          onValueChange={(itemValue) => {
-            setEnviarAnamnese(itemValue);
-            if (itemValue === 'Não') {
-              setTipoAnamneseId(null);
-            }
-          }}
-          style={styles.picker}
-        >
-          <Picker.Item label="Selecione..." value={null} />
-          <Picker.Item label="Sim" value="Sim" />
-          <Picker.Item label="Não" value="Não" />
-        </Picker>
-      </View>
-
-      {/* Tipo de Anamnese (visível apenas se enviarAnamnese for 'Sim') */}
-      {enviarAnamnese === 'Sim' && (
-        <>
-          <Text style={styles.label}>Tipo de Questionário</Text>
-          <View style={styles.pickerContainer}>
-            {loadingQuestionarios ? (
-              <View style={styles.loadingQuestionariosContainer}>
-                <ActivityIndicator size="small" color="#d0a956" />
-                <Text style={styles.loadingQuestionariosText}>Carregando questionários...</Text>
-              </View>
-            ) : (
-              <Picker
-                selectedValue={tipoAnamneseId}
-                onValueChange={(itemValue) => setTipoAnamneseId(itemValue)}
-                style={styles.picker}
-              >
-                <Picker.Item label="Selecione..." value={null} />
-                {availableQuestionarios.map((q) => (
-                  <Picker.Item key={q.id} label={q.nome} value={q.id} />
-                ))}
-              </Picker>
-            )}
+        {/* WhatsApp / Telefone */}
+        <Text style={styles.label}>WhatsApp / Telefone</Text>
+        <View style={styles.phoneInputContainer}>
+          <View style={[styles.countryCodePickerContainer, GlobalStyles.shadow]}>
+            <Picker
+              selectedValue={prefixoTelefone}
+              onValueChange={(itemValue) => setPrefixoTelefone(itemValue)}
+              style={styles.countryCodePicker}
+              itemStyle={styles.pickerItem} // Estilo para os itens do Picker
+            >
+              {countryCodes.map((country, index) => (
+                <Picker.Item key={index} label={country.label} value={country.value} />
+              ))}
+            </Picker>
           </View>
-        </>
-      )}
+          <TextInput
+            style={[styles.phoneTextInput, GlobalStyles.shadow]}
+            placeholder="Número de telefone"
+            placeholderTextColor={Colors.textLight}
+            value={telefone}
+            onChangeText={setTelefone}
+            keyboardType="phone-pad"
+          />
+        </View>
 
-      {/* Botão Salvar */}
-      <TouchableOpacity style={styles.button} onPress={handleRegister}>
-        <Text style={styles.buttonText}>Salvar</Text>
-      </TouchableOpacity>
-    </ScrollView>
+        {/* Gênero */}
+        <Text style={styles.label}>Gênero</Text>
+        <View style={[styles.pickerContainer, GlobalStyles.shadow]}>
+          <Picker
+            selectedValue={genero}
+            onValueChange={(itemValue) => setGenero(itemValue)}
+            style={styles.picker}
+            itemStyle={styles.pickerItem} // Estilo para os itens do Picker
+          >
+            <Picker.Item label="Selecione..." value={null} />
+            <Picker.Item label="Masculino" value="Masculino" />
+            <Picker.Item label="Feminino" value="Feminino" />
+            <Picker.Item label="Outro" value="Outro" />
+          </Picker>
+        </View>
+
+        <Text style={styles.sectionTitle}>Configurações de Acesso</Text>
+
+        {/* Enviar informações de acesso ao cliente */}
+        <View style={[styles.switchRow, GlobalStyles.shadow]}>
+          <Text style={styles.labelSwitch}>Enviar informações de acesso ao cliente</Text>
+          <Switch
+            onValueChange={setEnviarAcesso}
+            value={enviarAcesso}
+            trackColor={{ false: Colors.mediumGray, true: Colors.primaryLight }} // Cores da paleta
+            thumbColor={Platform.OS === 'android' ? Colors.white : Colors.white}
+          />
+        </View>
+
+        {/* Botão Salvar */}
+        <TouchableOpacity style={[styles.button, GlobalStyles.shadow]} onPress={handleRegister}>
+          <Text style={styles.buttonText}>Registar Cliente</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 20,
-    flexGrow: 1,
-    backgroundColor: '#f9fafb',
+  safeArea: {
+    flex: 1,
+    backgroundColor: Colors.background,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 25,
-    color: '#111827',
-    textAlign: 'center',
+  scrollContent: {
+    flexGrow: 1,
+    padding: 20,
+    backgroundColor: Colors.background,
+  },
+  sectionTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: 20,
+    marginTop: 10,
+    textAlign: 'left',
+    width: '100%',
   },
   label: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: Colors.textPrimary,
     marginBottom: 8,
     marginTop: 15,
   },
+  labelSwitch: { // Estilo específico para o label do switch
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+    flex: 1, // Para ocupar o espaço e alinhar o switch à direita
+    marginRight: 10,
+  },
   input: {
-    backgroundColor: '#fff',
+    backgroundColor: Colors.surface,
     padding: 12,
     borderRadius: 10,
-    marginBottom: 12,
+    marginBottom: 15,
     borderWidth: 1,
-    borderColor: '#d0a956',
+    borderColor: Colors.lightGray,
     fontSize: 16,
-    color: '#333',
+    color: Colors.textPrimary,
   },
   dateInput: {
-    backgroundColor: '#fff',
+    backgroundColor: Colors.surface,
     padding: 12,
     borderRadius: 10,
-    marginBottom: 12,
+    marginBottom: 15,
     borderWidth: 1,
-    borderColor: '#d0a956',
+    borderColor: Colors.lightGray,
     justifyContent: 'center',
     height: 50,
   },
   pickerContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: Colors.surface,
     borderRadius: 10,
-    marginBottom: 12,
+    marginBottom: 15,
     borderWidth: 1,
-    borderColor: '#d0a956',
-    overflow: 'hidden',
+    borderColor: Colors.lightGray,
+    overflow: 'hidden', // Necessário para que o borderRadius funcione no Picker
   },
   picker: {
     height: 50,
     width: '100%',
-    color: '#333',
+    color: Colors.textPrimary,
+  },
+  pickerItem: { // Estilo para os itens do Picker (pode precisar de ajuste dependendo da plataforma)
+    fontSize: 16,
+    color: Colors.textPrimary,
   },
   loadingQuestionariosContainer: {
     flexDirection: 'row',
@@ -582,18 +727,18 @@ const styles = StyleSheet.create({
   },
   loadingQuestionariosText: {
     marginLeft: 10,
-    color: '#666',
+    color: Colors.textSecondary,
     fontSize: 14,
   },
   phoneInputContainer: {
     flexDirection: 'row',
-    marginBottom: 12,
+    marginBottom: 15,
   },
   countryCodePickerContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: Colors.surface,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#d0a956',
+    borderColor: Colors.lightGray,
     marginRight: 8,
     overflow: 'hidden',
     flex: 0.4,
@@ -601,41 +746,43 @@ const styles = StyleSheet.create({
   countryCodePicker: {
     height: 50,
     width: '100%',
-    color: '#333',
+    color: Colors.textPrimary,
   },
   phoneTextInput: {
-    backgroundColor: '#fff',
+    backgroundColor: Colors.surface,
     padding: 12,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#d0a956',
+    borderColor: Colors.lightGray,
     flex: 0.6,
     fontSize: 16,
-    color: '#333',
+    color: Colors.textPrimary,
     height: 50,
   },
   switchRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 12,
+    backgroundColor: Colors.surface,
+    padding: 15, // Aumentado o padding
     borderRadius: 10,
-    marginBottom: 12,
+    marginBottom: 15,
     borderWidth: 1,
-    borderColor: '#d0a956',
+    borderColor: Colors.lightGray,
   },
   button: {
-    backgroundColor: '#4f46e5',
-    padding: 14,
+    backgroundColor: Colors.primary, // Cor primária da paleta
+    padding: 16, // Aumentado o padding
     borderRadius: 10,
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 25, // Mais espaço acima do botão
     marginBottom: 30,
   },
   buttonText: {
-    color: '#fff',
+    color: Colors.onPrimary, // Cor do texto sobre a cor primária
     fontWeight: '700',
     fontSize: 18,
   },
+  // Estilos para o AppHeader (copiados do PerfilAdminScreen)
+  // ... (headerStyles já definido acima)
 });

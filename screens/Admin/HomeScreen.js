@@ -1,12 +1,26 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, Image, SafeAreaView, ScrollView, Platform, StatusBar, TouchableOpacity, ActivityIndicator, Alert, Dimensions } from 'react-native';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import {
+    View, Text, StyleSheet, Image, SafeAreaView, ScrollView,
+    Platform, StatusBar, TouchableOpacity, ActivityIndicator, Alert,
+} from 'react-native';
 import { useUser } from '../../contexts/UserContext';
-import { useNavigation } from '@react-navigation/native';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'; // Importar MaterialCommunityIcons para as estrelas
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 import { db, auth } from '../../services/firebaseConfig';
-import { collection, query, where, getDocs, onSnapshot, orderBy, limit, collectionGroup, doc, getDoc } from 'firebase/firestore';
+import {
+    collection, query, where, getDocs, onSnapshot, orderBy, limit,
+    collectionGroup, doc, getDoc
+} from 'firebase/firestore';
 
-// A função formatarDuracao é útil em vários locais, então é bom mantê-la globalmente ou aqui.
+// --- Importações de componentes e constantes modulares ---
+import Colors from '../../constants/Colors';
+import Layout from '../../constants/Layout';
+import StatItem from '../../components/StatItem';
+import ActionButton from '../../components/ActionButton';
+import TrainingCard from '../../components/TrainingCard';
+import AppHeader from '../../components/AppHeader'; // Seu AppHeader limpo e com bordas arredondadas
+
+// --- Funções Auxiliares (mantidas aqui ou movidas para um 'utils' se usadas em mais lugares) ---
 const formatarDuracao = (totalSegundos) => {
     if (typeof totalSegundos !== 'number' || isNaN(totalSegundos) || totalSegundos < 0) {
         return 'N/A';
@@ -15,7 +29,7 @@ const formatarDuracao = (totalSegundos) => {
     const min = Math.floor((totalSegundos % 3600) / 60);
     const seg = totalSegundos % 60;
     const pad = (num) => num.toString().padStart(2, '0');
-    
+
     const parts = [];
     if (horas > 0) {
         parts.push(`${horas}h`);
@@ -26,28 +40,9 @@ const formatarDuracao = (totalSegundos) => {
     if (seg > 0 || (horas === 0 && min === 0)) {
         parts.push(`${pad(seg)}s`);
     }
-    
+
     return parts.join(' ');
 };
-
-const { width } = Dimensions.get('window');
-
-// Paleta de Cores Refinada para um look mais elegante e menos pesado
-const Colors = {
-    primaryGold: '#D4AF37', // Ouro mais clássico
-    darkBrown: '#3E2723',   // Marrom bem escuro, quase preto
-    lightBrown: '#795548',  // Marrom mais suave
-    creamBackground: '#FDF7E4', // Fundo creme claro
-    white: '#FFFFFF',
-    lightGray: '#ECEFF1',   // Cinza muito claro
-    mediumGray: '#B0BEC5',  // Cinza médio para textos secundários
-    darkGray: '#424242',    // Cinza escuro para textos principais
-    accentBlue: '#2196F3',  // Azul vibrante para links
-    successGreen: '#4CAF50', // Verde para sucesso
-    errorRed: '#F44336',    // Vermelho para erros/alertas
-    unreadBadge: '#EF5350', // Vermelho mais vibrante para badge de não lidas
-};
-
 
 export default function HomeScreen() {
     const { user, userDetails, loadUserDetails } = useUser();
@@ -60,20 +55,23 @@ export default function HomeScreen() {
         pendingEvaluations: 0,
     });
     const [upcomingTrainings, setUpcomingTrainings] = useState([]);
-    // NOVO ESTADO para os últimos treinos concluídos
-    const [recentCompletedTrainings, setRecentCompletedTrainings] = useState([]); 
+    const [recentCompletedTrainings, setRecentCompletedTrainings] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    // Refs para gerir unsubscribers de listeners do Firestore
+    const chatMessageUnsubscribersRef = useRef({});
+    const chatMainUnsubscriberRef = useRef(null);
+    const otherFirestoreUnsubscribers = useRef([]);
 
-    const chatUnsubscribersRef = useRef([]);
-
+    // Efeito para carregar detalhes do usuário se não estiverem disponíveis
     useEffect(() => {
         if (user && !userDetails) {
             loadUserDetails(user.uid);
         }
     }, [user, userDetails, loadUserDetails]);
 
-    const fetchStaticStats = async () => {
+    // --- Funções de busca/assinatura (encapsuladas com useCallback para estabilidade) ---
+    const fetchStaticStats = useCallback(async () => {
         try {
             let newClientsCount = 0;
             let pendingEvaluationsCount = 0;
@@ -101,12 +99,12 @@ export default function HomeScreen() {
             }));
 
         } catch (err) {
-            console.error("Erro ao buscar estatísticas estáticas (sem mensagens):", err);
-            setError(`Não foi possível carregar algumas estatísticas: ${err.message}.`);
+            console.error("Erro ao buscar estatísticas estáticas:", err);
+            // Poderia adicionar setError aqui para mostrar na UI
         }
-    };
+    }, []);
 
-    const subscribeToTrainingsToday = () => {
+    const subscribeToTrainingsToday = useCallback(() => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const tomorrow = new Date(today);
@@ -127,6 +125,11 @@ export default function HomeScreen() {
             }));
         }, (err) => {
             console.error("Erro ao assinar treinos de hoje:", err);
+            if (err.code === 'permission-denied') {
+                console.log("Permissão negada para treinos de hoje. Isso é esperado em logout.");
+                setStats(prevStats => ({ ...prevStats, trainingsToday: 0 }));
+                return;
+            }
             if (err.code === 'failed-precondition' && err.message.includes('A non-descending order by is required')) {
                 Alert.alert("Erro de Firebase", "É necessário um índice no Firestore para esta query. Por favor, verifique a consola do Firebase > Firestore > Índices e crie o índice sugerido.");
                 setError("Erro: Índice necessário no Firebase para treinos de hoje.");
@@ -134,11 +137,10 @@ export default function HomeScreen() {
                 setError(`Não foi possível carregar treinos de hoje em tempo real: ${err.message}.`);
             }
         });
-
         return unsubscribe;
-    };
+    }, []);
 
-    const fetchUpcomingTrainings = () => {
+    const fetchUpcomingTrainings = useCallback(() => {
         const treinosCollectionGroupRef = collectionGroup(db, 'treinos');
         const q = query(
             treinosCollectionGroupRef,
@@ -151,35 +153,25 @@ export default function HomeScreen() {
             const trainingsData = await Promise.all(snapshot.docs.map(async treinoDoc => {
                 const data = treinoDoc.data();
                 let clientName = 'Cliente Desconhecido';
-
                 const userIdFromPath = treinoDoc.ref.parent.parent.id;
                 const currentUserId = data.userId || userIdFromPath;
 
-                if (currentUserId) {
+                if (currentUserId && auth.currentUser) {
                     try {
                         const clientDocRef = doc(db, 'users', currentUserId);
                         const clientDocSnap = await getDoc(clientDocRef);
-
                         if (clientDocSnap.exists()) {
                             const client = clientDocSnap.data();
-                            if (client.name) {
-                                clientName = client.name;
-                            } else if (client.firstName || client.lastName) {
-                                clientName = `${client.firstName || ''} ${client.lastName || ''}`.trim();
-                            } else if (client.nome) {
-                                clientName = client.nome;
-                            }
+                            clientName = client.name || client.firstName || client.nome || 'Cliente sem nome';
                         } else {
                             clientName = 'Cliente (Não Encontrado)';
                         }
                     } catch (e) {
-                        console.error(`Erro ao buscar nome do cliente para treino ID ${treinoDoc.id}:`, e);
                         clientName = 'Cliente (Erro na Busca)';
                     }
                 } else {
-                    clientName = 'Cliente (Sem ID)';
+                    clientName = 'Cliente (Não Autenticado)';
                 }
-
                 return {
                     id: treinoDoc.id,
                     ...data,
@@ -187,9 +179,14 @@ export default function HomeScreen() {
                     clientName: clientName,
                 };
             }));
-            setUpcomingTrainings(trainingsData);
+            setUpcomingTrainings(trainingsData); // onSnapshot já garante que esta lista é substituída, não duplicada.
         }, (err) => {
             console.error("Erro ao buscar próximos treinos:", err);
+            if (err.code === 'permission-denied') {
+                console.log("Permissão negada para próximos treinos. Isso é esperado em logout.");
+                setUpcomingTrainings([]);
+                return;
+            }
             if (err.code === 'failed-precondition' && err.message.includes('A non-descending order by is required')) {
                 Alert.alert("Erro de Firebase", "É necessário um índice no Firestore para esta query. Por favor, verifique a consola do Firebase > Firestore > Índices e crie o índice sugerido.");
                 setError("Erro de índice nos próximos treinos.");
@@ -197,17 +194,15 @@ export default function HomeScreen() {
                 setError(`Não foi possível carregar os próximos treinos: ${err.message}`);
             }
         });
-
         return unsubscribe;
-    };
+    }, []);
 
-    // NOVA FUNÇÃO: Busca os últimos treinos concluídos
-    const fetchRecentCompletedTrainings = () => {
+    const fetchRecentCompletedTrainings = useCallback(() => {
         const historicoRef = collection(db, 'historicoTreinos');
         const q = query(
             historicoRef,
-            orderBy('dataConclusao', 'desc'), // Ordena pela data de conclusão mais recente
-            limit(3) // Limita aos 3 mais recentes
+            orderBy('dataConclusao', 'desc'),
+            limit(3)
         );
 
         const unsubscribe = onSnapshot(q, async (snapshot) => {
@@ -215,7 +210,7 @@ export default function HomeScreen() {
                 const data = docSnap.data();
                 let clientName = 'Cliente Desconhecido';
 
-                if (data.userId) {
+                if (data.userId && auth.currentUser) {
                     try {
                         const clientDocRef = doc(db, 'users', data.userId);
                         const clientDocSnap = await getDoc(clientDocRef);
@@ -224,8 +219,10 @@ export default function HomeScreen() {
                             clientName = client.name || client.firstName || client.nome || 'Cliente sem nome';
                         }
                     } catch (e) {
-                        console.error(`Erro ao buscar nome do cliente para treino concluído ID ${docSnap.id}:`, e);
+                        clientName = 'Cliente (Erro na Busca)';
                     }
+                } else {
+                    clientName = 'Cliente (Não Autenticado)';
                 }
 
                 return {
@@ -240,18 +237,34 @@ export default function HomeScreen() {
             setRecentCompletedTrainings(completedTrainingsData);
         }, (err) => {
             console.error("Erro ao buscar treinos concluídos recentes:", err);
+            if (err.code === 'permission-denied') {
+                console.log("Permissão negada para treinos concluídos recentes. Isso é esperado em logout.");
+                setRecentCompletedTrainings([]);
+                return;
+            }
             setError(`Não foi possível carregar os últimos treinos concluídos: ${err.message}`);
         });
-
         return unsubscribe;
-    };
+    }, []);
 
+    const subscribeToUnreadMessages = useCallback(() => {
+        console.log("Iniciando subscribeToUnreadMessages...");
 
-    const subscribeToUnreadMessages = () => {
-        chatUnsubscribersRef.current.forEach(unsub => unsub());
-        chatUnsubscribersRef.current = [];
+        // Garante que todos os listeners de mensagens anteriores são limpos
+        Object.values(chatMessageUnsubscribersRef.current).forEach(unsub => unsub());
+        chatMessageUnsubscribersRef.current = {};
 
-        if (!auth.currentUser) return;
+        if (chatMainUnsubscriberRef.current) {
+            chatMainUnsubscriberRef.current();
+            chatMainUnsubscriberRef.current = null;
+        }
+
+        if (!auth.currentUser) {
+            console.log("Usuário não autenticado. Não subscrevendo mensagens não lidas.");
+            setStats(prevStats => ({ ...prevStats, unreadMessages: 0 }));
+            setLoading(false);
+            return;
+        }
 
         const adminId = auth.currentUser.uid;
         let totalUnread = 0;
@@ -265,15 +278,17 @@ export default function HomeScreen() {
         );
 
         const unsubscribeChats = onSnapshot(qChats, (chatsSnapshot) => {
+            console.log("Snapshot do listener principal de chats recebido.");
             chatsSnapshot.docChanges().forEach(change => {
                 const chatId = change.doc.id;
 
                 if (change.type === 'removed') {
-                    if (chatUnsubscribersRef.current[chatId]) {
-                        chatUnsubscribersRef.current[chatId]();
-                        delete currentUnreadCounts[chatId]; 
+                    console.log(`Chat ${chatId} removido. Limpando sub-listener.`);
+                    if (chatMessageUnsubscribersRef.current[chatId]) {
+                        chatMessageUnsubscribersRef.current[chatId]();
+                        delete chatMessageUnsubscribersRef.current[chatId];
                     }
-                    if (currentUnreadCounts[chatId]) {
+                    if (currentUnreadCounts[chatId] !== undefined) {
                         totalUnread -= currentUnreadCounts[chatId];
                         delete currentUnreadCounts[chatId];
                         setStats(prevStats => ({ ...prevStats, unreadMessages: totalUnread }));
@@ -281,7 +296,12 @@ export default function HomeScreen() {
                     return;
                 }
 
-                if (!chatUnsubscribersRef.current[chatId]) {
+                if (!chatMessageUnsubscribersRef.current[chatId] || change.type === 'modified') {
+                    console.log(`Subscrevendo mensagens para o chat ${chatId}.`);
+                    if (chatMessageUnsubscribersRef.current[chatId]) {
+                        chatMessageUnsubscribersRef.current[chatId]();
+                    }
+
                     const messagesRef = collection(db, 'chats', chatId, 'messages');
                     const unsubscribeMessages = onSnapshot(messagesRef, (messagesSnapshot) => {
                         let unreadForThisChat = 0;
@@ -299,53 +319,121 @@ export default function HomeScreen() {
                         }
                     }, (err) => {
                         console.error(`Erro ao assinar mensagens do chat ${chatId}:`, err);
+                        if (err.code === 'permission-denied') {
+                            console.log(`Permissão negada para mensagens do chat ${chatId}. Isso é esperado em logout.`);
+                            if (currentUnreadCounts[chatId] !== undefined) {
+                                totalUnread -= currentUnreadCounts[chatId];
+                                delete currentUnreadCounts[chatId];
+                                setStats(prevStats => ({ ...prevStats, unreadMessages: totalUnread }));
+                            }
+                            if (chatMessageUnsubscribersRef.current[chatId]) {
+                                chatMessageUnsubscribersRef.current[chatId]();
+                                delete chatMessageUnsubscribersRef.current[chatId];
+                            }
+                            return;
+                        }
                         setError(`Erro ao carregar mensagens não lidas: ${err.message}`);
                     });
-                    chatUnsubscribersRef.current[chatId] = unsubscribeMessages;
+                    chatMessageUnsubscribersRef.current[chatId] = unsubscribeMessages;
                 }
             });
             setLoading(false);
         }, (err) => {
-            console.error("Erro ao assinar chats:", err);
+            console.error("Erro ao assinar chats principais:", err);
+            if (err.code === 'permission-denied') {
+                console.log("Permissão negada para chats principais. Isso é esperado em logout.");
+                setStats(prevStats => ({ ...prevStats, unreadMessages: 0 }));
+                setLoading(false);
+                return;
+            }
             setError(`Erro ao carregar chats: ${err.message}`);
             setLoading(false);
         });
 
-        chatUnsubscribersRef.current.push(unsubscribeChats);
-        return () => {
-            chatUnsubscribersRef.current.forEach(unsub => unsub());
-            chatUnsubscribersRef.current = [];
-        };
-    };
-
-
-    useEffect(() => {
-        setLoading(true);
-        setError(null);
-
-        fetchStaticStats();
-        const unsubscribeTrainingsToday = subscribeToTrainingsToday();
-        const unsubscribeUpcomingTrainings = fetchUpcomingTrainings();
-        // NOVO: Chamar a função para buscar treinos concluídos recentes
-        const unsubscribeRecentCompletedTrainings = fetchRecentCompletedTrainings(); 
-        const unsubscribeUnread = subscribeToUnreadMessages();
+        chatMainUnsubscriberRef.current = unsubscribeChats;
 
         return () => {
-            unsubscribeTrainingsToday();
-            unsubscribeUpcomingTrainings();
-            // NOVO: Desinscrever dos treinos concluídos recentes
-            unsubscribeRecentCompletedTrainings(); 
-            unsubscribeUnread();
+            console.log("Função de limpeza de subscribeToUnreadMessages ativada.");
+            if (chatMainUnsubscriberRef.current) {
+                chatMainUnsubscriberRef.current();
+                chatMainUnsubscriberRef.current = null;
+            }
+            Object.values(chatMessageUnsubscribersRef.current).forEach(unsub => unsub());
+            chatMessageUnsubscribersRef.current = {};
+            setStats(prevStats => ({ ...prevStats, unreadMessages: 0 }));
+            console.log("Listeners de chat desinscritos.");
         };
-    }, [user]);
+    }, []);
 
+    // useFocusEffect para o ciclo de vida da tela
+    useFocusEffect(
+        useCallback(() => {
+            console.log("HomeScreen: useFocusEffect ATIVADO (tela em foco).");
+            const currentUser = auth.currentUser;
+
+            // Limpa todos os listeners existentes ao focar (para evitar duplicatas)
+            // A forma como os listeners são armazenados e limpos é robusta.
+            otherFirestoreUnsubscribers.current.forEach(unsub => {
+                if (typeof unsub === 'function') unsub();
+            });
+            otherFirestoreUnsubscribers.current = [];
+
+            if (!currentUser) {
+                console.log("HomeScreen: Usuário não autenticado. Limpando dados e listeners.");
+                setStats({ newClients: 0, trainingsToday: 0, unreadMessages: 0, pendingEvaluations: 0 });
+                setUpcomingTrainings([]);
+                setRecentCompletedTrainings([]);
+                setLoading(false);
+                setError(null);
+                const chatCleanup = subscribeToUnreadMessages();
+                if (typeof chatCleanup === 'function') chatCleanup();
+                return () => {
+                    console.log("HomeScreen: useFocusEffect cleanup (sem usuário).");
+                };
+            }
+
+            console.log("HomeScreen: Usuário autenticado. Iniciando buscas e assinaturas...");
+            setLoading(true);
+            setError(null);
+
+            // Inicia todas as buscas e assinaturas
+            fetchStaticStats();
+            const unsubscribeTrainingsToday = subscribeToTrainingsToday();
+            const unsubscribeUpcomingTrainings = fetchUpcomingTrainings();
+            const unsubscribeRecentCompletedTrainings = fetchRecentCompletedTrainings();
+            const cleanupUnreadMessages = subscribeToUnreadMessages();
+
+            // Armazena todas as funções de 'unsubscribe' para limpeza posterior
+            otherFirestoreUnsubscribers.current.push(
+                unsubscribeTrainingsToday,
+                unsubscribeUpcomingTrainings,
+                unsubscribeRecentCompletedTrainings,
+                cleanupUnreadMessages
+            );
+
+            // A função de retorno de 'useFocusEffect' é a função de limpeza
+            return () => {
+                console.log("HomeScreen: useFocusEffect cleanup. Desinscrevendo todos os listeners.");
+                otherFirestoreUnsubscribers.current.forEach(unsub => {
+                    if (typeof unsub === 'function') unsub();
+                });
+                otherFirestoreUnsubscribers.current = [];
+                // Nao é necessário limpar os estados aqui, pois a proxima vez que a tela
+                // for focada, os novos dados serao carregados.
+                console.log("HomeScreen: Listeners desinscritos no cleanup.");
+            };
+        }, [user, fetchStaticStats, subscribeToTrainingsToday, fetchUpcomingTrainings, fetchRecentCompletedTrainings, subscribeToUnreadMessages])
+    );
+
+    // Detalhes do utilizador para o avatar e nome
     const userDisplayName = userDetails?.nome || userDetails?.firstName || userDetails?.name || 'Admin';
-    const userInitial = userDisplayName ? userDisplayName.charAt(0).toUpperCase() : '';
+    const firstName = userDisplayName.split(' ')[0];
+    const userInitial = firstName ? firstName.charAt(0).toUpperCase() : '';
 
     if (loading || !user) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={Colors.primaryGold} />
+                <ActivityIndicator size="large" color={Colors.primary} />
                 <Text style={styles.loadingText}>A carregar dados do painel...</Text>
             </View>
         );
@@ -358,11 +446,6 @@ export default function HomeScreen() {
                 <TouchableOpacity onPress={() => {
                     setLoading(true);
                     setError(null);
-                    fetchStaticStats();
-                    subscribeToTrainingsToday();
-                    fetchUpcomingTrainings();
-                    fetchRecentCompletedTrainings(); // Adicionado para tentar novamente
-                    subscribeToUnreadMessages();
                 }} style={styles.retryButton}>
                     <Text style={styles.retryButtonText}>Tentar Novamente</Text>
                 </TouchableOpacity>
@@ -371,34 +454,32 @@ export default function HomeScreen() {
     }
 
     return (
-        <SafeAreaView style={styles.container}>
-            {/* Barra Fixa Superior (Header) */}
-            <View style={styles.header}>
-                <Image
-                    source={require('../../assets/logo.jpeg')}
-                    style={styles.headerLogo}
-                    resizeMode="contain"
-                />
-                <View style={styles.userInfo}>
-                    <View style={styles.avatar}>
-                        <Text style={styles.avatarText}>{userInitial}</Text>
-                    </View>
-                    <Text style={styles.userNameText}>Olá, {userDisplayName}</Text>
+        <SafeAreaView style={styles.safeArea}>
+            {/* Barra Fixa Superior (Header) - Agora um componente! */}
+            <AppHeader />
+
+            <ScrollView contentContainerStyle={styles.scrollViewContent}>
+                <View style={styles.welcomeSection}>
+                    <TouchableOpacity
+                        style={styles.avatarContainer}
+                        // Usando getParent() para navegar para a rota PerfilAdmin no AdminStack pai
+                        onPress={() => navigation.getParent()?.navigate('PerfilAdmin')}
+                    >
+                        <View style={styles.avatar}>
+                            <Text style={styles.avatarText}>{userInitial}</Text>
+                        </View>
+                    </TouchableOpacity>
+                    <Text style={styles.welcomeCombinedText}>Boa noite, {firstName}</Text>
                 </View>
-            </View>
 
-            {/* Conteúdo da Página (rolável) */}
-            <ScrollView contentContainerStyle={styles.content}>
-                <Text style={styles.welcomeText}>Bem-vindo ao Painel Admin!</Text>
-
-                {/* --- RESUMO RÁPIDO --- */}
+                {/* --- RESUMO RÁPIDO / ESTATÍSTICAS --- */}
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Resumo Rápido</Text>
+                    <Text style={styles.sectionTitle}>Estatísticas Chave</Text>
                     <View style={styles.statsContainer}>
-                        <StatItem value={stats.newClients} label="Meus Clientes" icon="person-add-outline" />
-                        <StatItem value={stats.trainingsToday} label="Treinos Hoje" icon="barbell-outline" />
-                        <StatItem value={stats.unreadMessages} label="Mensagens Novas" icon="chatbubbles-outline" isUnread={stats.unreadMessages > 0} />
-                        <StatItem value={stats.pendingEvaluations} label="Aval. Pendentes" icon="document-text-outline" />
+                        <StatItem value={stats.newClients} label="Meus Clientes" icon="person-add-outline" style={styles.statItemColumn} />
+                        <StatItem value={stats.trainingsToday} label="Treinos Hoje" icon="barbell-outline" style={styles.statItemColumn} />
+                        <StatItem value={stats.unreadMessages} label="Mensagens Novas" icon="chatbubbles-outline" isUnread={stats.unreadMessages > 0} style={styles.statItemColumn} />
+                        <StatItem value={stats.pendingEvaluations} label="Aval. Pendentes" icon="document-text-outline" style={styles.statItemColumn} />
                     </View>
                 </View>
 
@@ -415,413 +496,203 @@ export default function HomeScreen() {
                         <ActionButton icon="clipboard-outline" text="Criar Avaliação" onPress={() => navigation.navigate('CriarAvaliacao')} />
                         <ActionButton icon="calendar-outline" text="Ver Agenda" onPress={() => navigation.navigate('Agenda')} />
                         <ActionButton icon="people-outline" text="Gerir Clientes" onPress={() => navigation.navigate('Clientes')} />
-                        <ActionButton icon="chatbubbles-outline" text="Chat Online" onPress={() => navigation.navigate('Chat Online')} />
+                        <ActionButton icon="chatbubbles-outline" text="Chat Online" onPress={() => navigation.navigate('AdminChatList')} />
                         <ActionButton icon="library-outline" text="Gerir Modelos" onPress={() => navigation.navigate('WorkoutTemplates')} />
                         <ActionButton icon="barbell-outline" text="Gerir Exercícios" onPress={() => navigation.navigate('ExerciseLibrary')} />
                         <ActionButton icon="checkmark-done-circle-outline" text="Histórico Treinos" onPress={() => navigation.navigate('CompletedTrainingsHistory')} />
+                        <ActionButton icon="calendar-number-outline" text="Gerir Aulas PT" onPress={() => navigation.navigate('ManagePTClasses')} />
                     </ScrollView>
                 </View>
 
-                {/* --- PRÓXIMOS AGENDAMENTOS --- */}
+                {/* --- PRÓXIMOS TREINOS --- */}
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Próximos Treinos</Text>
+                    <View style={styles.sectionHeaderWithButton}>
+                        <Text style={styles.sectionTitle}>Próximos Treinos</Text>
+                        <TouchableOpacity onPress={() => navigation.navigate('Agenda')} activeOpacity={0.7}>
+                            <Text style={styles.viewAllLink}>Ver todos <Ionicons name="arrow-forward-outline" size={Layout.fontSizes.medium} color={Colors.info} /></Text>
+                        </TouchableOpacity>
+                    </View>
                     <View style={styles.card}>
                         {upcomingTrainings.length > 0 ? (
                             upcomingTrainings.map((training, index) => (
                                 <React.Fragment key={training.id}>
-                                    <View style={styles.trainingItem}>
-                                        <Ionicons name="calendar-outline" size={18} color={Colors.lightBrown} style={{ marginRight: 8 }} />
-                                        <Text style={styles.trainingText}>
-                                            <Text style={styles.trainingTime}>{training.data ? training.data.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}</Text>
-                                            <Text> | </Text>
-                                            <Text style={styles.trainingClient}>{training.clientName || 'Cliente Desconhecido'}</Text>
-                                            <Text> | </Text>
-                                            <Text>{training.nome || 'Treino'}</Text>
-                                        </Text>
-                                    </View>
+                                    <TrainingCard type="upcoming" training={training} formatarDuracao={formatarDuracao} />
                                     {index < upcomingTrainings.length - 1 && <View style={styles.itemSeparator} />}
                                 </React.Fragment>
                             ))
                         ) : (
                             <Text style={styles.noDataText}>Nenhum treino agendado para breve.</Text>
                         )}
-                        <TouchableOpacity onPress={() => navigation.navigate('Agenda')} style={styles.linkButton} activeOpacity={0.7}>
-                            <Text style={styles.viewAllLink}>
-                                <Text>Ver todos na Agenda </Text>
-                                <Ionicons name="arrow-forward-outline" size={14} color={Colors.accentBlue} />
-                            </Text>
-                        </TouchableOpacity>
                     </View>
                 </View>
 
-                {/* NOVO: ÚLTIMOS TREINOS CONCLUÍDOS */}
+                {/* --- ÚLTIMOS TREINOS CONCLUÍDOS --- */}
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Últimos Treinos Concluídos</Text>
+                    <View style={styles.sectionHeaderWithButton}>
+                        <Text style={styles.sectionTitle}>Últimos Treinos Concluídos</Text>
+                        <TouchableOpacity onPress={() => navigation.navigate('CompletedTrainingsHistory')} activeOpacity={0.7}>
+                            <Text style={styles.viewAllLink}>Ver todo o Histórico <Ionicons name="arrow-forward-outline" size={Layout.fontSizes.medium} color={Colors.info} /></Text>
+                        </TouchableOpacity>
+                    </View>
                     <View style={styles.card}>
                         {recentCompletedTrainings.length > 0 ? (
                             recentCompletedTrainings.map((training, index) => (
                                 <React.Fragment key={training.id}>
-                                    <View style={styles.trainingItem}>
-                                        <Ionicons name="checkmark-done-circle-outline" size={18} color={Colors.successGreen} style={{ marginRight: 8 }} />
-                                        <Text style={styles.trainingText}>
-                                            <Text style={styles.trainingTime}>{training.dataConclusao ? training.dataConclusao.toLocaleDateString() : 'N/A'}</Text>
-                                            <Text> | </Text>
-                                            <Text style={styles.trainingClient}>{training.clientName || 'Cliente Desconhecido'}</Text>
-                                            <Text> | </Text>
-                                            <Text>{training.nomeTreino || 'Treino'}</Text>
-                                            {training.duracao > 0 && (
-                                                <Text> ({formatarDuracao(training.duracao)})</Text>
-                                            )}
-                                        </Text>
-                                    </View>
-                                    {training.avaliacao > 0 && (
-                                        <View style={styles.ratingContainer}>
-                                            <Text style={styles.ratingText}>Avaliação: </Text>
-                                            {[1, 2, 3, 4, 5].map((star) => (
-                                                <MaterialCommunityIcons
-                                                    key={star}
-                                                    name={star <= training.avaliacao ? 'star' : 'star-outline'}
-                                                    size={16}
-                                                    color="#FFD700"
-                                                    style={styles.starIcon}
-                                                />
-                                            ))}
-                                        </View>
-                                    )}
-                                    {training.observacoesUser ? (
-                                        <View style={styles.observationSummaryContainer}>
-                                            <Text style={styles.observationSummaryText}>"{training.observacoesUser.substring(0, 50)}{training.observacoesUser.length > 50 ? '...' : ''}"</Text>
-                                        </View>
-                                    ) : null}
+                                    <TrainingCard type="completed" training={training} formatarDuracao={formatarDuracao} />
                                     {index < recentCompletedTrainings.length - 1 && <View style={styles.itemSeparator} />}
                                 </React.Fragment>
                             ))
                         ) : (
                             <Text style={styles.noDataText}>Nenhum treino concluído recentemente.</Text>
                         )}
-                        <TouchableOpacity onPress={() => navigation.navigate('CompletedTrainingsHistory')} style={styles.linkButton} activeOpacity={0.7}>
-                            <Text style={styles.viewAllLink}>
-                                <Text>Ver Histórico Completo </Text>
-                                <Ionicons name="arrow-forward-outline" size={14} color={Colors.accentBlue} />
-                            </Text>
-                        </TouchableOpacity>
                     </View>
                 </View>
+
             </ScrollView>
         </SafeAreaView>
     );
 }
 
-// Componente auxiliar para os itens de estatísticas
-const StatItem = ({ value, label, icon, isUnread = false }) => (
-    <View style={styles.statItem}>
-        <View style={styles.statIconContainer}>
-            <Ionicons name={icon} size={28} color={isUnread ? Colors.unreadBadge : Colors.primaryGold} />
-            {isUnread && value > 0 && (
-                <View style={styles.unreadDot} />
-            )}
-        </View>
-        <Text style={styles.statNumber}>{value}</Text>
-        <Text style={styles.statLabel}>{label}</Text>
-    </View>
-);
-
-// Componente auxiliar para os botões de ação rápida
-const ActionButton = ({ icon, text, onPress }) => (
-    <TouchableOpacity style={styles.actionButton} onPress={onPress} activeOpacity={0.7}>
-        <Ionicons name={icon} size={32} color={Colors.darkBrown} />
-        <Text style={styles.actionButtonText}>{text}</Text>
-    </TouchableOpacity>
-);
-
 const styles = StyleSheet.create({
-    container: {
+    safeArea: {
         flex: 1,
-        backgroundColor: Colors.creamBackground,
+        backgroundColor: Colors.background,
+        // Removendo paddingTop aqui, pois o AppHeader já lida com a StatusBar
+        // e o ScrollView compensará a borda arredondada.
     },
+    
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: Colors.creamBackground,
+        backgroundColor: Colors.background,
     },
     loadingText: {
-        marginTop: 10,
-        fontSize: 16,
-        color: Colors.darkBrown,
+        marginTop: Layout.spacing.medium,
+        fontSize: Layout.fontSizes.large,
+        color: Colors.textSecondary,
     },
     errorContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: Colors.creamBackground,
-        padding: 20,
+        backgroundColor: Colors.background,
+        padding: Layout.padding,
     },
     errorText: {
-        fontSize: 18,
-        color: Colors.errorRed,
+        fontSize: Layout.fontSizes.large,
+        color: Colors.error,
         textAlign: 'center',
-        marginBottom: 20,
+        marginBottom: Layout.spacing.large,
     },
     retryButton: {
-        backgroundColor: Colors.primaryGold,
-        paddingVertical: 12,
-        paddingHorizontal: 25,
-        borderRadius: 8,
-        shadowColor: Colors.darkBrown,
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-        elevation: 5,
+        backgroundColor: Colors.primary,
+        paddingVertical: Layout.spacing.medium,
+        paddingHorizontal: Layout.spacing.large,
+        borderRadius: Layout.borderRadius.medium,
     },
     retryButtonText: {
-        color: Colors.white,
-        fontSize: 16,
+        color: Colors.onPrimary,
+        fontSize: Layout.fontSizes.large,
         fontWeight: 'bold',
     },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 18,
-        paddingVertical: 10,
-        backgroundColor: Colors.primaryGold,
-        borderBottomWidth: 0,
-        paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 5 : 0,
-        shadowColor: Colors.darkBrown,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 3,
-        elevation: 4,
+    scrollViewContent: {
+        paddingVertical: Layout.padding, // Mantém o padding vertical para o conteúdo
+        paddingHorizontal: Layout.padding, // Mantém o padding horizontal
+        // Este marginTop é crucial para que o conteúdo "suba" e se encaixe na curva do AppHeader
+        marginTop: -Layout.borderRadius.medium * 1.5, // Multiplicar por 1.5 ou 2 pode dar um efeito mais visível
+        paddingTop: Layout.padding + Layout.borderRadius.medium * 1.5, // Ajusta o padding para compensar o marginTop negativo
     },
-    headerLogo: {
-        width: 50,
-        height: 50,
-        borderRadius: 8,
-    },
-    userInfo: {
+    // --- ESTILOS PARA A SEÇÃO DE BOAS-VINDAS (AJUSTADOS) ---
+    welcomeSection: {
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'center', // Alinha verticalmente o avatar e o texto
+        paddingHorizontal: Layout.padding, // Usar o padding do Layout para consistência
+        marginTop: 20,
+        marginBottom: 20, // Espaço após a seção de boas-vindas
+    },
+    avatarContainer: {
+        marginRight: 10, // Espaço entre o avatar e o texto
     },
     avatar: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: Colors.darkBrown,
+        width: 40, // AVATAR MENOR
+        height: 40, // AVATAR MENOR
+        borderRadius: Layout.borderRadius.pill,
+        backgroundColor: Colors.primary, // Dourado
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 10,
-        borderWidth: 1.5,
-        borderColor: Colors.white,
+        borderWidth: 1.5, // Borda um pouco mais fina
+        borderColor: Colors.accent,
     },
     avatarText: {
-        color: Colors.white,
-        fontSize: 20,
-        fontWeight: '600',
-    },
-    userNameText: {
-        fontSize: 17,
-        fontWeight: '600',
-        color: Colors.white,
-    },
-    content: {
-        flexGrow: 1,
-        padding: 18,
-        alignItems: 'center',
-        paddingTop: 20,
-    },
-    welcomeText: {
-        fontSize: 24,
+        color: Colors.onPrimary, // Branco sobre dourado
+        fontSize: Layout.fontSizes.medium, // Letra menor para o avatar menor
         fontWeight: 'bold',
-        color: Colors.darkBrown,
-        marginBottom: 30,
-        textAlign: 'center',
-        lineHeight: 30,
     },
+    welcomeCombinedText: {
+        fontSize: Layout.fontSizes.large, // Tamanho do texto de saudação
+        color: Colors.textPrimary, // Cor principal para o texto
+        fontWeight: '600', // Um pouco mais de destaque
+    },
+    // --- ESTILOS REMOVIDOS/AJUSTADOS ---
+    // welcomeTextContainer foi removido (não necessário com um único Text)
+    // welcomeGreeting e welcomeName foram substituídos por welcomeCombinedText
+
+    // --- ESTILOS EXISTENTES (verificar e ajustar se necessário) ---
     section: {
-        width: '100%',
-        maxWidth: 500,
-        marginBottom: 25,
+        marginBottom: Layout.spacing.xlarge,
     },
     sectionTitle: {
-        fontSize: 20,
-        fontWeight: '700',
-        color: Colors.darkBrown,
-        marginBottom: 15,
-        borderBottomWidth: 1.5,
-        borderBottomColor: Colors.primaryGold,
-        paddingBottom: 8,
-        alignSelf: 'flex-start',
-    },
-    card: {
-        backgroundColor: Colors.white,
-        borderRadius: 12,
-        padding: 18,
-        shadowColor: Colors.darkBrown,
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.15,
-        shadowRadius: 6,
-        elevation: 8,
-        borderWidth: 0,
+        fontSize: Layout.fontSizes.title,
+        fontWeight: 'bold',
+        color: Colors.textPrimary,
+        marginBottom: Layout.spacing.medium,
     },
     statsContainer: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         justifyContent: 'space-between',
-        backgroundColor: Colors.white,
-        borderRadius: 12,
-        padding: 12,
-        shadowColor: Colors.darkBrown,
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.15,
-        shadowRadius: 6,
-        elevation: 8,
     },
-    statItem: {
-        alignItems: 'center',
-        width: '48%',
-        marginVertical: 10,
-    },
-    statIconContainer: {
-        position: 'relative',
-        marginBottom: 5,
-    },
-    unreadDot: {
-        position: 'absolute',
-        top: 0,
-        right: 0,
-        backgroundColor: Colors.unreadBadge,
-        width: 10,
-        height: 10,
-        borderRadius: 5,
-        borderWidth: 1.5,
-        borderColor: Colors.white,
-    },
-    statNumber: {
-        fontSize: 30,
-        fontWeight: '800',
-        color: Colors.primaryGold,
-    },
-    statLabel: {
-        fontSize: 14,
-        color: Colors.lightBrown,
-        textAlign: 'center',
-        marginTop: 4,
-        fontWeight: '500',
-    },
-    quickActionsScrollContent: {
-        flexDirection: 'row',
-        justifyContent: 'flex-start',
-        alignItems: 'center',
-        backgroundColor: Colors.white,
-        borderRadius: 12,
-        padding: 12,
-        shadowColor: Colors.darkBrown,
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.15,
-        shadowRadius: 6,
-        elevation: 8,
-    },
-    actionButton: {
+    statItemColumn: {
+        width: (Layout.window.width - Layout.padding * 2 - Layout.spacing.medium) / 2, // Ajustado para corresponder ao padding do scrollViewContent
+        marginBottom: Layout.spacing.medium,
+        backgroundColor: Colors.cardBackground,
+        borderRadius: Layout.borderRadius.medium,
+        ...Layout.cardElevation,
+        padding: Layout.spacing.medium,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: Colors.white,
-        borderRadius: 10,
-        padding: 12,
-        width: width * 0.25,
-        height: width * 0.25,
-        marginRight: 15,
-        shadowColor: Colors.darkBrown,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.08,
-        shadowRadius: 2,
-        elevation: 3,
     },
-    actionButtonText: {
-        fontSize: 12,
-        fontWeight: '600',
-        color: Colors.darkBrown,
-        marginTop: 8,
-        textAlign: 'center',
+    quickActionsScrollContent: {
+        paddingVertical: Layout.spacing.small,
     },
-    trainingItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 12,
-        paddingHorizontal: 5,
-    },
-    trainingText: {
-        fontSize: 15,
-        color: Colors.darkBrown,
-        flexShrink: 1,
-    },
-    trainingTime: {
-        fontWeight: 'bold',
-        color: Colors.darkBrown,
-    },
-    trainingClient: {
-        fontStyle: 'italic',
-        color: Colors.mediumGray,
+    card: {
+        backgroundColor: Colors.surface,
+        borderRadius: Layout.borderRadius.medium,
+        ...Layout.cardElevation,
+        overflow: 'hidden',
+        paddingVertical: Layout.spacing.small,
     },
     itemSeparator: {
-        height: 0.8,
+        height: StyleSheet.hairlineWidth,
         backgroundColor: Colors.lightGray,
-        marginHorizontal: 5,
-        marginVertical: 4,
+        marginHorizontal: Layout.spacing.medium,
     },
     noDataText: {
-        fontSize: 15,
-        color: Colors.mediumGray,
+        fontSize: Layout.fontSizes.medium,
+        color: Colors.textSecondary,
+        padding: Layout.padding,
         textAlign: 'center',
-        paddingVertical: 12,
     },
-    linkButton: {
-        marginTop: 18,
-        alignSelf: 'flex-end',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 6,
-        backgroundColor: Colors.white,
-        shadowColor: Colors.darkBrown,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.08,
-        shadowRadius: 2,
-        elevation: 3,
+    sectionHeaderWithButton: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Layout.spacing.medium,
     },
     viewAllLink: {
-        fontSize: 15,
-        color: Colors.accentBlue,
+        fontSize: Layout.fontSizes.medium,
         fontWeight: '600',
-    },
-    // NOVOS ESTILOS para treinos concluídos
-    ratingContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: 4,
-        marginBottom: 2,
-        marginLeft: 30, // Alinha com o texto do treino
-    },
-    ratingText: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: Colors.darkBrown,
-        marginRight: 4,
-    },
-    starIcon: {
-        marginHorizontal: 1,
-    },
-    observationSummaryContainer: {
-        marginTop: 4,
-        marginBottom: 8,
-        marginLeft: 30,
-        paddingHorizontal: 8,
-        paddingVertical: 6,
-        backgroundColor: Colors.lightGray,
-        borderRadius: 8,
-    },
-    observationSummaryText: {
-        fontSize: 13,
-        color: Colors.darkGray,
-        fontStyle: 'italic',
+        color: Colors.info,
     },
 });

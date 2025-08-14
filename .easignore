@@ -1,0 +1,34 @@
+# Ignorar dependências locais
+node_modules/
+.pnpm/
+.expo/
+.expo-shared/
+
+# Logs e erros
+*.log
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# IDEs e configs locais
+.idea/
+.vscode/
+
+# Builds locais
+android/app/build/
+ios/build/
+web-build/
+dist/
+build/
+
+# Cache
+.cache/
+tmp/
+temp/
+
+# Testes e configs
+coverage/
+jest/
+__tests__/
+.env
+.env.*

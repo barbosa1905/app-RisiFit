@@ -1,621 +1,713 @@
-import React, { useState, useEffect } from 'react';
-
-
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Alert,
-  FlatList,
-  Pressable,
-  Modal,
-  TextInput,
-  Animated,
-  Easing,
+    View, Text, StyleSheet, Image, SafeAreaView, ScrollView,
+    Platform, StatusBar, TouchableOpacity, ActivityIndicator, Alert,
 } from 'react-native';
-import { Calendar } from 'react-native-calendars';
-import { useUser } from '../contexts/UserContext';
-import { db } from '../services/firebaseConfig';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
-import Icon from 'react-native-vector-icons/FontAwesome5';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { useUser } from '../../contexts/UserContext';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
+import { db, auth } from '../../services/firebaseConfig';
+import {
+    collection, query, where, getDocs, onSnapshot, orderBy, limit,
+    collectionGroup, doc, getDoc
+} from 'firebase/firestore';
 
-const opcoesDeTreino = ['Cardio', 'Força', 'Mobilidade', 'Core'];
-const tipoCores = {
-  Cardio: '#f97316',
-  Força: '#22c55e',
-  Mobilidade: '#3b82f6',
-  Core: '#a855f7',
+// --- Importações de componentes e constantes modulares ---
+import Layout from '../../constants/Layout';
+import StatItem from '../../components/StatItem';
+import ActionButton from '../../components/ActionButton';
+import TrainingCard from '../../components/TrainingCard';
+import AppHeader from '../../components/AppHeader'; // Seu AppHeader limpo e com bordas arredondadas
+
+// Paleta de Cores Profissional
+const Colors = {
+    primary: '#2A3B47',        // Azul escuro para o fundo principal e texto
+    secondary: '#FFB800',      // Laranja vibrante como cor de destaque
+    accent: '#FFB800',         // Cor de destaque para botões e realces
+    background: '#F0F2F5',     // Cinza claro para o fundo da tela
+    cardBackground: '#FFFFFF', // Branco puro para os cartões
+    surface: '#FFFFFF',        // Cor da superfície (cartões, etc.)
+    textPrimary: '#333333',    // Preto para o texto principal
+    textSecondary: '#666666',  // Cinza escuro para o texto secundário
+    onPrimary: '#FFFFFF',      // Branco para texto sobre a cor primária
+    info: '#2196F3',           // Azul para informações e links
+    success: '#4CAF50',        // Verde para ações de sucesso
+    error: '#F44336',          // Vermelho para erros
+    lightGray: '#E0E0E0',      // Cinza claro para separadores
+    errorBackground: '#FDECEA',// Fundo para mensagens de erro
 };
-const tipoIcones = {
-  Cardio: 'running',
-  Força: 'dumbbell',
-  Mobilidade: 'spa',
-  Core: 'heartbeat',
+
+
+// --- Funções Auxiliares (mantidas aqui ou movidas para um 'utils' se usadas em mais lugares) ---
+const formatarDuracao = (totalSegundos) => {
+    if (typeof totalSegundos !== 'number' || isNaN(totalSegundos) || totalSegundos < 0) {
+        return 'N/A';
+    }
+    const horas = Math.floor(totalSegundos / 3600);
+    const min = Math.floor((totalSegundos % 3600) / 60);
+    const seg = totalSegundos % 60;
+    const pad = (num) => num.toString().padStart(2, '0');
+
+    const parts = [];
+    if (horas > 0) {
+        parts.push(`${horas}h`);
+    }
+    if (min > 0 || (horas === 0 && seg > 0)) {
+        parts.push(`${pad(min)}m`);
+    }
+    if (seg > 0 || (horas === 0 && min === 0)) {
+        parts.push(`${pad(seg)}s`);
+    }
+
+    return parts.join(' ');
 };
 
-const frasesMotivacionais = [
-  'Nunca desista dos seus sonhos!',
-  'O esforço de hoje é a vitória de amanhã.',
-  'Cada passo conta na jornada do sucesso.',
-  'Você é mais forte do que imagina.',
-  'Desafie seus limites e cresça.',
-  'A persistência é o caminho para a excelência.',
-  'Faça do seu treino o seu melhor momento.',
-  'Transforme esforço em resultados!',
-  'Coragem é a chave para o progresso.',
-  'Mantenha o foco e a disciplina.',
-  'Sucesso é a soma de pequenos esforços.',
-  'Treine duro, sonhe alto!',
-  'O único limite é você mesmo.',
-  'Mais um dia, mais uma vitória.',
-  'Sua força interior é seu maior poder.',
-];
+export default function HomeScreen() {
+    const { user, userDetails, loadUserDetails } = useUser();
+    const navigation = useNavigation();
 
-export default function HomeScreen({ navigation }) {
-  const { user } = useUser();
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [treinos, setTreinos] = useState({});
-  const [modalVisible, setModalVisible] = useState(false);
-  const [nomeTreino, setNomeTreino] = useState('');
-  const [tipoSelecionado, setTipoSelecionado] = useState(opcoesDeTreino[0]);
-  const [fadeAnim] = useState(new Animated.Value(1));
-  const [fraseMotivacional, setFraseMotivacional] = useState('');
-  const [mostrarMensagemSucesso, setMostrarMensagemSucesso] = useState(false);
+    const [stats, setStats] = useState({
+        newClients: 0,
+        trainingsToday: 0,
+        unreadMessages: 0,
+        pendingEvaluations: 0,
+    });
+    const [upcomingTrainings, setUpcomingTrainings] = useState([]);
+    const [recentCompletedTrainings, setRecentCompletedTrainings] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    // Refs para gerir unsubscribers de listeners do Firestore
+    const chatMessageUnsubscribersRef = useRef({});
+    const chatMainUnsubscriberRef = useRef(null);
+    const otherFirestoreUnsubscribers = useRef([]);
 
-  // Estados para hora do treino e controle do picker
-  const [horaTreino, setHoraTreino] = useState(new Date());
-  const [showTimePicker, setShowTimePicker] = useState(false);
-
-  useEffect(() => {
-    const carregarTreinos = async () => {
-      if (!user?.uid) return;
-      try {
-        const docRef = doc(db, 'treinos', user.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setTreinos(docSnap.data() || {});
+    // Efeito para carregar detalhes do usuário se não estiverem disponíveis
+    useEffect(() => {
+        if (user && !userDetails) {
+            loadUserDetails(user.uid);
         }
-      } catch (err) {
-        console.error('Erro ao carregar treinos:', err);
-      }
-    };
-    carregarTreinos();
-  }, [user]);
+    }, [user, userDetails, loadUserDetails]);
 
-  useEffect(() => {
-    // Escolhe frase motivacional aleatória ao carregar a tela
-    const index = Math.floor(Math.random() * frasesMotivacionais.length);
-    setFraseMotivacional(frasesMotivacionais[index]);
-  }, []);
+    // --- Funções de busca/assinatura (encapsuladas com useCallback para estabilidade) ---
+    const fetchStaticStats = useCallback(async () => {
+        try {
+            let newClientsCount = 0;
+            let pendingEvaluationsCount = 0;
 
-  const startFade = () => {
-  setMostrarMensagemSucesso(true);
-  fadeAnim.setValue(1);
-  Animated.timing(fadeAnim, {
-    toValue: 0,
-    duration: 1500,
-    easing: Easing.ease,
-    useNativeDriver: true,
-  }).start(() => {
-    setMostrarMensagemSucesso(false); // esconde ao final da animação
-  });
-};
-  // Função para abrir o modal garantindo fadeAnim em 1
-  const abrirModal = () => {
-    fadeAnim.setValue(1);
-    setModalVisible(true);
-  };
+            const evaluationsRef = collection(db, 'evaluations');
+            const qPendingEvaluations = query(
+                evaluationsRef,
+                where('status', '==', 'pending')
+            );
+            const pendingEvaluationsSnapshot = await getDocs(qPendingEvaluations);
+            pendingEvaluationsCount = pendingEvaluationsSnapshot.size;
 
-  const guardarTreino = async () => {
-    if (!nomeTreino.trim()) {
-      Alert.alert('Nome obrigatório', 'Por favor, digite o nome do treino.');
-      return;
-    }
+            const clientsRef = collection(db, 'users');
+            const qNewClients = query(
+                clientsRef,
+                where('role', '==', 'user'),
+            );
+            const newClientsSnapshot = await getDocs(qNewClients);
+            newClientsCount = newClientsSnapshot.size;
 
-    const novoTreino = {
-      nome: nomeTreino.trim(),
-      tipo: tipoSelecionado,
-      hora: horaTreino.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
+            setStats(prevStats => ({
+                ...prevStats,
+                newClients: newClientsCount,
+                pendingEvaluations: pendingEvaluationsCount,
+            }));
 
-    const atualizados = {
-      ...treinos,
-      [selectedDate]: [...(treinos[selectedDate] || []), novoTreino],
-    };
+        } catch (err) {
+            console.error("Erro ao buscar estatísticas estáticas:", err);
+            // Poderia adicionar setError aqui para mostrar na UI
+        }
+    }, []);
 
-    setTreinos(atualizados);
-    setModalVisible(false);
-    setNomeTreino('');
-    setHoraTreino(new Date()); // reset hora para o padrão
-    startFade();
+    const subscribeToTrainingsToday = useCallback(() => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(today.getDate() + 1);
 
-    try {
-      await setDoc(doc(db, 'treinos', user.uid), atualizados);
-    } catch (err) {
-      console.error('Erro ao guardar treino:', err);
-    }
-  };
+        const treinosCollectionGroupRef = collectionGroup(db, 'treinos');
+        const qTrainingsToday = query(
+            treinosCollectionGroupRef,
+            where('data', '>=', today),
+            where('data', '<', tomorrow)
+        );
 
-  const removerTreino = (index) => {
-    Alert.alert(
-      'Remover treino',
-      'Tem certeza que deseja remover este treino?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Remover',
-          style: 'destructive',
-          onPress: async () => {
-            const lista = [...(treinos[selectedDate] || [])];
-            lista.splice(index, 1);
-            const atualizados = { ...treinos, [selectedDate]: lista };
-            setTreinos(atualizados);
-            startFade();
-            try {
-              await setDoc(doc(db, 'treinos', user.uid), atualizados);
-            } catch (err) {
-              console.error('Erro ao remover treino:', err);
+        const unsubscribe = onSnapshot(qTrainingsToday, (snapshot) => {
+            const trainingsTodayCount = snapshot.size;
+            setStats(prevStats => ({
+                ...prevStats,
+                trainingsToday: trainingsTodayCount,
+            }));
+        }, (err) => {
+            console.error("Erro ao assinar treinos de hoje:", err);
+            if (err.code === 'permission-denied') {
+                console.log("Permissão negada para treinos de hoje. Isso é esperado em logout.");
+                setStats(prevStats => ({ ...prevStats, trainingsToday: 0 }));
+                return;
             }
-          },
-        },
-      ]
-    );
-  };
-
-  const limparTreinosDoDia = () => {
-    Alert.alert(
-      'Limpar treinos',
-      'Deseja remover todos os treinos deste dia?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Limpar',
-          style: 'destructive',
-          onPress: async () => {
-            const atualizados = { ...treinos };
-            delete atualizados[selectedDate];
-            setTreinos(atualizados);
-            startFade();
-            try {
-              await setDoc(doc(db, 'treinos', user.uid), atualizados);
-            } catch (err) {
-              console.error('Erro ao limpar treinos:', err);
+            if (err.code === 'failed-precondition' && err.message.includes('A non-descending order by is required')) {
+                Alert.alert("Erro de Firebase", "É necessário um índice no Firestore para esta query. Por favor, verifique a consola do Firebase > Firestore > Índices e crie o índice sugerido.");
+                setError("Erro: Índice necessário no Firebase para treinos de hoje.");
+            } else {
+                setError(`Não foi possível carregar treinos de hoje em tempo real: ${err.message}.`);
             }
-          },
-        },
-      ]
+        });
+        return unsubscribe;
+    }, []);
+
+    const fetchUpcomingTrainings = useCallback(() => {
+        const treinosCollectionGroupRef = collectionGroup(db, 'treinos');
+        const q = query(
+            treinosCollectionGroupRef,
+            where('data', '>=', new Date()),
+            orderBy('data', 'asc'),
+            limit(3)
+        );
+
+        const unsubscribe = onSnapshot(q, async (snapshot) => {
+            const trainingsData = await Promise.all(snapshot.docs.map(async treinoDoc => {
+                const data = treinoDoc.data();
+                let clientName = 'Cliente Desconhecido';
+                const userIdFromPath = treinoDoc.ref.parent.parent.id;
+                const currentUserId = data.userId || userIdFromPath;
+
+                if (currentUserId && auth.currentUser) {
+                    try {
+                        const clientDocRef = doc(db, 'users', currentUserId);
+                        const clientDocSnap = await getDoc(clientDocRef);
+                        if (clientDocSnap.exists()) {
+                            const client = clientDocSnap.data();
+                            clientName = client.name || client.firstName || client.nome || 'Cliente sem nome';
+                        } else {
+                            clientName = 'Cliente (Não Encontrado)';
+                        }
+                    } catch (e) {
+                        clientName = 'Cliente (Erro na Busca)';
+                    }
+                } else {
+                    clientName = 'Cliente (Não Autenticado)';
+                }
+                return {
+                    id: treinoDoc.id,
+                    ...data,
+                    data: data.data ? data.data.toDate() : null,
+                    clientName: clientName,
+                };
+            }));
+            setUpcomingTrainings(trainingsData);
+        }, (err) => {
+            console.error("Erro ao buscar próximos treinos:", err);
+            if (err.code === 'permission-denied') {
+                console.log("Permissão negada para próximos treinos. Isso é esperado em logout.");
+                setUpcomingTrainings([]);
+                return;
+            }
+            if (err.code === 'failed-precondition' && err.message.includes('A non-descending order by is required')) {
+                Alert.alert("Erro de Firebase", "É necessário um índice no Firestore para esta query. Por favor, verifique a consola do Firebase > Firestore > Índices e crie o índice sugerido.");
+                setError("Erro de índice nos próximos treinos.");
+            } else {
+                setError(`Não foi possível carregar os próximos treinos: ${err.message}`);
+            }
+        });
+        return unsubscribe;
+    }, []);
+
+    const fetchRecentCompletedTrainings = useCallback(() => {
+        const historicoRef = collection(db, 'historicoTreinos');
+        const q = query(
+            historicoRef,
+            orderBy('dataConclusao', 'desc'),
+            limit(3)
+        );
+
+        const unsubscribe = onSnapshot(q, async (snapshot) => {
+            const completedTrainingsData = await Promise.all(snapshot.docs.map(async docSnap => {
+                const data = docSnap.data();
+                let clientName = 'Cliente Desconhecido';
+
+                if (data.userId && auth.currentUser) {
+                    try {
+                        const clientDocRef = doc(db, 'users', data.userId);
+                        const clientDocSnap = await getDoc(clientDocRef);
+                        if (clientDocSnap.exists()) {
+                            const client = clientDocSnap.data();
+                            clientName = client.name || client.firstName || client.nome || 'Cliente sem nome';
+                        }
+                    } catch (e) {
+                        clientName = 'Cliente (Erro na Busca)';
+                    }
+                } else {
+                    clientName = 'Cliente (Não Autenticado)';
+                }
+
+                return {
+                    id: docSnap.id,
+                    ...data,
+                    dataConclusao: data.dataConclusao ? data.dataConclusao.toDate() : null,
+                    clientName: clientName,
+                    avaliacao: data.avaliacao || 0,
+                    observacoesUser: data.observacoesUser || '',
+                };
+            }));
+            setRecentCompletedTrainings(completedTrainingsData);
+        }, (err) => {
+            console.error("Erro ao buscar treinos concluídos recentes:", err);
+            if (err.code === 'permission-denied') {
+                console.log("Permissão negada para treinos concluídos recentes. Isso é esperado em logout.");
+                setRecentCompletedTrainings([]);
+                return;
+            }
+            setError(`Não foi possível carregar os últimos treinos concluídos: ${err.message}`);
+        });
+        return unsubscribe;
+    }, []);
+
+    const subscribeToUnreadMessages = useCallback(() => {
+        console.log("Iniciando subscribeToUnreadMessages...");
+
+        Object.values(chatMessageUnsubscribersRef.current).forEach(unsub => unsub());
+        chatMessageUnsubscribersRef.current = {};
+
+        if (chatMainUnsubscriberRef.current) {
+            chatMainUnsubscriberRef.current();
+            chatMainUnsubscriberRef.current = null;
+        }
+
+        if (!auth.currentUser) {
+            console.log("Usuário não autenticado. Não subscrevendo mensagens não lidas.");
+            setStats(prevStats => ({ ...prevStats, unreadMessages: 0 }));
+            setLoading(false);
+            return;
+        }
+
+        const adminId = auth.currentUser.uid;
+        let totalUnread = 0;
+        const currentUnreadCounts = {};
+
+        const chatRefs = collection(db, 'chats');
+        const qChats = query(
+            chatRefs,
+            where('isGroup', '==', false),
+            where('participants', 'array-contains', adminId)
+        );
+
+        const unsubscribeChats = onSnapshot(qChats, (chatsSnapshot) => {
+            console.log("Snapshot do listener principal de chats recebido.");
+            chatsSnapshot.docChanges().forEach(change => {
+                const chatId = change.doc.id;
+
+                if (change.type === 'removed') {
+                    console.log(`Chat ${chatId} removido. Limpando sub-listener.`);
+                    if (chatMessageUnsubscribersRef.current[chatId]) {
+                        chatMessageUnsubscribersRef.current[chatId]();
+                        delete chatMessageUnsubscribersRef.current[chatId];
+                    }
+                    if (currentUnreadCounts[chatId] !== undefined) {
+                        totalUnread -= currentUnreadCounts[chatId];
+                        delete currentUnreadCounts[chatId];
+                        setStats(prevStats => ({ ...prevStats, unreadMessages: totalUnread }));
+                    }
+                    return;
+                }
+
+                if (!chatMessageUnsubscribersRef.current[chatId] || change.type === 'modified') {
+                    console.log(`Subscrevendo mensagens para o chat ${chatId}.`);
+                    if (chatMessageUnsubscribersRef.current[chatId]) {
+                        chatMessageUnsubscribersRef.current[chatId]();
+                    }
+
+                    const messagesRef = collection(db, 'chats', chatId, 'messages');
+                    const unsubscribeMessages = onSnapshot(messagesRef, (messagesSnapshot) => {
+                        let unreadForThisChat = 0;
+                        messagesSnapshot.forEach(messageDoc => {
+                            const messageData = messageDoc.data();
+                            if (messageData.senderId !== adminId && !messageData.lida) {
+                                unreadForThisChat++;
+                            }
+                        });
+
+                        if (currentUnreadCounts[chatId] !== unreadForThisChat) {
+                            totalUnread = totalUnread - (currentUnreadCounts[chatId] || 0) + unreadForThisChat;
+                            currentUnreadCounts[chatId] = unreadForThisChat;
+                            setStats(prevStats => ({ ...prevStats, unreadMessages: totalUnread }));
+                        }
+                    }, (err) => {
+                        console.error(`Erro ao assinar mensagens do chat ${chatId}:`, err);
+                        if (err.code === 'permission-denied') {
+                            console.log(`Permissão negada para mensagens do chat ${chatId}. Isso é esperado em logout.`);
+                            if (currentUnreadCounts[chatId] !== undefined) {
+                                totalUnread -= currentUnreadCounts[chatId];
+                                delete currentUnreadCounts[chatId];
+                                setStats(prevStats => ({ ...prevStats, unreadMessages: totalUnread }));
+                            }
+                            if (chatMessageUnsubscribersRef.current[chatId]) {
+                                chatMessageUnsubscribersRef.current[chatId]();
+                                delete chatMessageUnsubscribersRef.current[chatId];
+                            }
+                            return;
+                        }
+                        setError(`Erro ao carregar mensagens não lidas: ${err.message}`);
+                    });
+                    chatMessageUnsubscribersRef.current[chatId] = unsubscribeMessages;
+                }
+            });
+            setLoading(false);
+        }, (err) => {
+            console.error("Erro ao assinar chats principais:", err);
+            if (err.code === 'permission-denied') {
+                console.log("Permissão negada para chats principais. Isso é esperado em logout.");
+                setStats(prevStats => ({ ...prevStats, unreadMessages: 0 }));
+                setLoading(false);
+                return;
+            }
+            setError(`Erro ao carregar chats: ${err.message}`);
+            setLoading(false);
+        });
+
+        chatMainUnsubscriberRef.current = unsubscribeChats;
+
+        return () => {
+            console.log("Função de limpeza de subscribeToUnreadMessages ativada.");
+            if (chatMainUnsubscriberRef.current) {
+                chatMainUnsubscriberRef.current();
+                chatMainUnsubscriberRef.current = null;
+            }
+            Object.values(chatMessageUnsubscribersRef.current).forEach(unsub => unsub());
+            chatMessageUnsubscribersRef.current = {};
+            setStats(prevStats => ({ ...prevStats, unreadMessages: 0 }));
+            console.log("Listeners de chat desinscritos.");
+        };
+    }, []);
+
+    // useFocusEffect para o ciclo de vida da tela
+    useFocusEffect(
+        useCallback(() => {
+            console.log("HomeScreen: useFocusEffect ATIVADO (tela em foco).");
+            const currentUser = auth.currentUser;
+
+            // Limpa todos os listeners existentes ao focar (para evitar duplicatas)
+            otherFirestoreUnsubscribers.current.forEach(unsub => {
+                if (typeof unsub === 'function') unsub();
+            });
+            otherFirestoreUnsubscribers.current = [];
+
+            if (!currentUser) {
+                console.log("HomeScreen: Usuário não autenticado. Limpando dados e listeners.");
+                setStats({ newClients: 0, trainingsToday: 0, unreadMessages: 0, pendingEvaluations: 0 });
+                setUpcomingTrainings([]);
+                setRecentCompletedTrainings([]);
+                setLoading(false);
+                setError(null);
+                // Chamar a função de limpeza do chat explicitamente
+                const chatCleanup = subscribeToUnreadMessages();
+                if (typeof chatCleanup === 'function') chatCleanup();
+                return () => {
+                    console.log("HomeScreen: useFocusEffect cleanup (sem usuário).");
+                };
+            }
+
+            console.log("HomeScreen: Usuário autenticado. Iniciando buscas e assinaturas...");
+            setLoading(true);
+            setError(null);
+
+            fetchStaticStats();
+            const unsubscribeTrainingsToday = subscribeToTrainingsToday();
+            const unsubscribeUpcomingTrainings = fetchUpcomingTrainings();
+            const unsubscribeRecentCompletedTrainings = fetchRecentCompletedTrainings();
+            const cleanupUnreadMessages = subscribeToUnreadMessages();
+
+            otherFirestoreUnsubscribers.current.push(
+                unsubscribeTrainingsToday,
+                unsubscribeUpcomingTrainings,
+                unsubscribeRecentCompletedTrainings,
+                cleanupUnreadMessages
+            );
+
+            return () => {
+                console.log("HomeScreen: useFocusEffect cleanup. Desinscrevendo todos os listeners.");
+                otherFirestoreUnsubscribers.current.forEach(unsub => {
+                    if (typeof unsub === 'function') unsub();
+                });
+                otherFirestoreUnsubscribers.current = [];
+                setStats({ newClients: 0, trainingsToday: 0, unreadMessages: 0, pendingEvaluations: 0 });
+                setUpcomingTrainings([]);
+                setRecentCompletedTrainings([]);
+                console.log("HomeScreen: Estados limpos no cleanup.");
+            };
+        }, [user, fetchStaticStats, subscribeToTrainingsToday, fetchUpcomingTrainings, fetchRecentCompletedTrainings, subscribeToUnreadMessages])
     );
-  };
 
-  const treinosDia = treinos[selectedDate] || [];
+    // Detalhes do utilizador para o avatar e nome
+    const userDisplayName = userDetails?.nome || userDetails?.firstName || userDetails?.name || 'Admin';
+    const firstName = userDisplayName.split(' ')[0];
+    const userInitial = firstName ? firstName.charAt(0).toUpperCase() : '';
 
-  const marcarDatas = Object.keys(treinos).reduce((acc, data) => {
-    acc[data] = {
-      marked: true,
-      dotColor: '#34D399',
-      selected: data === selectedDate,
-      selectedColor: '#3478f6',
-    };
-    return acc;
-  }, {});
-
-  const logout = () => {
-    Alert.alert('Sair', 'Deseja mesmo sair?', [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Sair', onPress: () => navigation.replace('Login') },
-    ]);
-  };
-
-  // Funções para controle do TimePicker
-  const abrirTimePicker = () => {
-    setShowTimePicker(true);
-  };
-
-  const onChangeTime = (event, selectedDate) => {
-    setShowTimePicker(false);
-    if (selectedDate) {
-      setHoraTreino(selectedDate);
+    if (loading || !user) {
+        return (
+            <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={Colors.primary} />
+                <Text style={styles.loadingText}>A carregar dados do painel...</Text>
+            </View>
+        );
     }
-  };
 
-  if (!user) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.welcome}>Utilizador não identificado 😕</Text>
-        <TouchableOpacity
-          style={styles.logoutButton}
-          onPress={() => navigation.replace('Login')}
-        >
-          <Text style={styles.logoutText}>Voltar ao Login</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.container}>
-      <Text style={styles.welcome}>
-        Bem-vindo, {user.displayName || user.email.split('@')[0]} 👋
-      </Text>
-
-      {fraseMotivacional !== '' && (
-        <Text style={styles.fraseMotivacional}>{fraseMotivacional}</Text>
-      )}
-
-      <Calendar
-        onDayPress={(day) => setSelectedDate(day.dateString)}
-        markedDates={marcarDatas}
-        style={styles.calendar}
-        theme={{
-          selectedDayBackgroundColor: '#3478f6',
-          todayTextColor: '#2563eb',
-          arrowColor: '#3478f6',
-          monthTextColor: '#2563eb',
-          textSectionTitleColor: '#94a3b8',
-          textDayFontWeight: '600',
-          textMonthFontWeight: '700',
-        }}
-      />
-
-      {selectedDate && (
-        <>
-          <View style={styles.headerTreinos}>
-            <Text style={styles.dateLabel}>
-              Treinos para {selectedDate} ({treinosDia.length})
-            </Text>
-            {treinosDia.length > 0 && (
-              <TouchableOpacity
-                style={styles.limparBtn}
-                onPress={limparTreinosDoDia}
-              >
-                <Icon name="trash" size={18} color="#ef4444" />
-                <Text style={styles.limparText}>Limpar</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <FlatList
-            data={treinosDia}
-            keyExtractor={(_, i) => i.toString()}
-            renderItem={({ item, index }) => (
-              <Pressable
-                onLongPress={() => removerTreino(index)}
-                style={({ pressed }) => [
-                  styles.treinoItem,
-                  { borderLeftColor: tipoCores[item.tipo] },
-                  pressed && { opacity: 0.6 },
-                ]}
-              >
-                <View style={styles.iconNome}>
-                  <View
-                    style={[
-                      styles.iconBg,
-                      { backgroundColor: tipoCores[item.tipo] + '33' },
-                    ]}
-                  >
-                    <Icon
-                      name={tipoIcones[item.tipo] || 'question'}
-                      size={20}
-                      color={tipoCores[item.tipo]}
-                    />
-                  </View>
-                  <View>
-                    <Text style={styles.nomeTreino}>{item.nome}</Text>
-                    <Text style={styles.tipoTreino}>{item.tipo}</Text>
-                  </View>
-                </View>
-                <Text style={styles.horaTreinoItem}>{item.hora}</Text>
-              </Pressable>
-            )}
-            style={{ marginBottom: 16 }}
-          />
-
-          <TouchableOpacity style={styles.botaoAdicionar} onPress={abrirModal}>
-            <Text style={styles.textoBotaoAdicionar}>+ Adicionar treino</Text>
-          </TouchableOpacity>
-        </>
-      )}
-
-      {/* Modal para adicionar treino */}
-      <Modal visible={modalVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Adicionar treino</Text>
-
-            <TextInput
-              placeholder="Nome do treino"
-              style={styles.input}
-              value={nomeTreino}
-              onChangeText={setNomeTreino}
-            />
-
-            <Text style={styles.label}>Tipo de treino:</Text>
-            <View style={styles.opcoesContainer}>
-              {opcoesDeTreino.map((tipo) => (
-                <TouchableOpacity
-                  key={tipo}
-                  style={[
-                    styles.opcao,
-                    {
-                      backgroundColor:
-                        tipoSelecionado === tipo ? tipoCores[tipo] : '#f3f4f6',
-                    },
-                  ]}
-                  onPress={() => setTipoSelecionado(tipo)}
-                >
-                  <Icon
-                    name={tipoIcones[tipo]}
-                    size={20}
-                    color={tipoSelecionado === tipo ? '#fff' : tipoCores[tipo]}
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text
-                    style={{
-                      color: tipoSelecionado === tipo ? '#fff' : '#111',
-                      fontWeight: '600',
-                    }}
-                  >
-                    {tipo}
-                  </Text>
+    if (error) {
+        return (
+            <View style={styles.errorContainer}>
+                <Text style={styles.errorText}>{error}</Text>
+                <TouchableOpacity onPress={() => {
+                    setLoading(true);
+                    setError(null);
+                }} style={styles.retryButton}>
+                    <Text style={styles.retryButtonText}>Tentar Novamente</Text>
                 </TouchableOpacity>
-              ))}
             </View>
+        );
+    }
 
-            <Text style={styles.label}>Hora do treino:</Text>
-            <TouchableOpacity
-              onPress={abrirTimePicker}
-              style={styles.timePickerButton}
-            >
-              <Text style={styles.timePickerText}>
-                {horaTreino.toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
-              </Text>
-            </TouchableOpacity>
+    return (
+        <SafeAreaView style={styles.safeArea}>
+            {/* Barra Fixa Superior (Header) - Agora um componente! */}
+            <AppHeader />
 
-            {showTimePicker && (
-              <DateTimePicker
-                value={horaTreino}
-                mode="time"
-                is24Hour={true}
-                display="default"
-                onChange={onChangeTime}
-              />
-            )}
+            <ScrollView contentContainerStyle={styles.scrollViewContent}>
+                <View style={styles.welcomeSection}>
+                    <TouchableOpacity
+                        style={styles.avatarContainer}
+                        // Usando getParent() para navegar para a rota PerfilAdmin no AdminStack pai
+                        onPress={() => navigation.getParent()?.navigate('PerfilAdmin')}
+                    >
+                        <View style={styles.avatar}>
+                            <Text style={styles.avatarText}>{userInitial}</Text>
+                        </View>
+                    </TouchableOpacity>
+                    <Text style={styles.welcomeCombinedText}>Boa noite, {firstName}</Text>
+                </View>
 
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => setModalVisible(false)}
-              >
-                <Text style={styles.modalButtonText}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.saveButton]}
-                onPress={guardarTreino}
-              >
-                <Text style={[styles.modalButtonText, { color: '#fff' }]}>
-                  Guardar
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-{mostrarMensagemSucesso && (
-  <Animated.View
-    pointerEvents="none"
-    style={[styles.fraseFade, { opacity: fadeAnim }]}
-  >
-    <Text style={styles.fraseFadeText}>✔️ Treino guardado com sucesso!</Text>
-  </Animated.View>
-)}
+                {/* --- RESUMO RÁPIDO / ESTATÍSTICAS --- */}
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Estatísticas Chave</Text>
+                    <View style={styles.statsContainer}>
+                        <StatItem value={stats.newClients} label="Meus Clientes" icon="person-add-outline" style={styles.statItemColumn} />
+                        <StatItem value={stats.trainingsToday} label="Treinos Hoje" icon="barbell-outline" style={styles.statItemColumn} />
+                        <StatItem value={stats.unreadMessages} label="Mensagens Novas" icon="chatbubbles-outline" isUnread={stats.unreadMessages > 0} style={styles.statItemColumn} />
+                        <StatItem value={stats.pendingEvaluations} label="Aval. Pendentes" icon="document-text-outline" style={styles.statItemColumn} />
+                    </View>
+                </View>
 
-      <TouchableOpacity style={styles.logoutButton} onPress={logout}>
-        <Text style={styles.logoutText}>Sair</Text>
-      </TouchableOpacity>
-    </View>
-  );
+                {/* --- AÇÕES RÁPIDAS --- */}
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Ações Rápidas</Text>
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.quickActionsScrollContent}
+                    >
+                        <ActionButton icon="add-circle-outline" text="Criar Treino" onPress={() => navigation.navigate('CriarTreino')} />
+                        <ActionButton icon="person-add-outline" text="Novo Cliente" onPress={() => navigation.navigate('CadastroCliente')} />
+                        <ActionButton icon="clipboard-outline" text="Criar Avaliação" onPress={() => navigation.navigate('CriarAvaliacao')} />
+                        <ActionButton icon="calendar-outline" text="Ver Agenda" onPress={() => navigation.navigate('Agenda')} />
+                        <ActionButton icon="people-outline" text="Gerir Clientes" onPress={() => navigation.navigate('Clientes')} />
+                        <ActionButton icon="chatbubbles-outline" text="Chat Online" onPress={() => navigation.navigate('AdminChatList')} />
+                        <ActionButton icon="library-outline" text="Gerir Modelos" onPress={() => navigation.navigate('WorkoutTemplates')} />
+                        <ActionButton icon="barbell-outline" text="Gerir Exercícios" onPress={() => navigation.navigate('ExerciseLibrary')} />
+                        <ActionButton icon="checkmark-done-circle-outline" text="Histórico Treinos" onPress={() => navigation.navigate('CompletedTrainingsHistory')} />
+                        <ActionButton icon="calendar-number-outline" text="Gerir Aulas PT" onPress={() => navigation.navigate('ManagePTClasses')} />
+                    </ScrollView>
+                </View>
+
+                {/* --- PRÓXIMOS TREINOS --- */}
+                <View style={styles.section}>
+                    <View style={styles.sectionHeaderWithButton}>
+                        <Text style={styles.sectionTitle}>Próximos Treinos</Text>
+                        <TouchableOpacity onPress={() => navigation.navigate('Agenda')} activeOpacity={0.7}>
+                            <Text style={styles.viewAllLink}>Ver todos <Ionicons name="arrow-forward-outline" size={Layout.fontSizes.medium} color={Colors.info} /></Text>
+                        </TouchableOpacity>
+                    </View>
+                    <View style={styles.card}>
+                        {upcomingTrainings.length > 0 ? (
+                            upcomingTrainings.map((training, index) => (
+                                <React.Fragment key={training.id}>
+                                    <TrainingCard type="upcoming" training={training} formatarDuracao={formatarDuracao} />
+                                    {index < upcomingTrainings.length - 1 && <View style={styles.itemSeparator} />}
+                                </React.Fragment>
+                            ))
+                        ) : (
+                            <Text style={styles.noDataText}>Nenhum treino agendado para breve.</Text>
+                        )}
+                    </View>
+                </View>
+
+                {/* --- ÚLTIMOS TREINOS CONCLUÍDOS --- */}
+                <View style={styles.section}>
+                    <View style={styles.sectionHeaderWithButton}>
+                        <Text style={styles.sectionTitle}>Últimos Treinos Concluídos</Text>
+                        <TouchableOpacity onPress={() => navigation.navigate('CompletedTrainingsHistory')} activeOpacity={0.7}>
+                            <Text style={styles.viewAllLink}>Ver todo o Histórico <Ionicons name="arrow-forward-outline" size={Layout.fontSizes.medium} color={Colors.info} /></Text>
+                        </TouchableOpacity>
+                    </View>
+                    <View style={styles.card}>
+                        {recentCompletedTrainings.length > 0 ? (
+                            recentCompletedTrainings.map((training, index) => (
+                                <React.Fragment key={training.id}>
+                                    <TrainingCard type="completed" training={training} formatarDuracao={formatarDuracao} />
+                                    {index < recentCompletedTrainings.length - 1 && <View style={styles.itemSeparator} />}
+                                </React.Fragment>
+                            ))
+                        ) : (
+                            <Text style={styles.noDataText}>Nenhum treino concluído recentemente.</Text>
+                        )}
+                    </View>
+                </View>
+
+            </ScrollView>
+        </SafeAreaView>
+    );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    paddingTop: 40,
-    flex: 1,
-    padding: 16,
-    backgroundColor: '#fff',
-  },
-  welcome: {
-    fontSize: 22,
-    fontWeight: '700',
-    marginBottom: 8,
-    color: '#111',
-  },
-  fraseMotivacional: {
-    fontSize: 16,
-    fontStyle: 'italic',
-    color: '#6b7280',
-    marginBottom: 12,
-  },
-  calendar: {
-    marginBottom: 16,
-  },
-  headerTreinos: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  dateLabel: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111',
-  },
-  limparBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  limparText: {
-    color: '#ef4444',
-    fontWeight: '600',
-    marginLeft: 4,
-  },
-  treinoItem: {
-    backgroundColor: '#f9fafb',
-    padding: 12,
-    marginVertical: 6,
-    borderRadius: 8,
-    borderLeftWidth: 6,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  iconNome: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  iconBg: {
-    padding: 8,
-    borderRadius: 12,
-    marginRight: 12,
-  },
-  nomeTreino: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111',
-  },
-  tipoTreino: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  horaTreinoItem: {
-    fontSize: 14,
-    color: '#374151',
-    fontWeight: '600',
-  },
-  botaoAdicionar: {
-    backgroundColor: '#2563eb',
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  textoBotaoAdicionar: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: '#000000bb',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 24,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 16,
-    color: '#111',
-  },
-  input: {
-    borderColor: '#ccc',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-    marginBottom: 16,
-    color: '#111',
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 8,
-    color: '#111',
-  },
-  opcoesContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',         // permite quebrar linha
-    justifyContent: 'flex-start',
-    marginBottom: 16,
-  },
-  opcao: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f3f4f6',
-    borderRadius: 8,
-    paddingVertical: 4,       // padding menor vertical
-    paddingHorizontal: 8,     // padding menor horizontal
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  timePickerButton: {
-    backgroundColor: '#f3f4f6',
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  timePickerText: {
-    fontSize: 16,
-    color: '#111',
-    fontWeight: '600',
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  modalButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginHorizontal: 8,
-  },
-  cancelButton: {
-    backgroundColor: '#f3f4f6',
-  },
-  saveButton: {
-    backgroundColor: '#2563eb',
-  },
-  modalButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  fraseFade: {
-    position: 'absolute',
-    bottom: 80,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  fraseFadeText: {
-    backgroundColor: '#22c55e',
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-  },
-  logoutButton: {
-    position: 'absolute',
-    top: 50,
-    right: 20,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: '#ef4444',
-  },
-  logoutText: {
-    color: '#fff',
-    fontWeight: '700',
-  },
+    safeArea: {
+        flex: 1,
+        backgroundColor: Colors.background,
+        // Removendo paddingTop aqui, pois o AppHeader já lida com a StatusBar
+        // e o ScrollView compensará a borda arredondada.
+    },
+    
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: Colors.background,
+    },
+    loadingText: {
+        marginTop: Layout.spacing.medium,
+        fontSize: Layout.fontSizes.large,
+        color: Colors.textSecondary,
+    },
+    errorContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: Colors.background,
+        padding: Layout.padding,
+    },
+    errorText: {
+        fontSize: Layout.fontSizes.large,
+        color: Colors.error,
+        textAlign: 'center',
+        marginBottom: Layout.spacing.large,
+    },
+    retryButton: {
+        backgroundColor: Colors.primary,
+        paddingVertical: Layout.spacing.medium,
+        paddingHorizontal: Layout.spacing.large,
+        borderRadius: Layout.borderRadius.medium,
+    },
+    retryButtonText: {
+        color: Colors.onPrimary,
+        fontSize: Layout.fontSizes.large,
+        fontWeight: 'bold',
+    },
+    scrollViewContent: {
+        paddingVertical: Layout.padding, // Mantém o padding vertical para o conteúdo
+        paddingHorizontal: Layout.padding, // Mantém o padding horizontal
+        // Este marginTop é crucial para que o conteúdo "suba" e se encaixe na curva do AppHeader
+        marginTop: -Layout.borderRadius.medium * 1.5, // Multiplicar por 1.5 ou 2 pode dar um efeito mais visível
+        paddingTop: Layout.padding + Layout.borderRadius.medium * 1.5, // Ajusta o padding para compensar o marginTop negativo
+    },
+    // --- ESTILOS PARA A SEÇÃO DE BOAS-VINDAS (AJUSTADOS) ---
+    welcomeSection: {
+        flexDirection: 'row',
+        alignItems: 'center', // Alinha verticalmente o avatar e o texto
+        paddingHorizontal: Layout.padding, // Usar o padding do Layout para consistência
+        marginTop: 20,
+        marginBottom: 20, // Espaço após a seção de boas-vindas
+    },
+    avatarContainer: {
+        marginRight: 10, // Espaço entre o avatar e o texto
+    },
+    avatar: {
+        width: 40, // AVATAR MENOR
+        height: 40, // AVATAR MENOR
+        borderRadius: Layout.borderRadius.pill,
+        backgroundColor: Colors.primary, // Dourado
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1.5, // Borda um pouco mais fina
+        borderColor: Colors.accent,
+    },
+    avatarText: {
+        color: Colors.onPrimary, // Branco sobre dourado
+        fontSize: Layout.fontSizes.medium, // Letra menor para o avatar menor
+        fontWeight: 'bold',
+    },
+    welcomeCombinedText: {
+        fontSize: Layout.fontSizes.large, // Tamanho do texto de saudação
+        color: Colors.textPrimary, // Cor principal para o texto
+        fontWeight: '600', // Um pouco mais de destaque
+    },
+    // --- ESTILOS REMOVIDOS/AJUSTADOS ---
+    // welcomeTextContainer foi removido (não necessário com um único Text)
+    // welcomeGreeting e welcomeName foram substituídos por welcomeCombinedText
+
+    // --- ESTILOS EXISTENTES (verificar e ajustar se necessário) ---
+    section: {
+        marginBottom: Layout.spacing.xlarge,
+    },
+    sectionTitle: {
+        fontSize: Layout.fontSizes.title,
+        fontWeight: 'bold',
+        color: Colors.textPrimary,
+        marginBottom: Layout.spacing.medium,
+    },
+    statsContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+    },
+    statItemColumn: {
+        width: (Layout.window.width - Layout.padding * 2 - Layout.spacing.medium) / 2, // Ajustado para corresponder ao padding do scrollViewContent
+        marginBottom: Layout.spacing.medium,
+        backgroundColor: Colors.cardBackground,
+        borderRadius: Layout.borderRadius.medium,
+        ...Layout.cardElevation,
+        padding: Layout.spacing.medium,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    quickActionsScrollContent: {
+        paddingVertical: Layout.spacing.small,
+    },
+    card: {
+        backgroundColor: Colors.surface,
+        borderRadius: Layout.borderRadius.medium,
+        ...Layout.cardElevation,
+        overflow: 'hidden',
+        paddingVertical: Layout.spacing.small,
+    },
+    itemSeparator: {
+        height: StyleSheet.hairlineWidth,
+        backgroundColor: Colors.lightGray,
+        marginHorizontal: Layout.spacing.medium,
+    },
+    noDataText: {
+        fontSize: Layout.fontSizes.medium,
+        color: Colors.textSecondary,
+        padding: Layout.padding,
+        textAlign: 'center',
+    },
+    sectionHeaderWithButton: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Layout.spacing.medium,
+    },
+    viewAllLink: {
+        fontSize: Layout.fontSizes.medium,
+        fontWeight: '600',
+        color: Colors.info,
+    },
 });

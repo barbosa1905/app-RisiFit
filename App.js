@@ -9,15 +9,14 @@ import {
   StatusBar,
 } from 'react-native';
 
+// Importação necessária para corrigir o erro
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+
 import LoginScreen from './screens/LoginScreen';
-
-// Importações dos navegadores de abas/stacks principais
-import UserTabs from './screens/User/UserTabs'; // Contém as abas do utilizador, incluindo a UserHomeScreen
-import AdminStack from './screens/Admin/AdminStack'; // Contém as telas do administrador, incluindo a AdminHomeScreen
-
+import UserTabs from './screens/User/UserTabs';
+import AdminStack from './screens/Admin/AdminStack';
 import SessaoTreinosScreen from './screens/SessaoTreinosScreen';
 import { UserProvider } from './contexts/UserContext';
-
 import TreinosDoClienteScreen from './screens/Admin/TreinosDoClienteScreen';
 import ResponderQuestionarioScreen from './screens/User/ResponderQuestionarioScreen';
 import RespostasQuestionarioScreen from './screens/Admin/RespostasQuestionarioScreen';
@@ -43,79 +42,71 @@ import EditarQuestionarioScreen from './screens/Admin/EditarQuestionarioScreen';
 import ListarQuestionariosUserScreen from './screens/User/ListarQuestionariosUserScreen';
 import { ThemeProvider } from './screens/ThemeContext';
 import CompletedTrainingsHistoryScreen from './screens/Admin/CompletedTrainingsHistoryScreen';
-import ExerciseLibraryScreen from './screens/Admin/ExerciseLibraryScreen';
-import CreateWorkoutTemplateScreen from './screens/Admin/CreateWorkoutTemplateScreen';
 import WorkoutTemplatesScreen from './screens/Admin/WorkoutTemplatesScreen';
-// IMPORTAR AS DUAS HOMESCREENS COM NOMES DISTINTOS
-import AdminHomeScreen from './screens/Admin/HomeScreen'; // HomeScreen para o Admin
-import HomeScreen from './screens/User/UserHomeScreen';  // HomeScreen para o Utilizador
-
+import ExerciseLibraryScreen from './screens/Admin/ExerciseLibraryScreen';
+import PasswordResetRequiredScreen from './screens/PasswordResetRequiredScreen';
+import ChangePasswordScreen from './screens/ChangePasswordScreen';
+import AdminHomeScreen from './screens/Admin/HomeScreen';
+import HomeScreen from './screens/User/UserHomeScreen';
+import CreateGroupClassScreen from './screens/Admin/CreateGroupClassScreen';
+import ListGroupClassesScreen from './screens/User/ListGroupClassesScreen';
+import MyGroupClassesScreen from './screens/Admin/MyGroupClassesScreen';
+import ManagePTClassesScreen from './screens/Admin/ManagePTClassesScreen';
+import RespostasQuestionariosCliente from './screens/Admin/RespostasQuestionariosClientes';
+import CreateWorkoutTemplateScreen from './screens/Admin/CreateWorkoutTemplateScreen';
 const Stack = createNativeStackNavigator();
 
 export default function App() {
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ThemeProvider>
-        <UserProvider>
-          <UnreadProvider>
-            <NavigationContainer>
-              <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false }}>
-                <Stack.Screen name="Login" component={LoginScreen} />
-                <Stack.Screen name="CadastroCliente" component={CadastroClienteScreen} options={{ title: 'Registar Novo Cliente' }} />
-
-                {/* As UserTabs devem conter a UserHomeScreen como uma de suas abas */}
-                <Stack.Screen name="UserTabs" component={UserTabs} />
-
-                {/* O AdminStack deve conter a AdminHomeScreen como uma de suas telas */}
-                <Stack.Screen name="AdminTabs" component={AdminStack} />
-
-                {/* Outras telas que podem ser acessadas de ambos os fluxos ou de forma independente */}
-                <Stack.Screen name="FichaCliente" component={FichaClienteScreen} options={{ title: 'Ficha do Cliente' }} />
-                <Stack.Screen name="SessaoTreinos" component={SessaoTreinosScreen} />
-                <Stack.Screen name="CriarAvaliacao" component={CriarAvaliacaoScreen} options={{ title: 'Criar Avaliação' }} />
-                <Stack.Screen name="TreinosDoCliente" component={TreinosDoClienteScreen} />
-                <Stack.Screen name="RespostasQuestionario" component={RespostasQuestionarioScreen} />
-                <Stack.Screen name="EditarTreino" component={EditarTreinoScreen} />
-                <Stack.Screen name="ResponderQuestionario" component={ResponderQuestionarioScreen} />
-                <Stack.Screen name="ExecucaoTreinoScreen" component={ExecucaoTreinoScreen} />
-                <Stack.Screen name='CalendarScreen' component={CalendarScreen} />
-                <Stack.Screen name="CriarQuestionario" component={CriarQuestionarioScreen} />
-                <Stack.Screen name="ListarQuestionarios" component={ListarQuestionariosScreen} options={{ title: 'Listar Questionários' }} />
-                <Stack.Screen name="CompletedTrainingsHistory" component={CompletedTrainingsHistoryScreen} />
-               <Stack.Screen
-    name="ExerciseLibrary" // Escolha um nome de rota único e descritivo
-    component={ExerciseLibraryScreen}
-    options={{ headerShown: false }} />
-    <Stack.Screen name="CreateWorkoutTemplate" component={CreateWorkoutTemplateScreen} options={{ headerShown: false }} />
-     <Stack.Screen name="WorkoutTemplates" component={WorkoutTemplatesScreen} options={{ headerShown: false }} />
-                <Stack.Screen name="ResponderQuestionarioScreen" component={ResponderQuestionarioScreen} options={{ title: 'Questionário' }} />
-                {/* Telas de Chat (Admin) */}
-                <Stack.Screen name="AdminChatList" component={AdminChatListScreen} />
-                <Stack.Screen name="AdminChatRoom" component={AdminChatRoomScreen} />
-
-                {/* Telas de Chat (User) */}
-                <Stack.Screen name="UserChatList" component={UserChatListScreen} />
-                <Stack.Screen name="UserChatRoom" component={UserChatRoomScreen} />
-
-                {/* Telas de Questionário (User) */}
-                <Stack.Screen name="ListarQuestionariosUser" component={ListarQuestionariosUserScreen} options={{ title: 'Questionários Disponíveis' }} />
-                <Stack.Screen name="EditarQuestionario" component={EditarQuestionarioScreen} options={{ title: 'Editar Questionário' }} />
-
-                {/* NOTA: As HomeScreens agora serão gerenciadas dentro de AdminStack e UserTabs.
-                   Não as adicione diretamente aqui, a menos que sejam rotas independentes do fluxo principal.
-                   As linhas abaixo foram removidas pois eram problemáticas:
-                   <Stack.Screen name="HomeScreen" component={HomeScreen} />
-                   <Stack.Navigator initialRouteName="Home">
-                     <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
-                   </Stack.Navigator>
-                */}
-
-              </Stack.Navigator>
-            </NavigationContainer>
-          </UnreadProvider>
-        </UserProvider>
-      </ThemeProvider>
-    </SafeAreaView>
+    // O GestureHandlerRootView DEVE envolver toda a sua aplicação.
+    // A sua SafeAreaView e o resto do código devem ficar aqui dentro.
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={styles.safeArea}>
+        <ThemeProvider>
+          <UserProvider>
+            <UnreadProvider>
+              <NavigationContainer>
+                <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false }}>
+                  <Stack.Screen name="Login" component={LoginScreen} />
+                  <Stack.Screen name="CadastroCliente" component={CadastroClienteScreen} options={{ title: 'Registar Novo Cliente' }} />
+                  <Stack.Screen name="UserTabs" component={UserTabs} />
+                  <Stack.Screen name="AdminTabs" component={AdminStack} />
+                  <Stack.Screen name="FichaCliente" component={FichaClienteScreen} options={{ title: 'Ficha do Cliente' }} />
+                  <Stack.Screen name="SessaoTreinos" component={SessaoTreinosScreen} />
+                  <Stack.Screen name="CriarAvaliacao" component={CriarAvaliacaoScreen} options={{ title: 'Criar Avaliação' }} />
+                  <Stack.Screen name="TreinosDoCliente" component={TreinosDoClienteScreen} />
+                  <Stack.Screen name="RespostasQuestionario" component={RespostasQuestionarioScreen} />
+                  <Stack.Screen name="EditarTreino" component={EditarTreinoScreen} />
+                  <Stack.Screen name="ResponderQuestionario" component={ResponderQuestionarioScreen} />
+                  <Stack.Screen name="ExecucaoTreinoScreen" component={ExecucaoTreinoScreen} />
+                  <Stack.Screen name='CalendarScreen' component={CalendarScreen} />
+                  <Stack.Screen name="CriarQuestionario" component={CriarQuestionarioScreen} />
+                  <Stack.Screen name="ListarQuestionarios" component={ListarQuestionariosScreen} options={{ title: 'Listar Questionários' }} />
+                  <Stack.Screen name="CompletedTrainingsHistory" component={CompletedTrainingsHistoryScreen} />
+                  <Stack.Screen name="ResponderQuestionarioScreen" component={ResponderQuestionarioScreen} options={{ title: 'Questionário' }} />
+                  <Stack.Screen name="WorkoutTemplates" component={WorkoutTemplatesScreen} options={{ title: 'Templates de Treino' }} />
+                  <Stack.Screen name="ExerciseLibrary" component={ExerciseLibraryScreen} options={{ title: 'Biblioteca de Exercícios' }} />
+                  <Stack.Screen name="PasswordResetRequiredScreen" component={PasswordResetRequiredScreen} options={{ gestureEnabled: false }} />
+                  <Stack.Screen name="ChangePasswordScreen" component={ChangePasswordScreen} options={{ title: 'Alterar Palavra-passe', headerShown: true }} />
+                  <Stack.Screen name="AdminChatList" component={AdminChatListScreen} />
+                  <Stack.Screen name="AdminChatRoom" component={AdminChatRoomScreen} />
+                  <Stack.Screen name="UserChatList" component={UserChatListScreen} />
+                  <Stack.Screen name="UserChatRoom" component={UserChatRoomScreen} />
+                  <Stack.Screen name="ListarQuestionariosUser" component={ListarQuestionariosUserScreen} options={{ title: 'Questionários Disponíveis' }} />
+                  <Stack.Screen name="EditarQuestionario" component={EditarQuestionarioScreen} options={{ title: 'Editar Questionário' }} />
+                  <Stack.Screen name="CreateGroupClass" component={CreateGroupClassScreen} options={{ title: 'Criar Aula de Grupo', headerShown: true }} />
+                  <Stack.Screen name="ListGroupClasses" component={ListGroupClassesScreen} options={{ title: 'Aulas de Grupo', headerShown: true }} />
+                  <Stack.Screen name="MyGroupClasses" component={MyGroupClassesScreen} options={{ headerShown: false }} />
+                  <Stack.Screen name="ManagePTClasses" component={ManagePTClassesScreen} options={{ headerShown: false }} />
+                  <Stack.Screen name="RespostasQuestionariosClientes" component={RespostasQuestionariosCliente} options={{ headerShown: false }} />
+                  <Stack.Screen name="CreateWorkoutTemplate" component={CreateWorkoutTemplateScreen} options={{ title: 'Criar Template de Treino' }} />
+                </Stack.Navigator>
+              </NavigationContainer>
+            </UnreadProvider>
+          </UserProvider>
+        </ThemeProvider>
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
