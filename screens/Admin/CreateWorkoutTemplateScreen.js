@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+// screens/CreateWorkoutTemplateScreen.js
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   SafeAreaView,
   ScrollView,
-  TouchableOpacity,
   TextInput,
   ActivityIndicator,
   Alert,
@@ -13,18 +13,48 @@ import {
   FlatList,
   Platform,
   StatusBar,
-  Image,
+  Pressable,
+  RefreshControl,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, addDoc, getDocs, doc, onSnapshot, updateDoc, query, orderBy } from 'firebase/firestore';
+import {
+  collection,
+  addDoc,
+  getDocs,
+  doc,
+  onSnapshot,
+  updateDoc,
+  query,
+  orderBy,
+  getDoc,
+} from 'firebase/firestore';
 import { db } from '../../services/firebaseConfig';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
+import AppHeader from '../../components/AppHeader';
+/* =================== Tema / Constantes =================== */
+const Colors = {
+  primary: '#2A3B47',
+  secondary: '#FFB800',
+  onPrimary: '#FFFFFF',
+  onSecondary: '#111827',
+  background: 'transparent',
+  cardBackground: 'rgba(255,255,255,0.82)',
+  surface: 'rgba(255,255,255,0.55)',
+  textPrimary: '#111827',
+  textSecondary: '#6B7280',
+  success: '#22C55E',
+  danger: '#E53935',
+  info: '#2563EB',
+  divider: 'rgba(17,24,39,0.10)',
+};
+const RADIUS = 16;
+const GAP = 12;
 
 const categorias = ['Cardio', 'Força', 'Mobilidade', 'Core', 'Outro'];
 const categoriasFiltroExercicios = ['Todos', ...categorias];
 
-// Adicionado: Definição dos tipos de séries com os campos e ícones correspondentes
 const seriesTypes = {
   reps_and_load: {
     label: 'Repetições e carga',
@@ -97,24 +127,87 @@ const seriesTypes = {
   },
 };
 
-// Paleta de Cores Profissional
-const Colors = {
-  primary: '#2A3B47',
-  secondary: '#FFB800',
-  background: '#F0F2F5',
-  cardBackground: '#FFFFFF',
-  textPrimary: '#333333',
-  textSecondary: '#666666',
-  success: '#4CAF50',
-  danger: '#F44336',
-  info: '#2196F3',
+/* =================== Helpers =================== */
+const toArray = (val) => {
+  if (Array.isArray(val)) return val;
+  if (val && typeof val === 'object') return Object.values(val);
+  return [];
 };
 
+/* ---- Ícones por categoria + Chip de filtro ---- */
+const CATEGORY_ICON = {
+  Todos: 'grid-outline',
+  Cardio: 'walk-outline',
+  Força: 'barbell-outline',
+  Mobilidade: 'accessibility-outline',
+  Core: 'fitness-outline',
+  Outro: 'sparkles-outline',
+};
+
+const CategoryChip = ({ label, selected, onPress }) => (
+  <Pressable
+    onPress={onPress}
+    android_ripple={{ color: 'rgba(0,0,0,0.05)', borderless: true }}
+    style={({ pressed }) => [
+      styles.chip,
+      selected && styles.chipSelected,
+      pressed && { opacity: 0.95 },
+    ]}
+    accessibilityRole="button"
+    accessibilityLabel={`Filtrar por ${label}`}
+  >
+    <Ionicons
+      name={CATEGORY_ICON[label] || 'ellipse-outline'}
+      size={14}
+      color={selected ? Colors.onPrimary : Colors.textSecondary}
+    />
+    <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{label}</Text>
+  </Pressable>
+);
+
+/* ---- Cartão da biblioteca (grid) ---- */
+const LibraryCard = React.memo(({ item, onPress }) => {
+  const name = item.nome_pt || item.name || 'Exercício';
+  const muscle = item.category || item.muscle || item.músculo || '';
+  const notes = item.descricao || item.notes || '';
+
+  return (
+    <Pressable
+      onPress={onPress}
+      android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
+      style={({ pressed }) => [styles.libCard, pressed && { transform: [{ scale: 0.997 }] }]}
+      accessibilityRole="button"
+      accessibilityLabel={`Adicionar ${name}`}
+    >
+      <View style={styles.libIconWrap}>
+        <Ionicons name="fitness-outline" size={18} />
+      </View>
+
+      <Text style={styles.libName} numberOfLines={2}>{name}</Text>
+
+      {!!muscle && (
+        <View style={styles.muscleChip}>
+          <Ionicons name="cellular-outline" size={12} />
+          <Text style={styles.muscleChipTxt} numberOfLines={1}>{muscle}</Text>
+        </View>
+      )}
+
+      {!!notes && <Text style={styles.libNotes} numberOfLines={2}>{notes}</Text>}
+
+      <View style={styles.libPlusBadge}>
+        <Ionicons name="add" size={16} color="#111827" />
+      </View>
+    </Pressable>
+  );
+});
+
+/* =================== Componente =================== */
 export default function CreateWorkoutTemplateScreen() {
   const navigation = useNavigation();
   const route = useRoute();
   const { templateId, templateData } = route.params || {};
 
+  // Estado
   const [templateName, setTemplateName] = useState('');
   const [templateDescription, setTemplateDescription] = useState('');
   const [templateCategory, setTemplateCategory] = useState('');
@@ -132,77 +225,168 @@ export default function CreateWorkoutTemplateScreen() {
   const [currentSeriesFields, setCurrentSeriesFields] = useState({});
   const [currentExerciseSets, setCurrentExerciseSets] = useState([]);
   const [isCategoryModalVisible, setIsCategoryModalVisible] = useState(false);
-  // NOVO ESTADO: Controla a visibilidade da lista de tipos de série
   const [isSeriesTypeDropdownVisible, setIsSeriesTypeDropdownVisible] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
+  // Grid responsivo + remount key
+  const computeCols = () => {
+    const w = Dimensions.get('window').width;
+    if (w >= 900) return 4;
+    if (w >= 600) return 3;
+    return 2;
+  };
+  const [gridColumns, setGridColumns] = useState(computeCols());
+  useEffect(() => {
+    const sub = Dimensions.addEventListener('change', () => setGridColumns(computeCols()));
+    return () => sub?.remove?.();
+  }, []);
+  const listLayoutKey = `lib_grid_${gridColumns}`;
 
+  const auth = getAuth();
+  const currentUser = auth.currentUser;
+
+  /* ========== Admin info (subscrição) ========== */
   const fetchAdminInfo = useCallback(() => {
-    const authInstance = getAuth();
-    const currentUser = authInstance.currentUser;
-
-    if (currentUser) {
-      const userRef = doc(db, 'users', currentUser.uid);
-      const unsubscribe = onSnapshot(userRef, (docSnap) => {
-        if (docSnap.exists() && docSnap.data().role === 'admin') {
-          setAdminInfo(docSnap.data());
-        } else {
-          setAdminInfo({ name: 'Admin', email: currentUser?.email || 'admin@example.com', nome: 'Admin' });
-        }
-      }, (error) => {
-        console.error("Erro ao buscar informações do admin:", error);
-        setAdminInfo({ name: 'Admin', email: currentUser?.email || 'admin@example.com', nome: 'Admin' });
-      });
-      return unsubscribe;
-    } else {
-      setAdminInfo({ name: 'Visitante', email: '', nome: 'Visitante' });
+    const user = auth.currentUser;
+    if (!user) {
+      setAdminInfo({ name: 'Visitante', email: '', nome: 'Visitante', uid: 'guest' });
       return () => {};
     }
-  }, []);
+    const userRef = doc(db, 'users', user.uid);
+    const unsubscribe = onSnapshot(
+      userRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setAdminInfo({ id: docSnap.id, uid: user.uid, ...docSnap.data() });
+        } else {
+          setAdminInfo({ uid: user.uid, name: user.email?.split('@')[0] || 'Admin', email: user.email });
+        }
+      },
+      () => setAdminInfo({ uid: user.uid, name: user.email?.split('@')[0] || 'Admin', email: user.email })
+    );
+    return unsubscribe;
+  }, [auth]);
 
+  /* ========== Biblioteca de exercícios ========== */
   const fetchExerciseLibrary = useCallback(async () => {
     try {
       const exercisesColRef = collection(db, 'exercises');
-      const q = query(exercisesColRef, orderBy('nome_pt', 'asc'));
-      const snapshot = await getDocs(q);
-      const fetchedExercises = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setExerciseLibrary(fetchedExercises);
+      const qx = query(exercisesColRef, orderBy('nome_pt', 'asc'));
+      const snapshot = await getDocs(qx);
+      const fetched = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setExerciseLibrary(fetched);
     } catch (err) {
-      console.error("Erro ao carregar biblioteca de exercícios:", err);
+      console.error('Erro ao carregar exercícios:', err);
       Alert.alert('Erro', 'Não foi possível carregar a biblioteca de exercícios.');
-    } finally {
-      setLoading(false);
     }
   }, []);
 
+  /* ========== Hidratar template ao editar ========== */
+  const hydrateTemplateForEdit = useCallback((docData) => {
+    if (!docData) return;
+
+    setTemplateName(docData.name || '');
+    setTemplateDescription(docData.description || '');
+    setTemplateCategory(docData.category || '');
+
+    const rawExercises = toArray(docData.exercises);
+
+    const hydrated = rawExercises.map((ex, idx) => {
+      const setsArr = toArray(ex.sets).map((s, i) => ({
+        ...s,
+        setId: s.setId || `set_${idx}_${i}_${Math.random().toString(36).slice(2)}`,
+      }));
+
+      return {
+        exerciseId: ex.exerciseId || ex.id || '',
+        exerciseName: ex.exerciseName || ex.nome_pt || 'Exercício',
+        sets: setsArr,
+        templateExerciseId:
+          ex.templateExerciseId ||
+          `tex_${idx}_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      };
+    });
+
+    setSelectedExercises(hydrated);
+  }, []);
+
+  const fetchTemplateForEdit = useCallback(async () => {
+    if (!templateId) return;
+    try {
+      const ref = doc(db, 'workoutTemplates', templateId);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        const data = snap.data();
+        hydrateTemplateForEdit(data);
+      } else {
+        Alert.alert('Aviso', 'Modelo não encontrado.');
+      }
+    } catch (e) {
+      console.error('Erro a carregar modelo para edição:', e);
+      Alert.alert('Erro', 'Não foi possível carregar o modelo para edição.');
+    }
+  }, [templateId, hydrateTemplateForEdit]);
+
+  /* ========== Init ========== */
   useEffect(() => {
-    const unsubscribeAdmin = fetchAdminInfo();
-    fetchExerciseLibrary();
+    let mounted = true;
+    const unsubAdmin = fetchAdminInfo();
+
+    (async () => {
+      try {
+        await Promise.all([
+          fetchExerciseLibrary(),
+          templateId ? fetchTemplateForEdit() : Promise.resolve(),
+        ]);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
 
     if (templateData) {
-      setTemplateName(templateData.name || '');
-      setTemplateDescription(templateData.description || '');
-      setTemplateCategory(templateData.category || '');
-      setSelectedExercises(templateData.exercises.map(ex => ({
-        ...ex,
-        templateExerciseId: ex.templateExerciseId || Date.now().toString() + Math.random(),
-      })));
+      hydrateTemplateForEdit(templateData);
+      setLoading(false);
     }
 
-    return () => unsubscribeAdmin();
-  }, [fetchAdminInfo, fetchExerciseLibrary, templateData]);
+    return () => {
+      mounted = false;
+      unsubAdmin && unsubAdmin();
+    };
+  }, [fetchAdminInfo, fetchExerciseLibrary, fetchTemplateForEdit, templateData, hydrateTemplateForEdit]);
 
+  /* ========== Pull-to-refresh ========== */
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    Promise.all([fetchExerciseLibrary(), templateId ? fetchTemplateForEdit() : Promise.resolve()])
+      .finally(() => setRefreshing(false));
+  }, [fetchExerciseLibrary, fetchTemplateForEdit, templateId]);
+
+  /* ========== Filtro memoizado ========== */
+  const filteredExercises = useMemo(() => {
+    const sq = (searchQuery || '').toLowerCase();
+    return exerciseLibrary.filter((exercise) => {
+      const name = (exercise.nome_pt || '').toLowerCase();
+      const matchesSearch = name.includes(sq);
+      const matchesCategory =
+        selectedExerciseCategoryFilter === 'Todos' ||
+        (exercise.category &&
+          String(exercise.category).toLowerCase() ===
+            selectedExerciseCategoryFilter.toLowerCase());
+      return matchesSearch && matchesCategory;
+    });
+  }, [exerciseLibrary, searchQuery, selectedExerciseCategoryFilter]);
+
+  /* ========== UI helpers ========== */
+  const adminDisplayName = adminInfo?.nome || adminInfo?.name || 'Admin';
+  const adminInitial = adminDisplayName ? adminDisplayName.charAt(0).toUpperCase() : 'A';
+
+  /* ========== Ações ========== */
   const openExerciseSelectionModal = () => {
     setIsExerciseSelectionModalVisible(true);
     setSearchQuery('');
     setSelectedExerciseCategoryFilter('Todos');
   };
-
-  const closeExerciseSelectionModal = () => {
-    setIsExerciseSelectionModalVisible(false);
-  };
+  const closeExerciseSelectionModal = () => setIsExerciseSelectionModalVisible(false);
 
   const selectExerciseFromLibrary = (exercise) => {
     setCurrentExerciseToAdd(exercise);
@@ -215,40 +399,36 @@ export default function CreateWorkoutTemplateScreen() {
     setSelectedSeriesType('reps_and_load');
     setCurrentSeriesFields({});
     setIsAddSeriesModalVisible(true);
-    setIsSeriesTypeDropdownVisible(false); // Garante que o dropdown começa fechado
+    setIsSeriesTypeDropdownVisible(false);
   };
 
   const adicionarNovaSerie = () => {
     if (!selectedSeriesType) {
-      Alert.alert('Erro', 'Por favor, selecione um tipo de série.');
+      Alert.alert('Erro', 'Seleciona um tipo de série.');
       return;
     }
-
     const newSet = {
       type: selectedSeriesType,
       ...currentSeriesFields,
-      setId: Date.now().toString() + Math.random(),
+      setId: `set_${Date.now()}_${Math.random().toString(36).slice(2)}`,
     };
-
-    setCurrentExerciseSets(prev => [...prev, newSet]);
+    setCurrentExerciseSets((prev) => [...prev, newSet]);
     setIsAddSeriesModalVisible(false);
     Alert.alert('Sucesso', 'Série adicionada!');
   };
 
   const addExerciseDetailsToTemplate = () => {
     if (currentExerciseSets.length === 0) {
-      Alert.alert('Erro', 'Por favor, adicione pelo menos uma série ao exercício.');
+      Alert.alert('Erro', 'Adiciona pelo menos uma série.');
       return;
     }
-
     const newExerciseInTemplate = {
       exerciseId: currentExerciseToAdd.id,
       exerciseName: currentExerciseToAdd.nome_pt,
       sets: currentExerciseSets,
-      templateExerciseId: Date.now().toString(),
+      templateExerciseId: `tex_${Date.now()}_${Math.random().toString(36).slice(2)}`,
     };
-
-    setSelectedExercises(prev => [...prev, newExerciseInTemplate]);
+    setSelectedExercises((prev) => [...prev, newExerciseInTemplate]);
     setExerciseDetailsModalVisible(false);
     setCurrentExerciseToAdd(null);
     setCurrentExerciseSets([]);
@@ -256,175 +436,122 @@ export default function CreateWorkoutTemplateScreen() {
   };
 
   const removeExerciseFromTemplate = (templateExerciseId) => {
-    Alert.alert(
-      'Remover Exercício',
-      'Tem certeza que deseja remover este exercício do modelo de treino?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Remover',
-          onPress: () => {
-            setSelectedExercises(prev =>
-              prev.filter(ex => ex.templateExerciseId !== templateExerciseId)
-            );
-            Alert.alert('Removido', 'Exercício removido do modelo.');
-          },
-          style: 'destructive',
-        },
-      ]
-    );
+    Alert.alert('Remover Exercício', 'Queres remover este exercício do modelo?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Remover',
+        style: 'destructive',
+        onPress: () =>
+          setSelectedExercises((prev) =>
+            prev.filter((ex) => ex.templateExerciseId !== templateExerciseId)
+          ),
+      },
+    ]);
   };
 
   const handleSaveTemplate = async () => {
-    if (!templateName.trim()) {
-      Alert.alert('Erro', 'Por favor, dê um nome ao modelo de treino.');
-      return;
-    }
-    if (!templateCategory.trim()) {
-      Alert.alert('Erro', 'Por favor, selecione uma categoria para o modelo de treino.');
-      return;
-    }
-    if (selectedExercises.length === 0) {
-      Alert.alert('Erro', 'Adicione pelo menos um exercício ao modelo de treino.');
-      return;
-    }
+    if (!templateName.trim()) return Alert.alert('Erro', 'Dá um nome ao modelo.');
+    if (!templateCategory.trim()) return Alert.alert('Erro', 'Seleciona uma categoria.');
+    if (selectedExercises.length === 0)
+      return Alert.alert('Erro', 'Adiciona pelo menos um exercício.');
 
     setLoading(true);
     try {
       const templateToSave = {
         name: templateName.trim(),
+        nameLower: templateName.trim().toLowerCase(),
         description: templateDescription.trim(),
         category: templateCategory,
         exercises: selectedExercises.map(({ templateExerciseId, ...rest }) => ({
           ...rest,
-          sets: rest.sets.map(({ setId, ...setRest }) => setRest),
+          sets: toArray(rest.sets).map(({ setId, ...setRest }) => setRest),
         })),
         updatedAt: new Date(),
-        createdBy: adminInfo?.uid || 'unknown',
+        createdBy: currentUser?.uid || adminInfo?.uid || 'unknown',
       };
 
       if (templateId) {
         await updateDoc(doc(db, 'workoutTemplates', templateId), templateToSave);
-        Alert.alert('Sucesso', 'Modelo de treino atualizado com sucesso!');
+        Alert.alert('Sucesso', 'Modelo atualizado!');
       } else {
-        templateToSave.createdAt = new Date();
-        await addDoc(collection(db, 'workoutTemplates'), templateToSave);
-        Alert.alert('Sucesso', 'Modelo de treino salvo com sucesso!');
+        await addDoc(collection(db, 'workoutTemplates'), {
+          ...templateToSave,
+          createdAt: new Date(),
+        });
+        Alert.alert('Sucesso', 'Modelo criado!');
       }
       navigation.goBack();
     } catch (error) {
-      console.error("Erro ao salvar modelo de treino:", error);
-      Alert.alert('Erro', `Não foi possível salvar o modelo de treino: ${error.message}`);
+      console.error('Erro ao salvar modelo de treino:', error);
+      Alert.alert('Erro', `Não foi possível salvar: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const filteredExercises = exerciseLibrary.filter(exercise => {
-    const matchesSearch = exercise.nome_pt
-      ? exercise.nome_pt.toLowerCase().includes(searchQuery.toLowerCase())
-      : false;
-    const matchesCategory = selectedExerciseCategoryFilter === 'Todos' ||
-      (exercise.category && exercise.category.toLowerCase() === selectedExerciseCategoryFilter.toLowerCase());
-    return matchesSearch && matchesCategory;
-  });
-
-  const adminDisplayName = adminInfo?.nome || adminInfo?.name || 'Admin';
-  const adminInitial = adminDisplayName ? adminDisplayName.charAt(0).toUpperCase() : 'A';
-
+  /* ========== Renders auxiliares ========== */
   const renderSeriesDetails = (series) => {
     const type = seriesTypes[series.type];
     if (!type) return null;
 
-    // Renderiza os detalhes de cada tipo de série
+    // Usar linha com ícone + texto separado (evita texto solto)
+    const Row = ({ children }) => (
+      <View style={styles.seriesDetailRow}>
+        <Ionicons name={type.icon} size={14} color={Colors.textSecondary} style={{ marginRight: 6 }} />
+        <Text style={styles.seriesDetailText}>{children}</Text>
+      </View>
+    );
+
     switch (series.type) {
       case 'reps_and_load':
-        return (
-          <Text style={styles.seriesDetailText}>
-            <Ionicons name={type.icon} size={14} color={Colors.textSecondary} /> {series.reps} rep. com {series.peso} kg | Descanso: {series.descanso}s
-          </Text>
-        );
+        return <Row>{`${series.reps} rep. com ${series.peso} kg | Descanso: ${series.descanso}s`}</Row>;
       case 'reps_load_time':
-        return (
-          <Text style={styles.seriesDetailText}>
-            <Ionicons name={type.icon} size={14} color={Colors.textSecondary} /> {series.reps} rep. com {series.peso} kg em {series.tempo}s | Descanso: {series.descanso}s
-          </Text>
-        );
+        return <Row>{`${series.reps} rep. com ${series.peso} kg em ${series.tempo}s | Descanso: ${series.descanso}s`}</Row>;
       case 'reps_and_time':
-        return (
-          <Text style={styles.seriesDetailText}>
-            <Ionicons name={type.icon} size={14} color={Colors.textSecondary} /> {series.reps} rep. em {series.tempo}s | Descanso: {series.descanso}s
-          </Text>
-        );
+        return <Row>{`${series.reps} rep. em ${series.tempo}s | Descanso: ${series.descanso}s`}</Row>;
       case 'time_and_incline':
-        return (
-          <Text style={styles.seriesDetailText}>
-            <Ionicons name={type.icon} size={14} color={Colors.textSecondary} /> Tempo: {series.tempo}s, Inclinação: {series.inclinacao}% | Descanso: {series.descanso}s
-          </Text>
-        );
+        return <Row>{`Tempo: ${series.tempo}s, Inclinação: ${series.inclinacao}% | Descanso: ${series.descanso}s`}</Row>;
       case 'running':
-        return (
-          <Text style={styles.seriesDetailText}>
-            <Ionicons name={type.icon} size={14} color={Colors.textSecondary} /> {series.distancia}m em {series.tempo} | Ritmo: {series.ritmo} | Descanso: {series.descanso}s
-          </Text>
-        );
+        return <Row>{`${series.distancia}m em ${series.tempo} | Ritmo: ${series.ritmo} | Descanso: ${series.descanso}s`}</Row>;
       case 'notes':
-        return (
-          <Text style={styles.seriesDetailText}>
-            <Ionicons name={type.icon} size={14} color={Colors.textSecondary} /> Notas: {series.notas}
-          </Text>
-        );
+        return <Row>{`Notas: ${series.notas}`}</Row>;
       case 'cadence':
-        return (
-          <Text style={styles.seriesDetailText}>
-            <Ionicons name={type.icon} size={14} color={Colors.textSecondary} /> Cadência: {series.cadencia} rpm | Descanso: {series.descanso}s
-          </Text>
-        );
+        return <Row>{`Cadência: ${series.cadencia} rpm | Descanso: ${series.descanso}s`}</Row>;
       case 'split_series':
-        return (
-          <Text style={styles.seriesDetailText}>
-            <Ionicons name={type.icon} size={14} color={Colors.textSecondary} /> {series.reps} rep. com {series.peso} kg | Descanso: {series.descanso}s
-          </Text>
-        );
+        return <Row>{`${series.reps} rep. com ${series.peso} kg | Descanso: ${series.descanso}s`}</Row>;
       default:
         return null;
     }
   };
 
-  const renderSelectedExercise = (item) => (
-    <View key={item.templateExerciseId} style={styles.selectedExerciseCard}>
-      <View style={styles.selectedExerciseInfo}>
-        <Text style={styles.selectedExerciseName}>{item.exerciseName}</Text>
-        {item.sets && item.sets.map((series, index) => (
-          <View key={series.setId || index} style={styles.seriesContainer}>
-            <Text style={styles.seriesCountText}>Série {index + 1}: {seriesTypes[series.type].label}</Text>
-            {renderSeriesDetails(series)}
-          </View>
-        ))}
-      </View>
-      <TouchableOpacity
-        onPress={() => removeExerciseFromTemplate(item.templateExerciseId)}
-        style={styles.removeExerciseButton}
-      >
-        <Ionicons name="close-circle" size={24} color={Colors.danger} />
-      </TouchableOpacity>
-    </View>
-  );
+  const renderSelectedExercise = (item) => {
+    const setsArr = toArray(item.sets);
+    return (
+      <View key={item.templateExerciseId} style={styles.selectedExerciseCard}>
+        <View style={styles.selectedExerciseInfo}>
+          <Text style={styles.selectedExerciseName}>{item.exerciseName}</Text>
+          {setsArr.map((series, index) => (
+            <View key={series.setId || index} style={styles.seriesContainer}>
+              <Text style={styles.seriesCountText}>
+                Série {index + 1}: {seriesTypes[series.type]?.label || '—'}
+              </Text>
+              {renderSeriesDetails(series)}
+            </View>
+          ))}
+        </View>
 
-  const renderExerciseLibraryItem = ({ item }) => (
-    <TouchableOpacity
-      style={styles.exerciseLibraryItem}
-      onPress={() => selectExerciseFromLibrary(item)}
-    >
-      <View>
-        <Text style={styles.exerciseLibraryItemText}>{item.nome_pt ?? 'Nome Indisponível'}</Text>
-        {item.category && (
-          <Text style={styles.exerciseLibraryCategoryText}>Categoria: {item.category}</Text>
-        )}
+        <Pressable
+          onPress={() => removeExerciseFromTemplate(item.templateExerciseId)}
+          android_ripple={{ color: 'rgba(229,57,53,0.12)', borderless: true }}
+          style={({ pressed }) => [{ padding: 8, opacity: pressed ? 0.9 : 1 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Remover exercício"
+        >
+          <Ionicons name="close-circle" size={24} color={Colors.danger} />
+        </Pressable>
       </View>
-      <Ionicons name="chevron-forward-outline" size={24} color={Colors.textSecondary} />
-    </TouchableOpacity>
-  );
+    );
+  };
 
   if (loading && !adminInfo) {
     return (
@@ -435,65 +562,72 @@ export default function CreateWorkoutTemplateScreen() {
     );
   }
 
+  /* =================== UI =================== */
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={28} color={Colors.cardBackground} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>
-          {templateId ? 'Editar Modelo' : 'Criar Modelo'}
-        </Text>
-        <View style={styles.userInfo}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{adminInitial}</Text>
-          </View>
-        </View>
-      </View>
+    <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+    <AppHeader
+      title={templateId ? 'Editar Modelo' : 'Criar Modelo'}
+      subtitle=""
+      showBackButton
+      onBackPress={() => navigation.goBack()}
+      showMenu={false}
+      showBell={false}
+      statusBarStyle="light-content"
+    />
+
+
+      {/* Conteúdo */}
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.secondary} />}
+        showsVerticalScrollIndicator={false}
+      >
         <Text style={styles.screenTitle}>
           {templateId ? 'Editar Modelo de Treino' : 'Criar Novo Modelo de Treino'}
         </Text>
 
-        <Text style={styles.inputLabel}>Nome do Modelo:</Text>
+        <Text style={styles.inputLabel}>Nome do Modelo</Text>
         <TextInput
           style={styles.input}
-          placeholder="Ex: Força Total - Iniciante"
+          placeholder="Ex.: Força Total - Iniciante"
           placeholderTextColor={Colors.textSecondary}
           value={templateName}
           onChangeText={setTemplateName}
         />
 
-        <Text style={styles.inputLabel}>Descrição (Opcional):</Text>
+        <Text style={styles.inputLabel}>Descrição (opcional)</Text>
         <TextInput
           style={[styles.input, styles.textArea]}
-          placeholder="Ex: Treino focado em ganho de massa muscular para iniciantes."
+          placeholder="Ex.: Treino focado em ganho de massa muscular para iniciantes."
           placeholderTextColor={Colors.textSecondary}
           value={templateDescription}
           onChangeText={setTemplateDescription}
           multiline
         />
 
-        <Text style={styles.inputLabel}>Categoria:</Text>
-        {/* Botão para abrir o modal de categorias */}
-        <TouchableOpacity
-          style={styles.categorySelectButton}
+        <Text style={styles.inputLabel}>Categoria</Text>
+        <Pressable
+          style={({ pressed }) => [styles.categorySelectButton, pressed && { opacity: 0.98 }]}
+          android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
           onPress={() => setIsCategoryModalVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Selecionar categoria"
         >
           <Text style={styles.categorySelectButtonText}>
             {templateCategory || 'Selecionar Categoria'}
           </Text>
           <Ionicons name="chevron-down-outline" size={20} color={Colors.primary} />
-        </TouchableOpacity>
+        </Pressable>
 
         <View style={styles.sectionHeader}>
-          <Ionicons name="barbell-outline" size={22} color={Colors.primary} style={styles.sectionIcon} />
+          <Ionicons name="barbell-outline" size={20} color={Colors.primary} style={styles.sectionIcon} />
           <Text style={styles.sectionTitle}>Exercícios no Modelo</Text>
         </View>
 
         {selectedExercises.length === 0 ? (
-          <View style={styles.noExercisesContainer}>
+          <View style={styles.emptyCard}>
             <Ionicons name="fitness-outline" size={50} color={Colors.textSecondary} />
             <Text style={styles.noExercisesText}>Nenhum exercício adicionado ainda.</Text>
           </View>
@@ -501,12 +635,25 @@ export default function CreateWorkoutTemplateScreen() {
           selectedExercises.map(renderSelectedExercise)
         )}
 
-        <TouchableOpacity style={styles.addExerciseButton} onPress={openExerciseSelectionModal}>
-          <Ionicons name="add-circle-outline" size={24} color={Colors.primary} />
+        <Pressable
+          style={({ pressed }) => [styles.addExerciseButton, pressed && { transform: [{ scale: 0.997 }] }]}
+          android_ripple={{ color: 'rgba(0,0,0,0.08)' }}
+          onPress={openExerciseSelectionModal}
+          accessibilityRole="button"
+          accessibilityLabel="Adicionar exercício"
+        >
+          <Ionicons name="add-circle-outline" size={22} color={Colors.primary} />
           <Text style={styles.addExerciseButtonText}>Adicionar Exercício</Text>
-        </TouchableOpacity>
+        </Pressable>
 
-        <TouchableOpacity style={styles.saveTemplateButton} onPress={handleSaveTemplate} disabled={loading}>
+        <Pressable
+          style={({ pressed }) => [styles.saveTemplateButton, pressed && { opacity: 0.98 }]}
+          onPress={handleSaveTemplate}
+          disabled={loading}
+          android_ripple={{ color: 'rgba(255,255,255,0.2)' }}
+          accessibilityRole="button"
+          accessibilityLabel={templateId ? 'Atualizar modelo' : 'Salvar modelo'}
+        >
           {loading ? (
             <ActivityIndicator color={Colors.cardBackground} />
           ) : (
@@ -514,69 +661,85 @@ export default function CreateWorkoutTemplateScreen() {
               {templateId ? 'Atualizar Modelo de Treino' : 'Salvar Modelo de Treino'}
             </Text>
           )}
-        </TouchableOpacity>
+        </Pressable>
       </ScrollView>
 
-      {/* Modal de Seleção de Exercícios da Biblioteca */}
+      {/* Modal: Biblioteca de Exercícios */}
       <Modal
         animationType="fade"
-        transparent={true}
+        transparent
         visible={isExerciseSelectionModalVisible}
         onRequestClose={closeExerciseSelectionModal}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
+          <View style={[styles.modalContent, { paddingBottom: 12 }]}>
+            <View style={[styles.modalHeader, { marginBottom: 12 }]}>
               <Text style={styles.modalTitle}>Biblioteca de Exercícios</Text>
-              <TouchableOpacity onPress={closeExerciseSelectionModal}>
-                <Ionicons name="close-circle" size={30} color={Colors.danger} />
-              </TouchableOpacity>
+              <Pressable onPress={closeExerciseSelectionModal} android_ripple={{ color: 'rgba(229,57,53,0.12)', borderless: true }}>
+                <Ionicons name="close-circle" size={28} color={Colors.danger} />
+              </Pressable>
             </View>
 
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Pesquisar exercício..."
-              placeholderTextColor={Colors.textSecondary}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
+            {/* Pesquisa */}
+            <View style={styles.searchWrap}>
+              <Ionicons name="search" size={16} color={Colors.textSecondary} style={{ marginRight: 8 }} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Pesquisar exercício..."
+                placeholderTextColor={Colors.textSecondary}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                returnKeyType="search"
+              />
+            </View>
 
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterCategoryContainer}>
-              {categoriasFiltroExercicios.map((cat) => {
-                const isSelected = selectedExerciseCategoryFilter === cat;
-                return (
-                  <TouchableOpacity
-                    key={cat}
-                    style={[styles.filterCategoryButton, isSelected && styles.filterCategoryButtonSelected]}
-                    onPress={() => setSelectedExerciseCategoryFilter(cat)}
-                  >
-                    <Text style={[styles.filterCategoryButtonText, isSelected && styles.filterCategoryButtonTextSelected]}>
-                      {cat}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+            {/* Filtros (FlatList) */}
+            <View style={styles.chipsContainer}>
+              <FlatList
+                horizontal
+                data={categoriasFiltroExercicios}
+                keyExtractor={(item) => item}
+                renderItem={({ item }) => (
+                  <CategoryChip
+                    label={item}
+                    selected={selectedExerciseCategoryFilter === item}
+                    onPress={() => setSelectedExerciseCategoryFilter(item)}
+                  />
+                )}
+                contentContainerStyle={styles.chipsRow}
+                ItemSeparatorComponent={() => <View style={{ width: 8 }} />}
+                showsHorizontalScrollIndicator={false}
+              />
+            </View>
 
+            {/* GRID responsivo */}
             {filteredExercises.length === 0 ? (
-              <View style={styles.noExercisesContainer}>
-                <Text style={styles.noExercisesModalText}>Nenhum exercício encontrado com os filtros aplicados.</Text>
+              <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                <Ionicons name="file-tray-outline" size={40} color={Colors.textSecondary} />
+                <Text style={{ color: Colors.textSecondary, marginTop: 8 }}>Nada encontrado.</Text>
               </View>
             ) : (
               <FlatList
+                key={listLayoutKey}
+                numColumns={gridColumns}
                 data={filteredExercises}
                 keyExtractor={(item) => item.id}
-                renderItem={renderExerciseLibraryItem}
+                renderItem={({ item }) => (
+                  <LibraryCard item={item} onPress={() => selectExerciseFromLibrary(item)} />
+                )}
+                columnWrapperStyle={gridColumns > 1 ? styles.libGridRow : null}
+                contentContainerStyle={{ paddingTop: 6, paddingBottom: 6 }}
+                showsVerticalScrollIndicator={false}
               />
             )}
           </View>
         </View>
       </Modal>
 
-      {/* Modal para Adicionar Detalhes do Exercício */}
+      {/* Modal: Detalhes do Exercício */}
       <Modal
         animationType="fade"
-        transparent={true}
+        transparent
         visible={exerciseDetailsModalVisible}
         onRequestClose={() => {
           setExerciseDetailsModalVisible(false);
@@ -587,161 +750,160 @@ export default function CreateWorkoutTemplateScreen() {
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Detalhes do Exercício</Text>
-              <TouchableOpacity onPress={() => {
-                setExerciseDetailsModalVisible(false);
-                setCurrentExerciseSets([]);
-              }}>
-                <Ionicons name="close-circle" size={30} color={Colors.danger} />
-              </TouchableOpacity>
+              <Pressable
+                onPress={() => {
+                  setExerciseDetailsModalVisible(false);
+                  setCurrentExerciseSets([]);
+                }}
+                android_ripple={{ color: 'rgba(229,57,53,0.12)', borderless: true }}
+              >
+                <Ionicons name="close-circle" size={28} color={Colors.danger} />
+              </Pressable>
             </View>
 
             <ScrollView>
               <Text style={styles.exerciseNameInModal}>{currentExerciseToAdd?.nome_pt ?? 'Exercício'}</Text>
-              
-              <Text style={styles.inputLabel}>Séries Adicionadas:</Text>
+
+              <Text style={styles.inputLabel}>Séries adicionadas</Text>
               {currentExerciseSets.length === 0 ? (
-                <Text style={styles.noExercisesModalText}>Nenhuma série adicionada ainda.</Text>
+                <Text style={styles.noExercisesModalText}>Nenhuma série ainda.</Text>
               ) : (
                 currentExerciseSets.map((series, index) => (
                   <View key={series.setId} style={styles.selectedSeriesCard}>
-                    <Text style={styles.selectedSeriesText}>Série {index + 1}: {seriesTypes[series.type].label}</Text>
+                    <Text style={styles.selectedSeriesText}>
+                      Série {index + 1}: {seriesTypes[series.type]?.label || '—'}
+                    </Text>
                     {renderSeriesDetails(series)}
                   </View>
                 ))
               )}
 
-              <TouchableOpacity
+              <Pressable
                 onPress={openAddSeriesModal}
-                style={[styles.modalActionButton, { backgroundColor: Colors.info, marginTop: 10 }]}
+                style={({ pressed }) => [styles.modalActionButton, { backgroundColor: Colors.info }, pressed && { opacity: 0.98 }]}
+                android_ripple={{ color: 'rgba(255,255,255,0.2)' }}
+                accessibilityRole="button"
+                accessibilityLabel="Adicionar nova série"
               >
-                <Text style={styles.modalActionButtonText}>Adicionar Nova Série</Text>
-              </TouchableOpacity>
-
+                <Text style={[styles.modalActionButtonText, { color: '#fff' }]}>Adicionar Nova Série</Text>
+              </Pressable>
             </ScrollView>
 
-            <TouchableOpacity
+            <Pressable
               onPress={addExerciseDetailsToTemplate}
-              style={styles.modalActionButton}
+              style={({ pressed }) => [styles.modalActionButton, pressed && { opacity: 0.98 }]}
+              android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
+              accessibilityRole="button"
+              accessibilityLabel="Concluir e adicionar exercício"
             >
               <Text style={styles.modalActionButtonText}>Concluir e Adicionar Exercício</Text>
-            </TouchableOpacity>
+            </Pressable>
           </View>
         </View>
       </Modal>
 
-      {/* Novo Modal para Adicionar Séries */}
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={isAddSeriesModalVisible}
-        onRequestClose={() => setIsAddSeriesModalVisible(false)}
-      >
+      {/* Modal: Adicionar Série */}
+      <Modal animationType="fade" transparent visible={isAddSeriesModalVisible} onRequestClose={() => setIsAddSeriesModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Adicionar Série</Text>
-              <TouchableOpacity onPress={() => setIsAddSeriesModalVisible(false)}>
-                <Ionicons name="close-circle" size={30} color={Colors.danger} />
-              </TouchableOpacity>
+              <Pressable onPress={() => setIsAddSeriesModalVisible(false)}>
+                <Ionicons name="close-circle" size={28} color={Colors.danger} />
+              </Pressable>
             </View>
 
             <ScrollView>
-              <Text style={styles.inputLabel}>Tipo de Série:</Text>
-              {/* Botão de "buttonsplit" para o tipo de série */}
-              <TouchableOpacity
-                style={styles.seriesTypeDropdownButton}
-                onPress={() => setIsSeriesTypeDropdownVisible(!isSeriesTypeDropdownVisible)}
+              <Text style={styles.inputLabel}>Tipo de Série</Text>
+              <Pressable
+                style={({ pressed }) => [styles.seriesTypeDropdownButton, pressed && { opacity: 0.98 }]}
+                android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
+                onPress={() => setIsSeriesTypeDropdownVisible((v) => !v)}
               >
                 <Text style={styles.seriesTypeDropdownButtonText}>
                   {seriesTypes[selectedSeriesType]?.label || 'Selecionar Tipo de Série'}
                 </Text>
-                <Ionicons name={isSeriesTypeDropdownVisible ? "chevron-up-outline" : "chevron-down-outline"} size={20} color={Colors.primary} />
-              </TouchableOpacity>
+                <Ionicons
+                  name={isSeriesTypeDropdownVisible ? 'chevron-up-outline' : 'chevron-down-outline'}
+                  size={20}
+                  color={Colors.primary}
+                />
+              </Pressable>
 
-              {/* Lista de opções de tipo de série (oculta/visível) */}
               {isSeriesTypeDropdownVisible && (
                 <View style={styles.seriesTypeOptionsContainer}>
-                  {Object.keys(seriesTypes).map(typeKey => {
+                  {Object.keys(seriesTypes).map((typeKey) => {
                     const type = seriesTypes[typeKey];
                     return (
-                      <TouchableOpacity
+                      <Pressable
                         key={typeKey}
-                        style={styles.seriesTypeOptionButton}
+                        style={({ pressed }) => [styles.seriesTypeOptionButton, pressed && { opacity: 0.98 }]}
+                        android_ripple={{ color: 'rgba(0,0,0,0.04)' }}
                         onPress={() => {
                           setSelectedSeriesType(typeKey);
                           setCurrentSeriesFields({});
-                          setIsSeriesTypeDropdownVisible(false); // Fecha o dropdown após a seleção
+                          setIsSeriesTypeDropdownVisible(false);
                         }}
                       >
-                        <Ionicons
-                          name={type.icon}
-                          size={20}
-                          color={Colors.primary}
-                        />
-                        <Text style={styles.seriesTypeOptionButtonText}>
-                          {type.label}
-                        </Text>
-                      </TouchableOpacity>
+                        <Ionicons name={type.icon} size={20} color={Colors.primary} />
+                        <Text style={styles.seriesTypeOptionButtonText}>{type.label}</Text>
+                      </Pressable>
                     );
                   })}
                 </View>
               )}
-              
-              <Text style={styles.inputLabel}>Detalhes da Série:</Text>
-              {seriesTypes[selectedSeriesType]?.fields.map(field => (
+
+              <Text style={styles.inputLabel}>Detalhes da Série</Text>
+              {(seriesTypes[selectedSeriesType]?.fields || []).map((field) => (
                 <TextInput
                   key={field.key}
                   style={field.multiline ? [styles.input, styles.textArea] : styles.input}
                   placeholder={field.placeholder}
                   placeholderTextColor={Colors.textSecondary}
                   keyboardType={field.keyboardType || 'default'}
-                  value={currentSeriesFields[field.key] || ''}
-                  onChangeText={text => setCurrentSeriesFields(prev => ({ ...prev, [field.key]: text }))}
+                  value={String(currentSeriesFields[field.key] ?? '')}
+                  onChangeText={(text) => setCurrentSeriesFields((prev) => ({ ...prev, [field.key]: text }))}
                   multiline={field.multiline}
                 />
               ))}
             </ScrollView>
 
-            <TouchableOpacity
+            <Pressable
               onPress={adicionarNovaSerie}
-              style={styles.modalActionButton}
+              style={({ pressed }) => [styles.modalActionButton, pressed && { opacity: 0.98 }]}
+              android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
             >
               <Text style={styles.modalActionButtonText}>Adicionar Série</Text>
-            </TouchableOpacity>
+            </Pressable>
           </View>
         </View>
       </Modal>
 
-      {/* Novo Modal para Seleção de Categorias */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={isCategoryModalVisible}
-        onRequestClose={() => setIsCategoryModalVisible(false)}
-      >
+      {/* Modal: Seleção de Categoria */}
+      <Modal animationType="slide" transparent visible={isCategoryModalVisible} onRequestClose={() => setIsCategoryModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Selecionar Categoria</Text>
-              <TouchableOpacity onPress={() => setIsCategoryModalVisible(false)}>
-                <Ionicons name="close-circle" size={30} color={Colors.danger} />
-              </TouchableOpacity>
+              <Pressable onPress={() => setIsCategoryModalVisible(false)}>
+                <Ionicons name="close-circle" size={28} color={Colors.danger} />
+              </Pressable>
             </View>
+
             <ScrollView>
-              {categorias.map(cat => (
-                <TouchableOpacity
+              {categorias.map((cat) => (
+                <Pressable
                   key={cat}
-                  style={styles.categoryListItem}
+                  style={({ pressed }) => [styles.categoryListItem, pressed && { backgroundColor: 'rgba(0,0,0,0.02)' }]}
+                  android_ripple={{ color: 'rgba(0,0,0,0.04)' }}
                   onPress={() => {
                     setTemplateCategory(cat);
                     setIsCategoryModalVisible(false);
                   }}
                 >
                   <Text style={styles.categoryListItemText}>{cat}</Text>
-                  {templateCategory === cat && (
-                    <Ionicons name="checkmark-circle" size={24} color={Colors.success} />
-                  )}
-                </TouchableOpacity>
+                  {templateCategory === cat && <Ionicons name="checkmark-circle" size={22} color={Colors.success} />}
+                </Pressable>
               ))}
             </ScrollView>
           </View>
@@ -751,414 +913,235 @@ export default function CreateWorkoutTemplateScreen() {
   );
 }
 
+/* =================== Styles =================== */
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: Colors.background,
-  },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: Colors.textPrimary,
-  },
+
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.background },
+  loadingText: { marginTop: 10, fontSize: 16, color: Colors.textPrimary },
+
+  /* Header */
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: Colors.primary,
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
-    elevation: 8,
-  },
-  backButton: {
-    padding: 5,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: Colors.cardBackground,
-  },
-  userInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: Colors.secondary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: Colors.cardBackground,
-  },
-  avatarText: {
-    color: Colors.primary,
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 40,
-  },
-  screenTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: Colors.textPrimary,
-    marginBottom: 25,
-    textAlign: 'center',
-  },
-  inputLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.textPrimary,
-    marginBottom: 8,
-    marginTop: 10,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-    fontSize: 16,
-    color: Colors.textPrimary,
-    backgroundColor: Colors.cardBackground,
-    marginBottom: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  textArea: {
-    minHeight: 100,
-    textAlignVertical: 'top',
-  },
-  categorySelectButton: {
-    flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: Colors.cardBackground,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-    marginBottom: 15,
-  },
-  categorySelectButtonText: {
-    fontSize: 16,
-    color: Colors.textPrimary,
-  },
-  seriesTypeDropdownButton: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: Colors.cardBackground,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-    marginBottom: 5,
-  },
-  seriesTypeDropdownButtonText: {
-    fontSize: 16,
-    color: Colors.textPrimary,
-  },
-  seriesTypeOptionsContainer: {
-    backgroundColor: Colors.cardBackground,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 12,
-    marginBottom: 15,
-    padding: 10,
-  },
-  seriesTypeOptionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 5,
-    borderBottomWidth: 1,
-    borderBottomColor: '#EEEEEE',
-  },
-  seriesTypeOptionButtonText: {
-    marginLeft: 10,
-    fontSize: 16,
-    color: Colors.textPrimary,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 25,
-    marginBottom: 15,
-  },
-  sectionIcon: {
-    marginRight: 10,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: Colors.primary,
-  },
-  noExercisesContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 30,
-    backgroundColor: Colors.cardBackground,
-    borderRadius: 15,
-    marginVertical: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  noExercisesText: {
-    fontSize: 16,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    marginTop: 10,
-  },
-  selectedExerciseCard: {
-    backgroundColor: Colors.cardBackground,
-    borderRadius: 12,
-    padding: 15,
-    marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 4,
-    borderLeftWidth: 5,
-    borderLeftColor: Colors.secondary,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  selectedExerciseInfo: {
-    flex: 1,
-    marginRight: 10,
-  },
-  selectedExerciseName: {
-    fontSize: 17,
-    fontWeight: 'bold',
-    color: Colors.textPrimary,
-    marginBottom: 5,
-  },
-  seriesContainer: {
-    backgroundColor: Colors.background,
-    borderRadius: 8,
-    padding: 10,
-    marginTop: 8,
-  },
-  seriesCountText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: Colors.primary,
-  },
-  seriesDetailText: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    marginTop: 2,
-    flexShrink: 1,
-  },
-  seriesNoteText: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-    fontStyle: 'italic',
-    marginTop: 3,
-  },
-  removeExerciseButton: {
-    padding: 8,
-  },
-  addExerciseButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.secondary,
-    paddingVertical: 15,
-    borderRadius: 12,
-    marginTop: 20,
-    shadowColor: Colors.secondary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 6,
-  },
-  addExerciseButtonText: {
-    color: Colors.primary,
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginLeft: 10,
-  },
-  saveTemplateButton: {
-    backgroundColor: Colors.primary,
-    paddingVertical: 15,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 8,
-  },
-  saveTemplateButtonText: {
-    color: Colors.cardBackground,
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-  },
-  modalContent: {
-    backgroundColor: Colors.background,
-    borderRadius: 15,
-    padding: 20,
-    width: '90%',
-    maxHeight: '85%',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomLeftRadius: RADIUS,
+    borderBottomRightRadius: RADIUS,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.18,
     shadowRadius: 10,
-    elevation: 10,
+    elevation: 6,
   },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 15,
+  headerBack: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { color: Colors.onPrimary, fontSize: 18, fontWeight: '900' },
+  avatar: {
+    width: 40, height: 40, borderRadius: 12,
+    backgroundColor: Colors.secondary, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: Colors.cardBackground,
   },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: Colors.textPrimary,
+  avatarText: { color: Colors.onSecondary, fontSize: 18, fontWeight: '900' },
+
+  /* Conteúdo */
+  scrollContent: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 40 },
+  screenTitle: { fontSize: 22, fontWeight: '900', color: Colors.textPrimary, textAlign: 'center', marginBottom: 20 },
+
+  /* Inputs / Selects */
+  inputLabel: { fontSize: 13, fontWeight: '800', color: Colors.textSecondary, marginBottom: 6, marginTop: 8, letterSpacing: 0.3 },
+  input: {
+    borderWidth: 1, borderColor: Colors.divider, borderRadius: RADIUS,
+    paddingVertical: 12, paddingHorizontal: 14, fontSize: 16, color: Colors.textPrimary,
+    backgroundColor: Colors.cardBackground, marginBottom: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 2, elevation: 2,
   },
-  searchInput: {
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-    fontSize: 16,
-    color: Colors.textPrimary,
+  textArea: { minHeight: 100, textAlignVertical: 'top' },
+
+  categorySelectButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: Colors.cardBackground, borderWidth: 1, borderColor: Colors.divider,
+    borderRadius: RADIUS, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 12,
+  },
+  categorySelectButtonText: { fontSize: 16, color: Colors.textPrimary, fontWeight: '700' },
+
+  /* Secções */
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', marginTop: 18, marginBottom: 10 },
+  sectionIcon: { marginRight: 8 },
+  sectionTitle: { fontSize: 18, fontWeight: '900', color: Colors.primary },
+
+  /* Empty state */
+  emptyCard: {
+    backgroundColor: Colors.cardBackground, borderRadius: RADIUS, padding: 24,
+    alignItems: 'center', justifyContent: 'center', gap: 8,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3, elevation: 2,
+    borderWidth: 1, borderColor: Colors.divider,
+  },
+  noExercisesText: { fontSize: 15, color: Colors.textSecondary, textAlign: 'center', marginTop: 6 },
+
+  /* Exercício selecionado */
+  selectedExerciseCard: {
     backgroundColor: Colors.cardBackground,
+    borderRadius: RADIUS, padding: 14, marginBottom: GAP,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 3,
+    borderWidth: 1, borderColor: Colors.divider,
+    borderLeftWidth: 5, borderLeftColor: Colors.secondary,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+  },
+  selectedExerciseInfo: { flex: 1, marginRight: 10 },
+  selectedExerciseName: { fontSize: 16, fontWeight: '900', color: Colors.textPrimary, marginBottom: 4 },
+
+  seriesContainer: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+  },
+  seriesCountText: { fontSize: 14, fontWeight: '800', color: Colors.primary, letterSpacing: 0.2 },
+
+  // Linha com ícone + texto (evita ícone dentro de <Text>)
+  seriesDetailRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2, flexWrap: 'wrap' },
+  seriesDetailText: { fontSize: 14, color: Colors.textSecondary, flexShrink: 1 },
+
+  /* Botões de ação */
+  addExerciseButton: {
+    backgroundColor: Colors.secondary, flexDirection: 'row',
+    alignItems: 'center', justifyContent: 'center', gap: 8,
+    paddingVertical: 14, borderRadius: RADIUS, marginTop: 14,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 6, elevation: 2,
+    borderWidth: 1, borderColor: Colors.divider,
+  },
+  addExerciseButtonText: { color: Colors.onSecondary, fontSize: 16, fontWeight: '900' },
+  saveTemplateButton: {
+    backgroundColor: Colors.primary, paddingVertical: 14, borderRadius: RADIUS,
+    alignItems: 'center', marginTop: 20,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+  },
+  saveTemplateButtonText: { color: Colors.onPrimary, fontSize: 16, fontWeight: '900', letterSpacing: 0.3 },
+
+  /* Modal base */
+  modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
+  modalContent: {
+    backgroundColor: Colors.cardBackground, borderRadius: RADIUS, padding: 16, width: '92%', maxHeight: '85%',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 16, elevation: 10,
+    borderWidth: 1, borderColor: Colors.divider,
+  },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  modalTitle: { fontSize: 18, fontWeight: '900', color: Colors.textPrimary },
+
+  /* Pesquisa */
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    borderRadius: 16,
+    backgroundColor: Colors.cardBackground,
+    paddingHorizontal: 12,
+    height: 44,
     marginBottom: 10,
   },
-  filterCategoryContainer: {
+  searchInput: { flex: 1, fontSize: 16, color: Colors.textPrimary },
+
+  /* Filtros */
+  chipsContainer: { marginBottom: 16 },
+  chipsRow: { paddingHorizontal: 2, paddingVertical: 6 },
+  chip: {
     flexDirection: 'row',
-    marginBottom: 15,
-    flexWrap: 'wrap',
-  },
-  filterCategoryButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
+    alignItems: 'center',
+    height: 36,
+    paddingHorizontal: 12,
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: Colors.textSecondary,
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  filterCategoryButtonSelected: {
-    backgroundColor: Colors.info,
-    borderColor: Colors.info,
-  },
-  filterCategoryButtonText: {
-    color: Colors.textSecondary,
-    fontWeight: '600',
-  },
-  filterCategoryButtonTextSelected: {
-    color: Colors.cardBackground,
-  },
-  exerciseLibraryItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#EEEEEE',
-  },
-  exerciseLibraryItemText: {
-    fontSize: 16,
-    color: Colors.textPrimary,
-    fontWeight: 'bold',
-  },
-  exerciseLibraryCategoryText: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-    marginTop: 2,
-  },
-  noExercisesModalText: {
-    fontSize: 16,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    paddingVertical: 20,
-  },
-  exerciseNameInModal: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: Colors.primary,
-    textAlign: 'center',
-    marginBottom: 15,
-  },
-  modalActionButton: {
-    backgroundColor: Colors.secondary,
-    paddingVertical: 15,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  modalActionButtonText: {
-    color: Colors.primary,
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  selectedSeriesCard: {
+    borderColor: Colors.divider,
     backgroundColor: Colors.cardBackground,
-    borderRadius: 12,
-    padding: 15,
-    marginBottom: 10,
+  },
+  chipSelected: { backgroundColor: Colors.info, borderColor: Colors.info },
+  chipText: { marginLeft: 6, color: Colors.textSecondary, fontWeight: '700', letterSpacing: 0.2 },
+  chipTextSelected: { color: Colors.onPrimary, fontWeight: '900' },
+
+  /* Biblioteca GRID */
+  libGridRow: { justifyContent: 'space-between', paddingHorizontal: 2, marginBottom: 12 },
+  libCard: {
+    flex: 1,
+    minHeight: 130,
+    marginHorizontal: 4,
+    borderRadius: 14,
+    backgroundColor: Colors.cardBackground,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    padding: 12,
+    overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
     elevation: 2,
   },
-  selectedSeriesText: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: Colors.textPrimary,
+  libIconWrap: {
+    width: 32, height: 32, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.divider,
+    marginBottom: 8,
   },
-  categoryListItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  libName: { fontWeight: '900', color: Colors.textPrimary, fontSize: 14, lineHeight: 18 },
+  muscleChip: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999,
+    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.divider,
+    marginTop: 8,
+  },
+  muscleChipTxt: { color: Colors.textSecondary, fontWeight: '700', fontSize: 12 },
+  libNotes: { color: Colors.textSecondary, fontSize: 12, marginTop: 8 },
+  libPlusBadge: {
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#EEEEEE',
+    justifyContent: 'center',
+    backgroundColor: Colors.secondary,
+    borderWidth: 1,
+    borderColor: 'rgba(17,24,39,0.12)',
   },
-  categoryListItemText: {
-    fontSize: 16,
-    color: Colors.textPrimary,
+
+  /* Botões e listas dos outros modais */
+  modalActionButton: {
+    backgroundColor: Colors.secondary, paddingVertical: 14, borderRadius: RADIUS, alignItems: 'center', marginTop: 14,
+    borderWidth: 1, borderColor: Colors.divider,
   },
+  modalActionButtonText: { color: Colors.onSecondary, fontSize: 16, fontWeight: '900' },
+
+  seriesTypeDropdownButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: Colors.cardBackground, borderWidth: 1, borderColor: Colors.divider,
+    borderRadius: RADIUS, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 8,
+  },
+  seriesTypeDropdownButtonText: { fontSize: 16, color: Colors.textPrimary, fontWeight: '700' },
+  seriesTypeOptionsContainer: {
+    backgroundColor: Colors.cardBackground, borderWidth: 1, borderColor: Colors.divider,
+    borderRadius: RADIUS, marginBottom: 12, paddingVertical: 4,
+  },
+  seriesTypeOptionButton: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(17,24,39,0.06)',
+  },
+  seriesTypeOptionButtonText: { marginLeft: 10, fontSize: 16, color: Colors.textPrimary, fontWeight: '700' },
+
+  categoryListItem: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(17,24,39,0.06)',
+  },
+  categoryListItemText: { fontSize: 16, color: Colors.textPrimary, fontWeight: '800' },
+
+  noExercisesModalText: { fontSize: 15, color: Colors.textSecondary, textAlign: 'center', paddingVertical: 18 },
 });

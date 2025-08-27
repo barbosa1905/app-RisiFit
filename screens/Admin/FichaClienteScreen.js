@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+// screens/Admin/FichaClienteScreen.js
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,285 +7,441 @@ import {
   ActivityIndicator,
   ScrollView,
   SafeAreaView,
-  StatusBar,
-  Platform,
+  Alert,
+  TouchableOpacity,
+  Switch,
 } from 'react-native';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../services/firebaseConfig';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { Ionicons } from '@expo/vector-icons';
 
-// Paleta de Cores (Mantida)
-const Colors = {
-  primaryGold: '#D4AF37',
-  darkBrown: '#3E2723',
-  lightBrown: '#795548',
-  creamBackground: '#FDF7E4',
-  white: '#FFFFFF',
-  lightGray: '#ECEFF1',
-  mediumGray: '#B0BEC5',
-  darkGray: '#424242',
-  successGreen: '#4CAF50',
-  errorRed: '#F44336',
-  shadow: 'rgba(0,0,0,0.08)',
+import { db } from '../../services/firebaseConfig';
+import Colors from '../../constants/Colors';
+import AppHeader from '../../components/AppHeader';
+
+/* ---------------- helpers seguros ---------------- */
+const s = (v) => (typeof v === 'string' ? v : '');
+const b = (v, def = false) => (typeof v === 'boolean' ? v : def);
+
+/** Tenta transformar várias formas de data em Date */
+const asDate = (v) => {
+  if (!v) return null;
+  if (typeof v?.toDate === 'function') return v.toDate();
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  if (typeof v === 'number') {
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof v === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}/.test(v) || v.indexOf('T') >= 0) {
+      const d = new Date(v);
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(v);
+    if (m) {
+      const d = new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10));
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+  }
+  return null;
+};
+const fmtDate = (v) => {
+  const d = asDate(v);
+  return d ? d.toLocaleDateString('pt-PT') : '—';
 };
 
-export default function FichaClienteScreen({ route }) {
-  const { clienteId } = route.params; // clientename não é estritamente necessário aqui, simplificando
-  const [cliente, setCliente] = useState(null);
+export default function FichaClienteScreen() {
+  const navigation = useNavigation();
+  const route = useRoute();
+
+  // aceita nomes alternativos para evitar desencontros
+  const { clienteId, clientId, clientName, clientename } = route.params || {};
+  const id = clienteId || clientId || null;
+
   const [loading, setLoading] = useState(true);
+  const [cliente, setCliente] = useState(null);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    const loadClient = async () => {
-      try {
-        const docRef = doc(db, 'users', clienteId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setCliente(docSnap.data());
-        } else {
-          setCliente(null);
-        }
-      } catch (error) {
-        console.error('Failed to load client data:', error);
-      } finally {
-        setLoading(false);
+  const load = useCallback(async () => {
+    setError('');
+    if (!id) {
+      setCliente(null);
+      setLoading(false);
+      setError('ID do cliente não recebido.');
+      return;
+    }
+    try {
+      setLoading(true);
+      const snap = await getDoc(doc(db, 'users', id));
+      if (!snap.exists()) {
+        setCliente(null);
+        setError('Cliente não encontrado.');
+      } else {
+        setCliente({ id: snap.id, ...snap.data() });
       }
-    };
+    } catch (e) {
+      console.error('[FichaCliente] load error', e);
+      setError('Falha ao carregar dados do cliente.');
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
 
-    loadClient();
-  }, [clienteId]);
+  useEffect(() => { load(); }, [load]);
 
-  // Helper para formatar data
-  const formatDate = (data) => {
-    if (!data) return 'N/A'; // N/A para "Não Aplicável" ou "Não Informado"
-    if (data.seconds) { // Firestore Timestamp
-      return new Date(data.seconds * 1000).toLocaleDateString('pt-PT');
-    }
-    if (typeof data === 'string' && (data.includes('T') || data.includes('-'))) { // ISO string ou YYYY-MM-DD
-        const parsedDate = new Date(data);
-        if (!isNaN(parsedDate)) { // Check if date is valid
-            return parsedDate.toLocaleDateString('pt-PT');
-        }
-    }
-    if (data instanceof Date) { // JavaScript Date object
-        return data.toLocaleDateString('pt-PT');
-    }
-    return data; // Assume it's already in the desired string format
+  const nome =
+    s(cliente?.nome) || s(cliente?.name) || s(clientName) || s(clientename) || 'Cliente';
+
+  const email = s(cliente?.email);
+  const telefone = s(cliente?.telefoneCompleto) || s(cliente?.telefone);
+  const genero = s(cliente?.genero);
+  const grupo = s(cliente?.grupo);
+  const morada = s(cliente?.morada);
+  const dataNasc = fmtDate(cliente?.dataNascimento);
+  const criadoEm = fmtDate(cliente?.criadoEm);
+  const role = s(cliente?.role);
+  const enviarAcesso = b(cliente?.enviarAcesso);
+  const bloqueado = b(cliente?.bloqueado);
+  const notas = s(cliente?.observacoes) || s(cliente?.notas);
+
+  // novo estado: ativo/inativo (default ativo)
+  const ativo = b(cliente?.ativo, true);
+  const statusLabel = ativo ? 'Ativo' : 'Inativo';
+
+  const title = useMemo(() => `Ficha de ${nome}`.trim(), [nome]);
+
+  const goToCreateChat = () => {
+    navigation.navigate('CreateChat', {
+      initialClientId: id,
+      initialClientName: nome,
+    });
+  };
+  const goToAgendarTreino = () => {
+    navigation.navigate('CriarTreinos', { clientId: id, clientName: nome });
+  };
+  const goToCriarAvaliacao = () => {
+    navigation.navigate('CriarAvaliacao', { clientId: id, clientName: nome });
   };
 
-  // Helper para renderizar booleans com ícones compactos
-  const renderBooleanIcon = (value) => {
-    if (value === true || value === 'Sim') {
-      return <Ionicons name="checkmark-circle" size={18} color={Colors.successGreen} />; // Ícone menor
-    }
-    if (value === false || value === 'Não') {
-      return <Ionicons name="close-circle" size={18} color={Colors.errorRed} />; // Ícone menor
-    }
-    return <Text style={styles.valueTextNA}>N/A</Text>; // Texto menor
+  const confirmToggleAtivo = (novoEstado) => {
+    Alert.alert(
+      novoEstado ? 'Reativar cliente?' : 'Marcar cliente como inativo?',
+      novoEstado
+        ? 'O cliente voltará a aparecer nas listas de agendamento e seleção.'
+        : 'O cliente deixará de aparecer nas listas de agendamento/seleção.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: novoEstado ? 'Reativar' : 'Marcar Inativo', style: 'destructive', onPress: () => toggleAtivo(novoEstado) },
+      ],
+    );
   };
 
-  // Componente de item de ficha mais compacto
-  const FichaItem = ({ iconName, label, value, isBoolean = false }) => (
-    <View style={styles.cardItem}>
-      <View style={styles.itemContent}>
-        <Ionicons name={iconName} size={20} color={Colors.primaryGold} style={styles.itemIcon} /> 
-        <Text style={styles.itemLabel}>{label}:</Text> 
-        {isBoolean ? (
-          <View style={styles.itemValueBooleanContainer}>
-            {renderBooleanIcon(value)}
-          </View>
-        ) : (
-          <Text style={styles.itemValueText}>{value || 'N/A'}</Text>
-        )}
-      </View>
-    </View>
-  );
-
+  const toggleAtivo = async (novoEstado) => {
+    if (!id) return;
+    try {
+      const payload = {
+        ativo: novoEstado,
+        status: novoEstado ? 'active' : 'inactive',
+        updatedAt: serverTimestamp(),
+      };
+      await setDoc(doc(db, 'users', id), payload, { merge: true });
+      setCliente((c) => ({ ...(c || {}), ...payload }));
+    } catch (e) {
+      console.error('[FichaCliente] toggle ativo', e);
+      Alert.alert('Erro', 'Não foi possível atualizar o estado do cliente.');
+    }
+  };
 
   if (loading) {
     return (
-      <View style={styles.centeredContainer}>
-        <ActivityIndicator size="large" color={Colors.primaryGold} />
-        <Text style={styles.loadingText}>A carregar ficha...</Text>
-      </View>
+      <SafeAreaView style={styles.safe}>
+        <AppHeader title="Ficha do Cliente" showBackButton />
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+          <Text style={styles.muted}>A carregar…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (error) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <AppHeader title="Ficha do Cliente" showBackButton />
+        <View style={styles.center}>
+          <Text style={styles.error}>{error}</Text>
+          <TouchableOpacity onPress={load} activeOpacity={0.85} style={styles.retryBtn}>
+            <Ionicons name="refresh" size={18} color={Colors.onPrimary} />
+            <Text style={styles.retryText}>Tentar novamente</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
     );
   }
 
   if (!cliente) {
     return (
-      <View style={styles.centeredContainer}>
-        <Ionicons name="alert-circle-outline" size={40} color={Colors.errorRed} />
-        <Text style={styles.errorText}>Cliente não encontrado.</Text>
-      </View>
+      <SafeAreaView style={styles.safe}>
+        <AppHeader title="Ficha do Cliente" showBackButton />
+        <View style={styles.center}><Text style={styles.muted}>Sem dados para apresentar.</Text></View>
+      </SafeAreaView>
     );
   }
 
-  const clientInitial = cliente.name ? cliente.name.charAt(0).toUpperCase() : '?';
-
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.creamBackground} />
-      <ScrollView contentContainerStyle={styles.scrollViewContent}>
+    <SafeAreaView style={styles.safe}>
+      <AppHeader title={title} showBackButton />
 
-        <View style={styles.clientHeader}>
-          <View style={styles.clientAvatar}>
-            <Text style={styles.clientAvatarText}>{clientInitial}</Text>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Cabeçalho / nome */}
+        <View style={styles.headerCard}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{nome.charAt(0).toUpperCase()}</Text>
           </View>
-          <Text style={styles.clientNameTitle}>{cliente.name || 'Cliente'}</Text>
-          <Text style={styles.clientEmailSubtitle}>{cliente.email || 'N/A'}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.name} numberOfLines={1}>{nome}</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+              {!!grupo && <Text style={styles.chip}>{grupo}</Text>}
+              <Text style={[styles.chip, { backgroundColor: ativo ? '#E8F5E9' : '#FFF3E0', borderColor: ativo ? '#A5D6A7' : '#FFCC80', color: ativo ? '#2E7D32' : '#E67E22' }]}>
+                {statusLabel}
+              </Text>
+            </View>
+          </View>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Dados Pessoais</Text>
-          <FichaItem iconName="person-outline" label="Nome" value={cliente.name} />
-          <FichaItem iconName="call-outline" label="Telefone" value={cliente.telefoneCompleto} />
-          <FichaItem iconName="calendar-outline" label="Nascimento" value={formatDate(cliente.dataNascimento)} />
-          <FichaItem iconName="transgender-outline" label="Gênero" value={cliente.genero} />
-          <FichaItem iconName="people-outline" label="Grupo" value={cliente.grupo} />
-          <FichaItem iconName="time-outline" label="Criado Em" value={formatDate(cliente.criadoEm)} />
-        </View>
+        {/* Dados principais */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Dados do Cliente</Text>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Configurações</Text>
-          <FichaItem iconName="mail-outline" label="Enviar Acesso" value={cliente.enviarAcesso} isBoolean />
-          <FichaItem iconName="document-text-outline" label="Enviar Anamnese" value={cliente.enviarAnamnese} isBoolean />
+          <InfoRow icon="mail-outline" label="Email" value={email} />
+          <InfoRow icon="call-outline" label="Telefone" value={telefone} />
+          <InfoRow icon="male-female-outline" label="Género" value={genero} />
+          <InfoRow icon="calendar-outline" label="Nascimento" value={dataNasc} />
+          <InfoRow icon="calendar-number-outline" label="Criado em" value={criadoEm} />
+          <InfoRow icon="home-outline" label="Morada" value={morada} />
+          <InfoRow icon="id-card-outline" label="Papel" value={role || 'user'} />
 
-          {cliente.enviarAnamnese === 'Sim' && cliente.tipoAnamneseId && (
-            <FichaItem iconName="reader-outline" label="Tipo Anamnese" value={cliente.tipoAnamneseId} />
+          <BooleanRow icon="send-outline" label="Enviar Acesso" value={enviarAcesso} />
+          <BooleanRow icon="close-circle-outline" label="Bloqueado" value={bloqueado} />
+
+          {/* Estado: Ativo/Inativo */}
+          <View style={[styles.row, { alignItems: 'center' }]}>
+            <Ionicons name="power-outline" size={18} color={Colors.textSecondary} style={styles.rowIcon} />
+            <Text style={styles.rowLabel}>Estado do Cliente</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={[styles.rowValue, { fontWeight: '800', color: ativo ? '#2E7D32' : '#E67E22' }]} numberOfLines={1}>
+                {statusLabel}
+              </Text>
+              <Switch
+                value={ativo}
+                onValueChange={(v) => confirmToggleAtivo(v)}
+                thumbColor={ativo ? Colors.primary : '#bbb'}
+                trackColor={{ true: Colors.primary + '66', false: '#d9d9d9' }}
+              />
+            </View>
+          </View>
+
+          {!!notas && (
+            <View style={styles.noteBox}>
+              <Ionicons name="document-text-outline" size={18} color={Colors.textSecondary} style={{ marginRight: 8 }} />
+              <Text style={styles.noteText}>{notas}</Text>
+            </View>
           )}
         </View>
 
+        {/* Ações rápidas (responsivas, sem texto a sair do botão) */}
+        <View style={styles.actionsWrap}>
+          <ActionBtn
+            icon="chatbubbles-outline"
+            label="Abrir Chat"
+            onPress={goToCreateChat}
+          />
+          <ActionBtn
+            icon="barbell-outline"
+            label="Agendar Treino"
+            onPress={goToAgendarTreino}
+          />
+          <ActionBtn
+            icon={ativo ? 'pause-circle-outline' : 'play-circle-outline'}
+            label={ativo ? 'Marcar Inativo' : 'Reativar Cliente'}
+            onPress={() => confirmToggleAtivo(!ativo)}
+            variant="secondary"
+          />
+          <ActionBtn
+            icon="clipboard-outline"
+            label="Criar Avaliação"
+            onPress={goToCriarAvaliacao}
+          />
+        </View>
+
+        <Text style={styles.helperNote}>
+          Nota: clientes inativos não devem aparecer nas listas/agenda. Nas queries usa <Text style={{ fontWeight: '800' }}>where('ativo','==', true)</Text>.
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+/* --------- sub-componentes --------- */
+function InfoRow({ icon, label, value }) {
+  const display = value ? String(value) : '—';
+  return (
+    <View style={styles.row}>
+      <Ionicons name={icon} size={18} color={Colors.textSecondary} style={styles.rowIcon} />
+      <Text style={styles.rowLabel} numberOfLines={1}>{label}</Text>
+      <Text style={styles.rowValue} numberOfLines={2}>{display}</Text>
+    </View>
+  );
+}
+function BooleanRow({ icon, label, value }) {
+  return (
+    <View style={styles.row}>
+      <Ionicons name={icon} size={18} color={Colors.textSecondary} style={styles.rowIcon} />
+      <Text style={styles.rowLabel} numberOfLines={1}>{label}</Text>
+      <View style={styles.boolPill}>
+        <View style={[styles.boolDot, { backgroundColor: value ? '#2E7D32' : '#C62828' }]} />
+        <Text style={[styles.boolText, { color: value ? '#2E7D32' : '#C62828' }]}>
+          {value ? 'Sim' : 'Não'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+function ActionBtn({ icon, label, onPress, variant = 'primary' }) {
+  const isPrimary = variant === 'primary';
+  return (
+    <TouchableOpacity
+      style={[
+        styles.actionBtn,
+        isPrimary ? styles.actionPrimary : styles.actionSecondary,
+      ]}
+      onPress={onPress}
+      activeOpacity={0.9}
+    >
+      <Ionicons name={icon} size={18} color={isPrimary ? Colors.onPrimary : Colors.primary} />
+      <Text
+        style={[styles.actionText, { color: isPrimary ? Colors.onPrimary : Colors.primary }]}
+        numberOfLines={1}
+        ellipsizeMode="tail"
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+/* ---------------- styles ---------------- */
+const AVATAR = 64;
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: Colors.creamBackground,
-  },
-  scrollViewContent: {
-    padding: 15, // Reduzido o padding geral
-    backgroundColor: Colors.creamBackground,
-    flexGrow: 1,
-  },
-  centeredContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: Colors.creamBackground,
-  },
-  loadingText: {
-    marginTop: 10, // Espaçamento menor
-    fontSize: 16, // Fonte menor
-    color: Colors.darkBrown,
-    fontWeight: '500',
-  },
-  errorText: {
-    fontSize: 16, // Fonte menor
-    color: Colors.errorRed,
-    marginTop: 10, // Espaçamento menor
-    textAlign: 'center',
-  },
-  valueTextNA: {
-    fontSize: 14, // Fonte menor para N/A
-    color: Colors.mediumGray,
-  },
+  safe: { flex: 1, backgroundColor: Colors.background },
 
-  // --- Client Header Section (mais compacto) ---
-  clientHeader: {
-    alignItems: 'center',
-    marginBottom: 25, // Espaçamento menor
-    paddingBottom: 15, // Espaçamento menor
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.lightGray,
-  },
-  clientAvatar: {
-    width: 80, // Avatar menor
-    height: 80, // Avatar menor
-    borderRadius: 40,
-    backgroundColor: Colors.primaryGold,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 10, // Espaçamento menor
-    borderWidth: 2, // Borda mais fina
-    borderColor: Colors.darkBrown,
-    ...Platform.select({
-      ios: {
-        shadowColor: Colors.shadow,
-        shadowOffset: { width: 0, height: 3 }, // Sombra mais sutil
-        shadowOpacity: 0.2,
-        shadowRadius: 6,
-      },
-      android: {
-        elevation: 6, // Elevação menor
-      },
-    }),
-  },
-  clientAvatarText: {
-    color: Colors.white,
-    fontSize: 38, // Fonte do avatar menor
-    fontWeight: 'bold',
-  },
-  clientNameTitle: {
-    fontSize: 24, // Título menor
-    fontWeight: '700',
-    color: Colors.darkBrown,
-    marginBottom: 3, // Espaçamento menor
-    textAlign: 'center',
-  },
-  clientEmailSubtitle: {
-    fontSize: 14, // Subtítulo menor
-    color: Colors.mediumGray,
-    textAlign: 'center',
-  },
+  content: { padding: 16, paddingBottom: 28 },
 
-  // --- Sections (mais compactas) ---
-  section: {
-    marginBottom: 25, // Espaçamento entre seções menor
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  muted: { color: Colors.textSecondary },
+  error: { color: Colors.error, fontWeight: '700', textAlign: 'center', marginBottom: 12 },
+  retryBtn: {
+    flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.primary, height: 44, paddingHorizontal: 16, borderRadius: 12,
   },
-  sectionTitle: {
-    fontSize: 18, // Título de seção menor
-    fontWeight: '600',
-    color: Colors.darkBrown,
-    marginBottom: 15, // Espaçamento menor
-    textAlign: 'center',
-  },
+  retryText: { color: Colors.onPrimary, fontWeight: '800' },
 
-  // --- Card Item Styles (mais compactos) ---
-  cardItem: { // Renomeado de 'card' para 'cardItem' para clareza
-    backgroundColor: Colors.white,
-    borderRadius: 10, // Arredondamento menor
-    padding: 12, // Padding menor
-    marginBottom: 10, // Margem menor entre itens
-    shadowColor: Colors.shadow,
-    shadowOpacity: 0.08, // Sombra mais sutil
-    shadowRadius: 5, // Sombra mais sutil
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 4, // Elevação menor
-    borderWidth: 1,
-    borderColor: Colors.lightGray,
-  },
-  itemContent: {
+  headerCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    // Não há marginBottom aqui, pois o padding do card já lida com o espaçamento
+    backgroundColor: Colors.cardBackground,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    padding: 12,
+    marginBottom: 12,
   },
-  itemIcon: {
-    marginRight: 8, // Espaçamento menor
+  avatar: {
+    width: AVATAR, height: AVATAR, borderRadius: AVATAR / 2,
+    backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderColor: Colors.accent || Colors.onPrimary,
+    marginRight: 12,
   },
-  itemLabel: {
-    fontSize: 15, // Rótulo menor
-    fontWeight: '600',
-    color: Colors.darkBrown,
-    flex: 1, // Permite que o rótulo ocupe o espaço e o valor fique ao lado
+  avatarText: { color: Colors.onPrimary, fontWeight: '800', fontSize: 28 },
+  name: { color: Colors.textPrimary, fontWeight: '800', fontSize: 20 },
+  chip: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: Colors.surface,
+    borderWidth: 1, borderColor: Colors.divider,
+    color: Colors.textSecondary,
+    fontWeight: '700',
   },
-  itemValueText: {
-    fontSize: 15, // Valor menor, alinhado com o rótulo
-    color: Colors.darkGray,
-    // Removido paddingLeft, agora o alinhamento é feito pelo flexbox
+
+  card: {
+    backgroundColor: Colors.cardBackground,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    padding: 14,
+    marginBottom: 14,
   },
-  itemValueBooleanContainer: {
-    // Removido paddingLeft
+  cardTitle: { color: Colors.textPrimary, fontWeight: '800', fontSize: 16, marginBottom: 10 },
+
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 7 },
+  rowIcon: { marginRight: 8 },
+  rowLabel: { color: Colors.textSecondary, width: 148, fontSize: 13, marginRight: 8 },
+  rowValue: { color: Colors.textPrimary, fontWeight: '700', flex: 1 },
+
+  boolPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderWidth: 1, borderColor: Colors.divider, backgroundColor: Colors.surface,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+  },
+  boolDot: { width: 8, height: 8, borderRadius: 4 },
+  boolText: { fontWeight: '800' },
+
+  noteBox: {
+    marginTop: 8,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  noteText: { flex: 1, color: Colors.textSecondary },
+
+  /* Botões responsivos (não rebentam texto) */
+  actionsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 4,
+  },
+  actionBtn: {
+    flexBasis: '48%', // 2 por linha
+    height: 46,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionPrimary: {
+    backgroundColor: Colors.primary,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  actionSecondary: {
+    backgroundColor: Colors.cardBackground,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  actionText: { fontWeight: '800' },
+
+  helperNote: {
+    marginTop: 10,
+    color: Colors.textSecondary,
+    fontSize: 12,
+    textAlign: 'center',
   },
 });

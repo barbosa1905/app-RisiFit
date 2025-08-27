@@ -1,0 +1,68 @@
+{
+  "home": {
+    "title": "Início",
+    "preparing": "A preparar o teu espaço…",
+    "plan": { "undefined": "Plano não definido" },
+    "cta": { "calendar": "Calendário", "history": "Histórico" },
+    "freqTitle": "Frequência de Treinos",
+    "legend": {
+      "completed": "Treino Concluído",
+      "missed": "Treino Perdido",
+      "todayPending": "Treino Hoje (Pendente)",
+      "future": "Treino Futuro",
+      "noTraining": "Sem Treino"
+    },
+    "actions": {
+      "trainings": "Treinos",
+      "progress": "Progresso",
+      "history": "Histórico",
+      "chat": "Chat Online",
+      "questionnaires": "Questionários",
+      "groupClasses": "Aulas de Grupo"
+    },
+    "calendar": { "title": "Calendário de Treinos" },
+    "motivation": {
+      "1": "Acredite em si mesmo e tudo será possível. ✨",
+      "2": "O único treino ruim é aquele que não aconteceu. 🏋️‍♀️",
+      "3": "A dor que sentes hoje é a força que terás amanhã. 💪",
+      "4": "Supere-se a cada dia. O limite é você! 🚀",
+      "5": "Conquiste os objetivos, um treino de cada vez. 🎯",
+      "6": "Mantenha o foco, a força e a fé. 🙏",
+      "7": "Seja mais forte que a sua melhor desculpa. 🔥",
+      "8": "Transforme o suor em sucesso. 🏆",
+      "9": "Sua saúde é seu maior bem. Cuide dela! ❤️",
+      "10": "Não pare até se orgulhar. ✅"
+    }
+  },
+  "greeting": {
+    "morning": "Bom dia",
+    "afternoon": "Boa tarde",
+    "evening": "Boa noite"
+  },
+  "common": {
+    "user": "Utilizador",
+    "hello": "Olá",
+    "close": "Fechar"
+  },
+
+
+
+  "brand": "RISIFIT",
+  "hello": "Olá",
+  "settings": {
+    "title": "Definições",
+    "language": "Idioma da aplicação",
+    "portuguese": "Português",
+    "english": "Inglês",
+    "units": "Unidades",
+    "metric": "Métrico (kg, cm)",
+    "imperial": "Imperial (lb, in)"
+  },
+  "profile": {
+    "title": "Perfil",
+    "editProfile": "Editar perfil",
+    "changePassword": "Mudar palavra-passe",
+    "goals": "Metas"
+  }
+
+}

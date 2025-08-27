@@ -1,539 +1,447 @@
-
-import React, { useState, useCallback, useEffect } from 'react';
+// screens/LoginScreen.js
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import {
   View,
+  Text,
   TextInput,
   TouchableOpacity,
-  Text,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  Modal,
-  Image,
-  ScrollView,
   StatusBar,
-  Dimensions,
-  Keyboard,
-  ImageBackground, // Importar ImageBackground
+  Platform,
+  KeyboardAvoidingView,
+  ScrollView,
+  ActivityIndicator,
+  Animated,
+  Easing,
+  Image,
 } from 'react-native';
-import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
-import { auth, db } from '../services/firebaseConfig';
-import { doc, getDoc,updateDoc } from 'firebase/firestore';
-import { Ionicons } from '@expo/vector-icons';
-import { useUser } from '../contexts/UserContext';
-// IMPORTAR A NOVA TELA DE REDEFINIÇÃO DE SENHA
-import PasswordResetRequiredScreen from './PasswordResetRequiredScreen'; // <<< ADICIONE ESTA LINHA
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons, Feather } from '@expo/vector-icons';
+import { getAuth, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../services/firebaseConfig';
+
+const PALETTE = {
+  bgTop: '#121A22',
+  bgBottom: '#0D141A',
+  gold: '#FFB800',
+  gold2: '#FFCC48',
+  card: 'rgba(255,255,255,0.06)',
+  cardBorder: 'rgba(255,255,255,0.12)',
+  textPrimary: '#EAF2F7',
+  textSecondary: 'rgba(234,242,247,0.7)',
+  inputBg: 'rgba(255,255,255,0.06)',
+  inputBorder: 'rgba(255,255,255,0.12)',
+  success: '#28A745',
+  error: '#DC3545',
+};
 
 export default function LoginScreen({ navigation }) {
-  const { setUser, setRole } = useUser();
-
+  const auth = useMemo(() => getAuth(), []);
+  const [role, setRole] = useState('user'); // 'user' | 'admin'
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [secureText, setSecureText] = useState(true);
-  const [errorMsg, setErrorMsg] = useState('');
-  const [showReset, setShowReset] = useState(false);
-  const [emailReset, setEmailReset] = useState('');
-  const [msgReset, setMsgReset] = useState('');
-  const [selectedLoginRole, setSelectedLoginRole] = useState(null);
-  const [showLoginForm, setShowLoginForm] = useState(false);
+  const [pwd, setPwd] = useState('');
+  const [secure, setSecure] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
 
-  const clearErrors = () => setErrorMsg('');
+  // Animações
+  const cardOpacity = useRef(new Animated.Value(0)).current;
+  const cardY = useRef(new Animated.Value(20)).current;
+  const headerOpacity = useRef(new Animated.Value(0)).current;
+  const headerY = useRef(new Animated.Value(12)).current;
 
   useEffect(() => {
-    const keyboardDidShowListener = Keyboard.addListener(
-      'keyboardDidShow',
-      () => {
-        // Lógica se precisar reagir ao teclado (ex: esconder elementos)
-      }
-    );
-    const keyboardDidHideListener = Keyboard.addListener(
-      'keyboardDidHide',
-      () => {
-        // Lógica se precisar reagir ao teclado
-      }
-    );
+    Animated.stagger(120, [
+      Animated.timing(headerOpacity, {
+        toValue: 1,
+        duration: 500,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.parallel([
+        Animated.timing(cardOpacity, {
+          toValue: 1,
+          duration: 500,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(cardY, {
+          toValue: 0,
+          duration: 500,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+  }, [cardOpacity, cardY, headerOpacity, headerY]);
 
-    return () => {
-      keyboardDidHideListener.remove();
-      keyboardDidShowListener.remove();
-    };
-  }, []);
-
-  const handleLogin = useCallback(async () => {
-  const trimmedEmail = email.trim();
-  const trimmedPassword = password.trim();
-
-  if (!trimmedEmail || !trimmedPassword) {
-    setErrorMsg('Preencha o email e a senha.');
-    return;
-  }
-
-  if (!selectedLoginRole) {
-    setErrorMsg('Erro: Tipo de utilizador não selecionado. Por favor, reinicie.');
-    return;
-  }
-
-  try {
-    const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPassword);
-    const user = userCredential.user; // O usuário autenticado
-
-    const userDocRef = doc(db, 'users', user.uid);
-    const userDocSnap = await getDoc(userDocRef);
-
-    if (!userDocSnap.exists()) {
-      setErrorMsg('Dados do utilizador não encontrados no Firebase.');
-      return;
-    }
-
-    const userData = userDocSnap.data();
-    const firebaseRole = userData.role;
-
-    // ======================================================================
-    // LÓGICA DE VERIFICAÇÃO passwordResetRequired - REDIRECIONAR PARA TELA NA APP
-    // ======================================================================
-    if (userData.PasswordResetRequiredScreen) { // Use o nome exato da sua propriedade
-      // Se a flag estiver true, navega para a tela de redefinição de senha DENTRO DA APP
-      navigation.replace('PasswordResetRequiredScreen', { userId: user.uid, email: user.email });
-      return; // Impede o login normal e a navegação para AdminTabs/UserTabs
-    }
-    // ======================================================================
-    // FIM DA LÓGICA DE VERIFICAÇÃO E TRATAMENTO DA passwordResetRequired
-    // ======================================================================
-
-    // Se a flag PasswordResetRequiredScreen não for true, o login é normal.
-    // Prossiga com a verificação de papel e navegação.
-    let expectedSelectedRoleType = null;
-    if (firebaseRole === 'user') {
-      expectedSelectedRoleType = 'aluno';
-    } else if (firebaseRole === 'admin') {
-      expectedSelectedRoleType = 'personalTrainer';
-    } else {
-      setErrorMsg('Tipo de utilizador desconhecido no Firebase. Contacte o suporte.');
-      return;
-    }
-
-    if (selectedLoginRole !== expectedSelectedRoleType) {
-      setErrorMsg(`A sua conta é de ${expectedSelectedRoleType === 'aluno' ? 'Aluno' : 'Personal Trainer'}. Por favor, selecione o tipo correto.`);
-      return;
-    }
-
-    setUser(user);
-    setRole(firebaseRole);
-    setErrorMsg('');
-
-    if (firebaseRole === 'admin') {
-      navigation.replace('AdminTabs', { user });
-    } else if (firebaseRole === 'user') {
-      navigation.replace('UserTabs', { user });
-    } else {
-      setErrorMsg('Erro de navegação: Papel do utilizador não reconhecido.');
-    }
-  } catch (error) {
-    handleAuthError(error);
-  }
-}, [email, password, navigation, setRole, setUser, selectedLoginRole]);
-
-   const handleAuthError = (error) => {
-    switch (error.code) {
-      case 'auth/user-not-found':
-        setErrorMsg('Utilizador não encontrado.');
-        break;
-      case 'auth/wrong-password':
-        setErrorMsg('Senha incorreta.');
-        break;
-      case 'auth/invalid-email':
-        setErrorMsg('Email inválido.');
-        break;
-      case 'auth/too-many-requests':
-        setErrorMsg('Muitas tentativas. Tente novamente mais tarde.');
-        break;
-      default:
-        setErrorMsg('Erro ao fazer login. Tente novamente.');
-        console.error('Erro de autenticação:', error);
-    }
+  const onSwitchRole = (nextRole) => {
+    if (role === nextRole) return;
+    setRole(nextRole);
+    setErr(null); // não mostrar mensagens “por baixo”
   };
 
-  const handlePasswordReset = useCallback(async () => {
+  const onLogin = async () => {
+    if (!email.trim() || !pwd.trim()) {
+      setErr('Preenche email e palavra-passe.');
+      return;
+    }
+    setErr(null);
+    setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, emailReset.trim());
-      setMsgReset('📩 Email de recuperação enviado!');
-    } catch (err) {
-      console.error('Erro ao enviar email de recuperação:', err.code);
-      setMsgReset('⚠️ Verifica o email inserido.');
+      const cred = await signInWithEmailAndPassword(auth, email.trim(), pwd.trim());
+      const uid = cred.user.uid;
+
+      // Busca papel guardado no Firestore
+      const snap = await getDoc(doc(db, 'users', uid));
+      const userData = snap.exists() ? snap.data() : null;
+      const papel = (userData?.role || 'user').toLowerCase();
+
+      // Validação de papel (sem popups extra — apenas erro no card)
+      const required = role === 'admin' ? 'admin' : 'user';
+      if (papel !== required) {
+        await signOut(auth);
+        setErr(
+          required === 'user'
+            ? 'Esta conta é de Personal Trainer. Alterna para "PT/Admin".'
+            : 'Esta conta é de Utilizador. Alterna para "Utilizador".'
+        );
+        return;
+      }
+
+      if (papel === 'admin') navigation.replace('AdminTabs');
+      else navigation.replace('UserTabs');
+    } catch (e) {
+      setErr(
+        e?.code === 'auth/wrong-password'
+          ? 'Palavra-passe incorreta.'
+          : e?.code === 'auth/user-not-found'
+          ? 'Utilizador não encontrado.'
+          : 'Não foi possível iniciar sessão.'
+      );
+    } finally {
+      setLoading(false);
     }
-  }, [emailReset]);
-
-  const handleRoleSelect = (role) => {
-    setSelectedLoginRole(role);
-    setShowLoginForm(true);
-    clearErrors();
-  };
-
-  const handleBackToRoleSelection = () => {
-    setShowLoginForm(false);
-    setSelectedLoginRole(null);
-    setEmail('');
-    setPassword('');
-    setErrorMsg('');
   };
 
   return (
-    // Envolve tudo com ImageBackground
-    <ImageBackground
-      source={require('../assets/fundo.png')} // Caminho para a tua imagem de fundo
-      style={styles.backgroundImage} // Estilo para a imagem de fundo
-      resizeMode="cover" // Ajusta como a imagem preenche o espaço (cover, contain, stretch)
-    >
+    <View style={styles.root}>
+      <View style={styles.statusBackdrop} />
+      <StatusBar translucent barStyle="light-content" backgroundColor="transparent" />
+      <LinearGradient colors={[PALETTE.bgTop, PALETTE.bgBottom]} style={StyleSheet.absoluteFill} />
+
+      {/* Shapes decorativos */}
+      <View style={[styles.shape, { top: 160, right: -100, opacity: 0.25 }]} />
+      <View style={[styles.shape, { bottom: -220, left: -160, opacity: 0.18 }]} />
+
       <KeyboardAvoidingView
-        style={styles.keyboardAvoidingContainer} // Um novo estilo para o KAV
-        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : StatusBar.currentHeight || 0}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
       >
         <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollViewContent}
-          bounces={false}
+          contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
+          bounces={false}
         >
-          <Image
-            source={require('../assets/logo.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-
-          <Text style={styles.title}>Bem-vindo ao RisiFit</Text>
-
-          {!showLoginForm ? (
-            <View style={styles.roleSelectionScreen}>
-              <Text style={styles.roleSelectionPrompt}>Quem és tu?</Text>
-
-              <TouchableOpacity
-                style={styles.roleButton}
-                onPress={() => handleRoleSelect('aluno')}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="person-outline" size={22} color={styles.roleButtonIcon.color} style={styles.roleButtonIcon} />
-                <Text style={styles.roleButtonText}>Sou Aluno</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.roleButton}
-                onPress={() => handleRoleSelect('personalTrainer')}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="fitness-outline" size={22} color={styles.roleButtonIcon.color} style={styles.roleButtonIcon} />
-                <Text style={styles.roleButtonText}>Sou Personal Trainer</Text>
-              </TouchableOpacity>
+          {/* Header/brand */}
+          <Animated.View
+            style={[
+              styles.brandRow,
+              {
+                opacity: headerOpacity,
+                transform: [{ translateY: headerY }],
+              },
+            ]}
+          >
+            <View style={styles.brandIcon}>
+              {/* Troca o ícone pelo teu LOGO */}
+              <Image
+                source={require('../assets/logo.png')}
+                style={{ width: 44, height: 44, borderRadius: 12 }}
+                resizeMode="contain"
+              />
             </View>
-          ) : (
-            <View style={styles.loginFormContainer}>
-              <Text style={styles.continueAsText}>
-                Aceder como <Text style={styles.continueAsRoleText}>{selectedLoginRole === 'aluno' ? 'Aluno' : 'Personal Trainer'}</Text>
+
+            <View style={{ flex: 1 }}>
+              <Text style={styles.brandTitle}>RisiFit</Text>
+              <Text style={styles.brandTag} numberOfLines={1} ellipsizeMode="tail">
+                Crescimento · Disciplina · Sucesso
               </Text>
+            </View>
 
+            {/* Role switch (sem mensagens/tooltip) */}
+            <View style={styles.roleSwitch}>
+              <TouchableOpacity
+                onPress={() => onSwitchRole('user')}
+                style={[styles.rolePill, role === 'user' && styles.rolePillActive]}
+              >
+                <Text style={[styles.roleText, role === 'user' && styles.roleTextActive]}>
+                  Utilizador
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => onSwitchRole('admin')}
+                style={[styles.rolePill, role === 'admin' && styles.rolePillActive]}
+              >
+                <Text style={[styles.roleText, role === 'admin' && styles.roleTextActive]}>
+                  PT/Admin
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+
+          <Text style={styles.headline}>Bem-vindo de volta</Text>
+          <Text style={styles.subhead}>
+            Inicia sessão para continuares a tua evolução
+          </Text>
+
+          {/* Card de login */}
+          <Animated.View
+            style={[
+              styles.card,
+              {
+                opacity: cardOpacity,
+                transform: [{ translateY: cardY }],
+              },
+            ]}
+          >
+            {/* Email */}
+            <View style={styles.inputRow}>
+              <View style={styles.inputIconWrap}>
+                <Feather name="mail" size={18} color={PALETTE.textSecondary} />
+              </View>
               <TextInput
-                style={styles.input}
-                placeholder="Email"
-                placeholderTextColor={styles.inputPlaceholder.color}
                 value={email}
-                onChangeText={text => {
-                  setEmail(text);
-                  clearErrors();
-                }}
-                autoCapitalize="none"
+                onChangeText={setEmail}
+                placeholder="Email"
+                placeholderTextColor={PALETTE.textSecondary}
                 keyboardType="email-address"
-                textContentType="emailAddress"
-                returnKeyType="next"
-              />
-
-              <View style={styles.passwordContainer}>
-                <TextInput
-                  style={[styles.input, styles.passwordInput]}
-                  placeholder="Senha"
-                  placeholderTextColor={styles.inputPlaceholder.color}
-                  value={password}
-                  onChangeText={text => {
-                    setPassword(text);
-                    clearErrors();
-                  }}
-                  secureTextEntry={secureText}
-                  textContentType="password"
-                  returnKeyType="done"
-                  onSubmitEditing={handleLogin}
-                />
-                <TouchableOpacity onPress={() => setSecureText(prev => !prev)} style={styles.eyeIcon}>
-                  <Ionicons name={secureText ? 'eye-off' : 'eye'} size={22} color={styles.eyeIcon.color} />
-                </TouchableOpacity>
-              </View>
-
-              {!!errorMsg && <Text style={styles.errorText}>{errorMsg}</Text>}
-
-              <TouchableOpacity style={styles.button} onPress={handleLogin} activeOpacity={0.8}>
-                <Text style={styles.buttonText}>Entrar</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => {
-                  setShowReset(true);
-                  setEmailReset('');
-                  setMsgReset('');
-                  clearErrors();
-                }}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.forgotText}>Esqueci minha senha</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.backButton}
-                onPress={handleBackToRoleSelection}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.backButtonText}>Voltar para a seleção de perfil</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </ScrollView>
-
-        <Modal visible={showReset} transparent animationType="slide" onRequestClose={() => setShowReset(false)}>
-          <View style={styles.modalBg}>
-            <View style={styles.modalBox}>
-              <Text style={styles.modalTitle}>Recuperar Palavra-passe</Text>
-              <TextInput
-                placeholder="Insere o teu email"
-                value={emailReset}
-                onChangeText={setEmailReset}
                 autoCapitalize="none"
-                keyboardType="email-address"
                 style={styles.input}
-                placeholderTextColor={styles.inputPlaceholder.color}
-                textContentType="emailAddress"
-                returnKeyType="send"
-                onSubmitEditing={handlePasswordReset}
               />
-              {!!msgReset && <Text style={styles.resetMessage}>{msgReset}</Text>}
-
-              <View style={styles.modalActions}>
-                <TouchableOpacity onPress={() => setShowReset(false)}>
-                  <Text style={styles.modalCloseText}>Fechar</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity onPress={handlePasswordReset}>
-                  <Text style={styles.modalSendText}>Enviar</Text>
-                </TouchableOpacity>
-              </View>
             </View>
-          </View>
-        </Modal>
+
+            {/* Password */}
+            <View style={styles.inputRow}>
+              <View style={styles.inputIconWrap}>
+                <Feather name="lock" size={18} color={PALETTE.textSecondary} />
+              </View>
+              <TextInput
+                value={pwd}
+                onChangeText={setPwd}
+                placeholder="Palavra-passe"
+                placeholderTextColor={PALETTE.textSecondary}
+                secureTextEntry={secure}
+                style={styles.input}
+              />
+              <TouchableOpacity onPress={() => setSecure((s) => !s)} style={styles.eyeBtn}>
+                <Feather
+                  name={secure ? 'eye-off' : 'eye'}
+                  size={18}
+                  color={PALETTE.textSecondary}
+                />
+              </TouchableOpacity>
+            </View>
+
+            {/* Forgot */}
+            <TouchableOpacity
+              onPress={() => navigation.navigate('PasswordResetRequiredScreen')}
+              style={{ alignSelf: 'center', paddingVertical: 10 }}
+            >
+              <Text style={styles.forgot}>Esqueceste-te da palavra-passe?</Text>
+            </TouchableOpacity>
+
+            {/* Erro */}
+            {!!err && (
+              <View style={styles.errorBox}>
+                <Feather name="alert-triangle" size={16} color={PALETTE.error} />
+                <Text style={styles.errorText}>{err}</Text>
+              </View>
+            )}
+
+            {/* CTA */}
+            <TouchableOpacity onPress={onLogin} disabled={loading} style={styles.cta} activeOpacity={0.9}>
+              <LinearGradient
+                colors={[PALETTE.gold, PALETTE.gold2]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.ctaGrad}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#1A1A1A" />
+                ) : (
+                  <>
+                    <Text style={styles.ctaText}>Entrar</Text>
+                    <Ionicons name="arrow-forward" size={20} color="#1A1A1A" />
+                  </>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+          </Animated.View>
+
+          <Text style={styles.footer}>© 2025 RisiFit · Todos os direitos reservados</Text>
+        </ScrollView>
       </KeyboardAvoidingView>
-    </ImageBackground>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  // Paleta de Cores
-  colors: {
-    color1: '#d4ac54', // Dourado/Mostarda - Principal para botões de ação
-    color2: '#e0c892', // Dourado mais claro - Para fundos mais suaves
-    color3: '#69511a', // Castanho escuro/Dourado - Para texto principal e links
-    color4: '#767676', // Cinzento médio - Para texto secundário e placeholders
-    color5: '#bdbdbd', // Cinzento claro - Para bordas e elementos discretas
+  root: { flex: 1, backgroundColor: PALETTE.bgTop },
+
+  statusBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: (StatusBar.currentHeight || 24),
+    backgroundColor: '#121A22',
+    opacity: 0.95,
+    zIndex: -1,
   },
-  // Novo estilo para ImageBackground
-  backgroundImage: {
-    flex: 1, // Faz com que a imagem de fundo ocupe todo o espaço
-    width: '100%',
-    height: '100%',
+
+  scroll: {
+    paddingTop: (StatusBar.currentHeight || 24) + 12,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
   },
-  // Novo estilo para KeyboardAvoidingView, pois agora está dentro de ImageBackground
-  keyboardAvoidingContainer: {
-    flex: 1, // Ocupa todo o espaço dentro do ImageBackground
-    backgroundColor: 'transparent', // O fundo agora é transparente para ver a imagem
-  },
-  // O container original foi removido, pois o ImageBackground e o KeyboardAvoidingView tratam do fundo
-  scrollView: {
-    flex: 1,
-  },
-  scrollViewContent: {
-    flexGrow: 1,
-    paddingHorizontal: 30,
-    alignItems: 'center',
-    paddingBottom: 20,
-    justifyContent: 'center',
-  },
-  logo: {
-    width: 350,
-    height: 200,
-    marginBottom: 20,
-    borderRadius: 8,
-    alignSelf: 'center',
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '600',
-    color: '#69511a',
-    textAlign: 'center',
-    marginBottom: 40,
-  },
-  roleSelectionScreen: {
-    width: '100%',
-    marginBottom: 20,
-    marginTop: -20,
-  },
-  roleSelectionPrompt: {
-    fontSize: 20,
-    fontWeight: '500',
-    color: '#69511a',
-    marginBottom: 30,
-    textAlign: 'center',
-  },
-  roleButton: {
+
+  // Header
+  brandRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+    marginBottom: 18,
+    gap: 14,
+  },
+  brandIcon: {
+    width: 44,
+    height: 44,
     borderRadius: 12,
-    backgroundColor: '#d4ac54',
-    marginBottom: 15,
-    shadowColor: '#69511a',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 5,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    overflow: 'hidden',
   },
-  roleButtonIcon: {
-    marginRight: 8,
-    fontSize: 22,
-    color: '#fff',
+  brandTitle: {
+    color: PALETTE.textPrimary,
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
-  roleButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#fff',
+  brandTag: {
+    color: PALETTE.textSecondary,
+    marginTop: 2,
   },
-  loginFormContainer: {
-    width: '100%',
+
+  roleSwitch: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    borderRadius: 12,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    gap: 6,
   },
-  continueAsText: {
-    textAlign: 'center',
-    color: '#767676',
-    marginBottom: 25,
-    fontSize: 18,
+  rolePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
   },
-  continueAsRoleText: {
-    fontWeight: 'bold',
-    color: '#69511a',
+  rolePillActive: { backgroundColor: PALETTE.gold },
+  roleText: {
+    color: PALETTE.textSecondary,
+    fontWeight: '700',
+    fontSize: 12,
   },
+  roleTextActive: { color: '#1A1A1A' },
+
+  headline: {
+    color: PALETTE.textPrimary,
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    marginBottom: 4,
+  },
+  subhead: {
+    color: PALETTE.textSecondary,
+    marginBottom: 16,
+  },
+
+  card: {
+    backgroundColor: PALETTE.card,
+    borderWidth: 1,
+    borderColor: PALETTE.cardBorder,
+    borderRadius: 18,
+    padding: 16,
+    paddingTop: 18,
+    marginTop: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.25,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: PALETTE.inputBg,
+    borderWidth: 1,
+    borderColor: PALETTE.inputBorder,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 56,
+    marginBottom: 12,
+  },
+  inputIconWrap: { width: 28, alignItems: 'center' },
+  eyeBtn: { paddingHorizontal: 8, paddingVertical: 6 },
   input: {
-    height: 55,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingHorizontal: 20,
-    marginBottom: 20,
+    flex: 1,
+    color: PALETTE.textPrimary,
     fontSize: 16,
-    borderColor: '#bdbdbd',
-    borderWidth: 1,
-    color: '#69511a',
+    paddingLeft: 8,
   },
-  inputPlaceholder: {
-    color: '#767676',
-  },
-  passwordContainer: {
+
+  forgot: { color: PALETTE.gold, fontWeight: '700', letterSpacing: 0.2 },
+
+  errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12,
-    backgroundColor: '#fff',
+    gap: 8,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(220,53,69,0.12)',
     borderWidth: 1,
-    borderColor: '#bdbdbd',
-    marginBottom: 20,
-    paddingRight: 10,
-  },
-  passwordInput: {
-    flex: 1,
-    marginBottom: 0,
-  },
-  eyeIcon: {
-    paddingHorizontal: 6,
-    color: '#767676',
-  },
-  button: {
-    backgroundColor: '#d4ac54',
-    paddingVertical: 15,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 10,
-    shadowColor: '#69511a',
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 5,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  forgotText: {
-    marginTop: 20,
-    textAlign: 'center',
-    color: '#69511a',
-    textDecorationLine: 'underline',
-    fontSize: 15,
-  },
-  errorText: {
-    color: '#DC2626',
+    borderColor: 'rgba(220,53,69,0.35)',
     marginBottom: 10,
-    textAlign: 'center',
-    fontSize: 14,
   },
-  modalBg: {
-    flex: 1,
-    backgroundColor: 'rgba(105, 81, 26, 0.4)',
+  errorText: { color: '#FFC6CC', fontSize: 13, flex: 1 },
+
+  cta: { marginTop: 6, borderRadius: 14, overflow: 'hidden' },
+  ctaGrad: {
+    height: 56,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalBox: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 12,
-    width: '100%',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#69511a',
-    marginBottom: 10,
-  },
-  resetMessage: {
-    marginBottom: 10,
-    color: '#16a34a',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  modalActions: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 10,
+    gap: 10,
   },
-  modalCloseText: {
-    color: '#767676',
-    fontSize: 16,
+  ctaText: { color: '#1A1A1A', fontSize: 18, fontWeight: '800', letterSpacing: 0.4 },
+
+  footer: {
+    textAlign: 'center',
+    color: 'rgba(234,242,247,0.6)',
+    marginTop: 18,
+    fontSize: 12,
   },
-  modalSendText: {
-    color: '#69511a',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  backButton: {
-    marginTop: 25,
-    alignItems: 'center',
-  },
-  backButtonText: {
-    color: '#767676',
-    fontSize: 15,
-    textDecorationLine: 'underline',
+
+  shape: {
+    position: 'absolute',
+    width: 360,
+    height: 360,
+    borderRadius: 180,
+    backgroundColor: PALETTE.gold,
   },
 });

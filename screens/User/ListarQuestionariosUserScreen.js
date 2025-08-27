@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,284 +7,371 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  SafeAreaView, // Adicionado SafeAreaView para melhor layout em diferentes dispositivos
+  SafeAreaView,
+  TextInput,
+  RefreshControl,
+  Platform,
+  StatusBar,
 } from 'react-native';
-import { db, auth } from '../../services/firebaseConfig';
-import { collection, getDocs, query, where } from 'firebase/firestore';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { getUserIdLoggedIn } from '../../services/authService';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 
-// Definição da paleta de cores para consistência
-const COLORS = {
-  primaryAccent: '#FBBF24',   // Amarelo/Dourado para acentos principais
-  backgroundLight: '#F9FAFB', // Fundo geral mais claro
-  cardBackground: '#FFFFFF',  // Branco para cartões
-  textDark: '#1F2937',        // Texto escuro para títulos
-  textMedium: '#4B5563',      // Texto médio para descrições/geral
-  textLight: '#9CA3AF',       // Texto claro para detalhes
-  borderLight: '#E5E7EB',     // Borda clara padrão
-  // Cores de status
-  completedStatusBg: '#D1FAE5',      // Fundo verde claro para respondido
-  completedStatusBorder: '#34D399',  // Borda verde para respondido
-  completedStatusText: '#065F46',    // Texto verde escuro para respondido
-  activeCardBorder: '#FBBF24',      // Borda para cartões não respondidos
-  activeCardBackground: '#FFFBEB',   // Fundo amarelo muito claro para cartões não respondidos
-};
+import { db } from '../../services/firebaseConfig';
+import { getUserIdLoggedIn } from '../../services/authService';
+import Colors from '../../constants/Colors';
+
+const HEADER_H = 92;
 
 export default function ListarQuestionariosUserScreen() {
-  const [questionarios, setQuestionarios] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [respondedQuestionnaireIds, setRespondedQuestionnaireIds] = useState(new Set());
   const navigation = useNavigation();
-  const [userId, setUserId] = useState(null);
 
+  const [questionarios, setQuestionarios] = useState([]);
+  const [respondidasSet, setRespondidasSet] = useState(new Set());
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [userId, setUserId] = useState(null);
+  const [search, setSearch] = useState('');
+  const [tab, setTab] = useState('todos'); // todos | porResponder | respondidos
+
+  // Carregamento inicial + ao focar
   useFocusEffect(
     useCallback(() => {
-      async function loadData() {
+      let mounted = true;
+      (async () => {
         setLoading(true);
-        const currentUserId = await getUserIdLoggedIn();
-        if (!currentUserId) {
-          Alert.alert("Erro", "Utilizador não autenticado. Por favor, faça login novamente.");
-          setLoading(false);
-          return;
+        try {
+          const uid = await getUserIdLoggedIn();
+          if (!uid) throw new Error('Utilizador não autenticado');
+          if (!mounted) return;
+
+          setUserId(uid);
+          await Promise.all([fetchQuestionarios(), fetchRespondidas(uid)]);
+        } catch (e) {
+          console.error(e);
+          Alert.alert('Erro', 'Não foi possível carregar os questionários.');
+        } finally {
+          if (mounted) setLoading(false);
         }
-        setUserId(currentUserId);
-
-        await Promise.all([
-          carregarQuestionarios(currentUserId),
-          carregarRespostasDoUtilizador(currentUserId)
-        ]);
-        setLoading(false);
-      }
-
-      loadData();
+      })();
+      return () => (mounted = false);
     }, [])
   );
 
-  const carregarQuestionarios = async (currentUserId) => {
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
     try {
-      console.log("Buscando questionários públicos...");
-      const snapshot = await getDocs(collection(db, 'questionarios'));
-      const lista = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setQuestionarios(lista);
-      console.log(`Encontrados ${lista.length} questionários públicos.`);
-    } catch (error) {
-      console.error('Erro ao buscar questionários públicos:', error);
-      Alert.alert('Erro', 'Não foi possível carregar os questionários.');
+      await Promise.all([fetchQuestionarios(), fetchRespondidas(userId)]);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setRefreshing(false);
     }
+  }, [userId]);
+
+  const fetchQuestionarios = async () => {
+    const snap = await getDocs(collection(db, 'questionarios'));
+    const lista = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    setQuestionarios(lista);
   };
 
-  const carregarRespostasDoUtilizador = async (currentUserId) => {
-    try {
-      console.log("Buscando respostas do utilizador para questionários...");
-      const respostasQuery = query(
-        collection(db, 'respostasQuestionarios'),
-        where('userId', '==', currentUserId)
-      );
-      const respostasSnapshot = await getDocs(respostasQuery);
-      const respondedIds = new Set(
-        respostasSnapshot.docs.map(doc => doc.data().questionarioId)
-      );
-      setRespondedQuestionnaireIds(respondedIds);
-      console.log(`Utilizador respondeu a ${respondedIds.size} questionários.`);
-    } catch (error) {
-      console.error('Erro ao carregar respostas do utilizador:', error);
-      Alert.alert('Erro', 'Não foi possível verificar o status das suas respostas.');
-    }
+  const fetchRespondidas = async (uid) => {
+    if (!uid) return;
+    const qRes = query(collection(db, 'respostasQuestionarios'), where('userId', '==', uid));
+    const snap = await getDocs(qRes);
+    const ids = new Set(snap.docs.map((d) => d.data()?.questionarioId));
+    setRespondidasSet(ids);
   };
 
-  const renderItem = ({ item }) => {
-    const isResponded = respondedQuestionnaireIds.has(item.id);
+  // Pesquisa + filtro
+  const filteredData = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return questionarios
+      .filter((q) => {
+        if (tab === 'respondidos' && !respondidasSet.has(q.id)) return false;
+        if (tab === 'porResponder' && respondidasSet.has(q.id)) return false;
+        return true;
+      })
+      .filter((q) => {
+        if (!term) return true;
+        const titulo = (q.titulo || q.nome || '').toLowerCase();
+        const desc = (q.descricao || '').toLowerCase();
+        return titulo.includes(term) || desc.includes(term);
+      });
+  }, [questionarios, respondidasSet, tab, search]);
 
+  const goResponder = (qid, isResponded) => {
+    if (isResponded) {
+      Alert.alert(
+        'Questionário respondido',
+        'Já respondeste a este questionário. Queres responder novamente?',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Responder', onPress: () => navigation.navigate('ResponderQuestionario', { questionarioId: qid }) },
+        ]
+      );
+      return;
+    }
+    navigation.navigate('ResponderQuestionario', { questionarioId: qid });
+  };
+
+  const renderCard = ({ item }) => {
+    const isResponded = respondidasSet.has(item.id);
     return (
       <TouchableOpacity
+        activeOpacity={0.85}
         style={[
           styles.card,
-          isResponded ? styles.cardResponded : styles.cardPending // Novo estilo para pendente
+          isResponded ? styles.cardRespondido : styles.cardPendente,
         ]}
-        onPress={() => {
-          if (isResponded) {
-            Alert.alert(
-              "Questionário Respondido",
-              "Você já respondeu a este questionário. Deseja respondê-lo novamente?",
-              [
-                { text: "Cancelar", style: "cancel" },
-                { text: "Sim", onPress: () => navigation.navigate('ResponderQuestionarioScreen', { questionarioId: item.id }) }
-              ]
-            );
-          } else {
-            navigation.navigate('ResponderQuestionarioScreen', { questionarioId: item.id });
-          }
-        }}
+        onPress={() => goResponder(item.id, isResponded)}
       >
-        <View style={styles.cardContent}>
-          <Text style={styles.titulo}>{item.titulo || 'Sem título'}</Text>
-          {item.descricao && <Text style={styles.descricao}>{item.descricao}</Text>}
-        </View>
-        {isResponded && (
-          <View style={styles.respondedIndicator}>
-            <MaterialCommunityIcons name="check-circle" size={20} color={COLORS.completedStatusText} />
-            <Text style={styles.respondedText}>Respondido</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.cardTitle} numberOfLines={2}>
+            {item.titulo || item.nome || 'Sem título'}
+          </Text>
+          {!!item.descricao && (
+            <Text style={styles.cardDesc} numberOfLines={2}>
+              {item.descricao}
+            </Text>
+          )}
+          <View style={styles.cardMetaRow}>
+            {isResponded ? (
+              <>
+                <MaterialCommunityIcons name="check-decagram" size={18} color="#0C7A55" />
+                <Text style={[styles.metaText, { color: '#0C7A55' }]}>Respondido</Text>
+              </>
+            ) : (
+              <>
+                <MaterialCommunityIcons name="clipboard-edit-outline" size={18} color={Colors.secondary} />
+                <Text style={[styles.metaText, { color: Colors.secondary }]}>Por responder</Text>
+              </>
+            )}
           </View>
-        )}
+        </View>
+
+        <View style={styles.chevron}>
+          <Ionicons
+            name="chevron-forward"
+            size={22}
+            color={isResponded ? '#0C7A55' : Colors.textSecondary}
+          />
+        </View>
       </TouchableOpacity>
     );
   };
 
+  // Loading / vazio
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={COLORS.primaryAccent} />
-        <Text style={styles.loadingText}>Carregando questionários...</Text>
-      </View>
-    );
-  }
-
-  if (questionarios.length === 0) {
-    return (
-      <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>Nenhum questionário disponível no momento.</Text>
-      </View>
+      <SafeAreaView style={styles.safe}>
+        <Header />
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={Colors.secondary} />
+          <Text style={styles.centerText}>A carregar questionários…</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      {/* Barra Fixa do Cabeçalho */}
-      <View style={styles.fixedHeader}>
-        <Text style={styles.headerTitle}>Questionários Disponíveis</Text>
+    <SafeAreaView style={styles.safe}>
+      <Header />
+
+      {/* Search + Tabs */}
+      <View style={styles.toolbar}>
+        <View style={styles.searchWrap}>
+          <Ionicons name="search" size={18} color={Colors.textSecondary} />
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Procurar por título ou descrição…"
+            placeholderTextColor={Colors.placeholder}
+            style={styles.searchInput}
+          />
+          {!!search && (
+            <TouchableOpacity onPress={() => setSearch('')}>
+              <Ionicons name="close-circle" size={18} color={Colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <View style={styles.tabs}>
+          <TabChip label="Todos" active={tab === 'todos'} onPress={() => setTab('todos')} />
+          <TabChip label="Por responder" active={tab === 'porResponder'} onPress={() => setTab('porResponder')} />
+          <TabChip label="Respondidos" active={tab === 'respondidos'} onPress={() => setTab('respondidos')} />
+        </View>
       </View>
 
-      {/* Conteúdo da Lista (FlatList) */}
-      <FlatList
-        data={questionarios}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        contentContainerStyle={styles.listContent} // Mantém o padding inferior e superior para o conteúdo da lista
-        showsVerticalScrollIndicator={false}
-        style={styles.flatListStyle} // Estilo para o componente FlatList em si
-      />
+      {filteredData.length === 0 ? (
+        <View style={styles.empty}>
+          <MaterialCommunityIcons name="clipboard-text-outline" size={40} color={Colors.textSecondary} />
+          <Text style={styles.emptyTitle}>Nada por aqui…</Text>
+          <Text style={styles.emptyText}>
+            Não encontrámos questionários com os filtros atuais.
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={filteredData}
+          keyExtractor={(item) => item.id}
+          renderItem={renderCard}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[Colors.secondary]}
+              progressBackgroundColor="#fff"
+            />
+          }
+          showsVerticalScrollIndicator={false}
+        />
+      )}
     </SafeAreaView>
   );
 }
 
-// Altura da barra fixa, ajustável conforme necessário
-const HEADER_HEIGHT = 70;
+/* ---------- UI helpers ---------- */
+
+function Header() {
+  return (
+    <LinearGradient
+      colors={[Colors.primary, Colors.primary + 'E6']}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.header}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <MaterialCommunityIcons name="clipboard-list-outline" size={22} color={Colors.onPrimary} />
+        <Text style={styles.headerTitle}>Questionários</Text>
+      </View>
+      <View style={{ flexDirection: 'row', gap: 10 }}>
+        <View style={styles.headerIconBtn}>
+          <Ionicons name="help-circle-outline" size={18} color={Colors.onPrimary} />
+        </View>
+        <View style={styles.headerIconBtn}>
+          <Ionicons name="share-social-outline" size={18} color={Colors.onPrimary} />
+        </View>
+      </View>
+    </LinearGradient>
+  );
+}
+
+function TabChip({ label, active, onPress }) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      style={[styles.tabChip, active && styles.tabChipActive]}
+      activeOpacity={0.9}
+    >
+      <Text style={[styles.tabChipText, active && styles.tabChipTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+/* ---------- styles ---------- */
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: COLORS.backgroundLight,
-  },
-  fixedHeader: {
-    height: HEADER_HEIGHT, // Altura fixa da barra
-    backgroundColor: COLORS.cardBackground, // Fundo branco
-    justifyContent: 'center', // Centraliza o conteúdo verticalmente
-    alignItems: 'center', // Centraliza o conteúdo horizontalmente
-    borderBottomWidth: StyleSheet.hairlineWidth, // Borda inferior sutil
-    borderBottomColor: COLORS.borderLight,
-    shadowColor: '#000', // Sombra suave para dar profundidade
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 3,
-    paddingHorizontal: 20, // Padding horizontal
+  safe: { flex: 1, backgroundColor: Colors.background },
+
+  header: {
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 8 : 14,
+    paddingBottom: 14,
+    paddingHorizontal: 16,
+    height: HEADER_H,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
   },
   headerTitle: {
-    fontSize: 24, // Tamanho da fonte do título
-    fontWeight: 'bold',
-    color: COLORS.textDark,
+    color: Colors.onPrimary,
+    fontWeight: '800',
+    fontSize: 20,
+    marginLeft: 8,
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.backgroundLight,
-  },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: COLORS.textMedium,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.backgroundLight,
-    paddingHorizontal: 20,
-  },
-  emptyText: {
-    fontSize: 18,
-    color: COLORS.textMedium,
-    textAlign: 'center',
-  },
-  flatListStyle: {
-    flex: 1, // Faz a FlatList ocupar o restante do espaço vertical
-    paddingHorizontal: 20, // Padding horizontal para a FlatList
-  },
-  listContent: {
-    paddingTop: 15, // Espaço entre a barra fixa e o primeiro item da lista
-    paddingBottom: 30, // Espaço na parte inferior da lista
-  },
-  card: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 18,
-    backgroundColor: COLORS.cardBackground,
-    borderRadius: 12,
-    marginBottom: 15,
+  headerIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+
+  toolbar: { padding: 16, paddingTop: 12, gap: 10 },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    height: 48,
+    gap: 8,
+  },
+  searchInput: { flex: 1, color: Colors.textPrimary, fontSize: 15 },
+
+  tabs: { flexDirection: 'row', gap: 8, marginTop: 2 },
+  tabChip: {
+    paddingHorizontal: 14,
+    height: 38,
+    borderRadius: 24,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  tabChipActive: {
+    backgroundColor: '#FFF3CD',
+    borderColor: Colors.secondary,
+  },
+  tabChipText: { color: Colors.textSecondary, fontWeight: '600' },
+  tabChipTextActive: { color: Colors.secondary, fontWeight: '800' },
+
+  card: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    marginBottom: 12,
+    flexDirection: 'row',
+    gap: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.08,
     shadowRadius: 6,
-    elevation: 6,
-  },
-  cardPending: {
-    borderColor: COLORS.activeCardBorder,
-    backgroundColor: COLORS.activeCardBackground,
-  },
-  cardResponded: {
-    backgroundColor: COLORS.completedStatusBg,
-    borderColor: COLORS.completedStatusBorder,
-    shadowColor: COLORS.completedStatusBorder,
-    shadowOpacity: 0.15,
-    shadowRadius: 5,
     elevation: 5,
   },
-  cardContent: {
-    flex: 1,
-    marginRight: 15,
-  },
-  titulo: {
-    fontSize: 19,
-    fontWeight: 'bold',
-    color: COLORS.textDark,
-    marginBottom: 6,
-  },
-  descricao: {
-    fontSize: 15,
-    color: COLORS.textMedium,
-  },
-  respondedIndicator: {
+  cardPendente: { backgroundColor: '#FFF9E7', borderColor: '#FFE08A' },
+  cardRespondido: { backgroundColor: '#EAFBF2', borderColor: '#9CE2C3' },
+  cardTitle: { fontSize: 16, color: Colors.textPrimary, fontWeight: '800' },
+  cardDesc: { marginTop: 4, color: Colors.textSecondary },
+  cardMetaRow: {
+    marginTop: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.completedStatusBg,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.completedStatusBorder,
+    gap: 6,
   },
-  respondedText: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    color: COLORS.completedStatusText,
-    marginLeft: 6,
+  metaText: { fontWeight: '700' },
+  chevron: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingLeft: 4,
   },
+
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
+  centerText: { marginTop: 8, color: Colors.textSecondary },
+
+  empty: { flex: 1, alignItems: 'center', padding: 32 },
+  emptyTitle: { marginTop: 12, fontWeight: '800', color: Colors.textPrimary, fontSize: 18 },
+  emptyText: { color: Colors.textSecondary, textAlign: 'center', marginTop: 4 },
 });

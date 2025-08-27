@@ -1,0 +1,60 @@
+{
+  "home": {
+    "title": "Home",
+    "preparing": "Preparing your space…",
+    "plan": { "undefined": "No plan defined" },
+    "cta": { "calendar": "Calendar", "history": "History" },
+    "freqTitle": "Training Frequency",
+    "legend": {
+      "completed": "Completed",
+      "missed": "Missed",
+      "todayPending": "Today (Pending)",
+      "future": "Scheduled",
+      "noTraining": "No Training" 
+    },
+    "actions": {  
+      "trainings": "Workouts",
+      "progress": "Progress",
+      "history": "History",
+      "chat": "Live Chat",
+      "questionnaires": "Questionnaires",
+      "groupClasses": "Group Classes"
+    },
+    "calendar": { "title": "Workout Calendar" },
+    "motivation": {
+      "1": "Believe in yourself and everything is possible. ✨",
+      "2": "The only bad workout is the one that didn’t happen. 🏋️‍♀️",
+      "3": "The pain you feel today is the strength you’ll have tomorrow. 💪",
+      "4": "Outdo yourself every day. 🚀",
+      "5": "Conquer goals one session at a time. 🎯",
+      "6": "Keep focus, strength, and faith. 🙏",
+      "7": "Be stronger than your best excuse. 🔥",
+      "8": "Turn sweat into success. 🏆",
+      "9": "Your health is your greatest asset. ❤️",
+      "10": "Don’t stop until you’re proud. ✅"
+    }
+  },
+  "greeting": { "morning": "Good morning", "afternoon": "Good afternoon", "evening": "Good evening" },
+  "common": { "user": "User", "hello": "Hello", "close": "Close" }
+
+,
+
+  "brand": "RISIFIT",
+  "hello": "Hello",
+  "settings": {
+    "title": "Settings",
+    "language": "App language",
+    "portuguese": "Portuguese",
+    "english": "English",
+    "units": "Units",
+    "metric": "Metric (kg, cm)",
+    "imperial": "Imperial (lb, in)"
+  },
+  "profile": {
+    "title": "Profile",
+    "editProfile": "Edit profile",
+    "changePassword": "Change password",
+    "goals": "Goals"
+  }
+  
+}

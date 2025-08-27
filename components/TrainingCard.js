@@ -1,92 +1,158 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons'; // Assumindo que você usa MaterialCommunityIcons aqui
+// components/TrainingCard.js
+import React, { useMemo, memo } from 'react';
+import { View, Text, StyleSheet, Platform, Pressable } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import Colors from '../constants/Colors';
-import Layout from '../constants/Layout';
 
-const TrainingCard = ({ type, training, formatarDuracao }) => {
-  const isUpcoming = type === 'upcoming';
-  const iconName = isUpcoming ? "calendar-outline" : "checkmark-done-circle-outline";
-  const iconColor = isUpcoming ? Colors.secondary : Colors.success;
-  const borderColor = isUpcoming ? Colors.secondaryLight : Colors.successLight;
-
-  return (
-    <View style={[styles.cardContainer, { borderColor: borderColor }]}>
-      <View style={styles.header}>
-        <Ionicons name={iconName} size={24} color={iconColor} />
-        <Text style={styles.title}>{training.nome || 'Treino Sem Nome'}</Text>
-      </View>
-      <View style={styles.detailRow}>
-        <Ionicons name="person-outline" size={16} color={Colors.textSecondary} />
-        <Text style={styles.detailText}>Cliente: {training.clientName || 'N/A'}</Text>
-      </View>
-      {isUpcoming ? (
-        <>
-          <View style={styles.detailRow}>
-            <Ionicons name="calendar-sharp" size={16} color={Colors.textSecondary} />
-            <Text style={styles.detailText}>Data: {training.data ? training.data.toLocaleDateString('pt-PT') : 'N/A'}</Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Ionicons name="time-outline" size={16} color={Colors.textSecondary} />
-            <Text style={styles.detailText}>Hora: {training.data ? training.data.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }) : 'N/A'}</Text>
-          </View>
-          <View style={styles.detailRow}>
-  <Ionicons name="pricetag-outline" size={16} color={Colors.textSecondary} /> 
-  <Text style={styles.detailText}>Categoria: {training.categoria || 'N/A'}</Text> 
-</View>
-        </>
-      ) : (
-        <>
-          <View style={styles.detailRow}>
-            <Ionicons name="calendar-sharp" size={16} color={Colors.textSecondary} />
-            <Text style={styles.detailText}>Concluído em: {training.dataConclusao ? training.dataConclusao.toLocaleDateString('pt-PT') : 'N/A'}</Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Ionicons name="barbell-outline" size={16} color={Colors.textSecondary} />
-            <Text style={styles.detailText}>Tipo: {training.tipo || 'N/A'}</Text>
-          </View>
-          {training.avaliacao !== undefined && (
-            <View style={styles.detailRow}>
-              <Ionicons name="star" size={16} color={Colors.accent} />
-              <Text style={styles.detailText}>Avaliação: {training.avaliacao}/5</Text>
-            </View>
-          )}
-        </>
-      )}
-    </View>
-  );
-};
-
-const styles = StyleSheet.create({
-  cardContainer: {
-    backgroundColor: Colors.cardBackground,
-    padding: Layout.spacing.medium,
-    marginVertical: Layout.spacing.small, // Espaçamento interno entre cards se não usar separador
-    borderRadius: Layout.borderRadius.medium,
-    borderLeftWidth: 5, // Uma borda esquerda para diferenciar
-    // Removendo sombra daqui se o parent card já tem
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: Layout.spacing.small,
-  },
-  title: {
-    fontSize: Layout.fontSizes.large,
-    fontWeight: 'bold',
-    color: Colors.textPrimary,
-    marginLeft: Layout.spacing.small,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: Layout.spacing.xsmall,
-  },
-  detailText: {
-    fontSize: Layout.fontSizes.medium,
-    color: Colors.textSecondary,
-    marginLeft: Layout.spacing.small,
-  },
+const CARD_SHADOW = Platform.select({
+  ios: { shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+  android: { elevation: 3 },
 });
 
-export default TrainingCard;
+const defaultFormat = (secs) => {
+  if (typeof secs !== 'number' || isNaN(secs) || secs < 0) return '—';
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  const out = [];
+  if (h) out.push(`${h}h`);
+  if (m || (!h && s)) out.push(`${String(m).padStart(2, '0')}m`);
+  if (s || (!h && !m)) out.push(`${String(s).padStart(2, '0')}s`);
+  return out.join(' ');
+};
+
+const RatingStars = memo(({ value = 0 }) => {
+  const stars = [];
+  for (let i = 1; i <= 5; i++) {
+    stars.push(
+      <Ionicons key={i} name={i <= value ? 'star' : 'star-outline'} size={16} color={Colors.secondary} style={{ marginRight: 2 }} />
+    );
+  }
+  return <View style={{ flexDirection: 'row', alignItems: 'center' }}>{stars}</View>;
+});
+
+function TrainingCard({
+  type = 'upcoming',        // 'upcoming' | 'completed'
+  training = {},
+  formatarDuracao = defaultFormat,
+  onPress,
+  testID,
+}) {
+  const title = training.nome || training.name || training.nomeTreino || 'Treino';
+  const category = training.categoria || training.category || null;
+  const clientName = training.clientName || training.cliente || 'Cliente';
+
+  const whenDate = useMemo(() => {
+    const d = type === 'completed'
+      ? (training.dataConclusao instanceof Date ? training.dataConclusao : (training.dataConclusao?.toDate?.() ?? null))
+      : (training.data instanceof Date ? training.data : (training.data?.toDate?.() ?? null));
+    return d || null;
+  }, [training, type]);
+
+  const whenLabel = useMemo(() => {
+    const d = whenDate;
+    if (!d) return '—';
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${dd}/${mm} • ${hh}:${min}`;
+  }, [whenDate]);
+
+  const durationTxt = useMemo(() => {
+    const raw = training.duracao ?? training.duration ?? training.totalSeconds ?? null;
+    if (raw == null) return null;
+    if (typeof raw === 'number' && raw > 3600) return formatarDuracao(raw);
+    if (typeof raw === 'number' && raw <= 3600 && raw > 120) return `${raw} min`;
+    return `${raw}`;
+  }, [training, formatarDuracao]);
+
+  const leftIcon = type === 'completed' ? 'checkmark-done-circle' : 'barbell-outline';
+  const leftColor = type === 'completed' ? Colors.success : Colors.secondary;
+
+  return (
+    <Pressable
+      onPress={() => {
+        if (!onPress) return;
+        Haptics.selectionAsync();
+        onPress();
+      }}
+      style={[styles.card, CARD_SHADOW]}
+      android_ripple={{ color: '#00000012' }}
+      accessibilityRole={onPress ? 'button' : 'summary'}
+      accessibilityLabel={`${title}. ${clientName}. ${whenLabel}`}
+      testID={testID}
+    >
+      <View style={[styles.leftBadge, { backgroundColor: `${leftColor}1A` }]}>
+        <Ionicons name={leftIcon} size={22} color={leftColor} />
+      </View>
+
+      <View style={{ flex: 1 }}>
+        <Text numberOfLines={1} style={styles.title}>{title}</Text>
+
+        <View style={styles.metaRow}>
+          <Ionicons name="person-outline" size={14} color={Colors.textSecondary} />
+          <Text numberOfLines={1} style={styles.metaTxt}>{clientName}</Text>
+        </View>
+
+        {category ? (
+          <View style={styles.metaRow}>
+            <Ionicons name="pricetag-outline" size={14} color={Colors.textSecondary} />
+            <Text numberOfLines={1} style={styles.metaTxt}>{category}</Text>
+          </View>
+        ) : null}
+
+        <View style={[styles.metaRow, { marginTop: 4 }]}>
+          <Ionicons name={type === 'completed' ? 'time-outline' : 'calendar-outline'} size={14} color={Colors.textSecondary} />
+          <Text style={styles.metaTxt}>{whenLabel}</Text>
+        </View>
+
+        {type === 'completed' && (
+          <View style={[styles.bottomRow, { marginTop: 8 }]}>
+            <RatingStars value={training.avaliacao ?? 0} />
+            {durationTxt ? (
+              <View style={styles.durationPill}>
+                <Ionicons name="timer-outline" size={14} color={Colors.onSecondary} />
+                <Text style={styles.durationTxt}>{durationTxt}</Text>
+              </View>
+            ) : null}
+          </View>
+        )}
+      </View>
+    </Pressable>
+  );
+}
+
+export default memo(TrainingCard);
+
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.divider,
+    padding: 14,
+    flexDirection: 'row',
+  },
+  leftBadge: {
+    width: 36, height: 36, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+    marginRight: 12,
+  },
+  title: { color: Colors.textPrimary, fontSize: 16, fontWeight: '900' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, columnGap: 6 },
+  metaTxt: { color: Colors.textSecondary, fontSize: 13, flexShrink: 1 },
+  bottomRow: { flexDirection: 'row', alignItems: 'center', columnGap: 10, flexWrap: 'wrap' },
+  durationPill: {
+    marginLeft: 'auto',
+    backgroundColor: Colors.secondary,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    columnGap: 6,
+  },
+  durationTxt: { color: Colors.onSecondary, fontWeight: '900', fontSize: 12 },
+});

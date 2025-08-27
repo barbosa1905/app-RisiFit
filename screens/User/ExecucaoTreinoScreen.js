@@ -1,47 +1,71 @@
-import React, { useState, useEffect, useRef } from 'react';
+// screens/User/ExecucaoTreinoScreen.js
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
-  Alert,
+  FlatList,
   Image,
   Modal,
+  SafeAreaView,
+  StatusBar,
+  Platform,
   Dimensions,
   ActivityIndicator,
-  TextInput,
-  Platform,
-  StatusBar,
-  SafeAreaView,
+  Alert,
   Animated,
+  Easing,
+  TextInput,
+  Vibration,
 } from 'react-native';
+import { useRoute, useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getUserIdLoggedIn } from '../../services/authService';
-import { salvarTreinoConcluido } from '../../services/userService';
-import { WebView } from 'react-native-webview';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { WebView } from 'react-native-webview';
+import ColorsImport from '../../constants/Colors';
+import { LinearGradient } from 'expo-linear-gradient';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../services/firebaseConfig';
-import Colors from '../../constants/Colors';
-import { LinearGradient } from 'expo-linear-gradient';
+import { getUserIdLoggedIn } from '../../services/authService';
+import { salvarTreinoConcluido } from '../../services/userService';
 
-const { width, height } = Dimensions.get('window');
+const { width } = Dimensions.get('window');
 
-const seriesTypes = {
-  reps_and_load: { label: 'Repetições e carga', fields: ['reps', 'peso', 'descanso'] },
-  reps_load_time: { label: 'Repetições, carga e tempo', fields: ['reps', 'peso', 'tempo', 'descanso'] },
-  reps_and_time: { label: 'Repetições e tempo', fields: ['reps', 'tempo', 'descanso'] },
-  time_and_incline: { label: 'Tempo e inclinação', fields: ['tempo', 'inclinacao', 'descanso'] },
-  running: { label: 'Corrida', fields: ['distancia', 'tempo', 'ritmo', 'descanso'] },
-  notes: { label: 'Observações', fields: ['notas'] },
-  cadence: { label: 'Cadência', fields: ['cadencia', 'descanso'] },
-  split_series: { label: 'Série Split', fields: ['reps', 'peso', 'descanso'] },
+// Paleta “tolerante” (usa defaults se faltarem no teu Colors.js)
+const Palette = {
+  primary: ColorsImport?.primary ?? '#2A3B47',
+  primaryLight: ColorsImport?.primaryLight ?? '#3A506B',
+  primaryDark: ColorsImport?.primaryDark ?? '#1F2A33',
+  secondary: ColorsImport?.secondary ?? '#FFB800',
+  background: ColorsImport?.background ?? '#F0F2F5',
+  surface: ColorsImport?.surface ?? ColorsImport?.cardBackground ?? '#FFFFFF',
+  card: ColorsImport?.cardBackground ?? '#FFFFFF',
+  textPrimary: ColorsImport?.textPrimary ?? '#333333',
+  textSecondary: ColorsImport?.textSecondary ?? '#666666',
+  divider: ColorsImport?.divider ?? '#E6E8EB',
+  success: ColorsImport?.success ?? '#4CAF50',
+  danger: ColorsImport?.danger ?? '#F44336',
+  info: ColorsImport?.info ?? '#2196F3',
+  onPrimary: ColorsImport?.onPrimary ?? '#FFFFFF',
+  onSecondary: ColorsImport?.onSecondary ?? '#1A1A1A',
 };
 
-const seriesFieldLabels = {
-  reps: 'Repetições',
-  peso: 'Carga',
+// Mapas de séries compatíveis
+const SERIES_TYPES = {
+  reps_and_load: ['reps', 'peso', 'descanso'],
+  reps_load_time: ['reps', 'peso', 'tempo', 'descanso'],
+  reps_and_time: ['reps', 'tempo', 'descanso'],
+  time_and_incline: ['tempo', 'inclinacao', 'descanso'],
+  running: ['distancia', 'tempo', 'ritmo', 'descanso'],
+  notes: ['notas'],
+  cadence: ['cadencia', 'descanso'],
+  split_series: ['reps', 'peso', 'descanso'],
+};
+
+const FIELD_LABELS = {
+  reps: 'Reps',
+  peso: 'Carga (kg)',
   tempo: 'Tempo',
   inclinacao: 'Inclinação',
   distancia: 'Distância',
@@ -51,162 +75,253 @@ const seriesFieldLabels = {
   cadencia: 'Cadência',
 };
 
-export default function ExecucaoTreinoScreen({ route, navigation }) {
-  const { treino } = route.params;
-  const [tempo, setTempo] = useState(0);
-  const [emExecucao, setEmExecucao] = useState(false);
-  const timerRef = useRef(null);
-  const [isAnimationModalVisible, setIsAnimationModalVisible] = useState(false);
-  const [currentAnimationUrl, setCurrentAnimationUrl] = useState('');
-  const [detailedExercises, setDetailedExercises] = useState([]);
-  const [loadingExercisesDetails, setLoadingExercisesDetails] = useState(true);
-  const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
-  const [workoutRating, setWorkoutRating] = useState(0);
-  const [workoutObservation, setWorkoutObservation] = useState('');
-  const [exercisesCompleted, setExercisesCompleted] = useState(0);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+/** Normaliza qualquer formato de exercícios vindo do treino */
+function normalizeExercises(treino) {
+  const fromTemplates = Array.isArray(treino?.templateExercises) ? treino.templateExercises : [];
+  const fromCustom = Array.isArray(treino?.customExercises) ? treino.customExercises : [];
+  const fromLegacy = Array.isArray(treino?.exercicios) ? treino.exercicios : [];
 
-  useEffect(() => {
-    const fetchExerciseDetails = async () => {
-      setLoadingExercisesDetails(true);
-      const exercisesInTreino = treino.templateExercises || treino.customExercises || [];
-      const fetchedDetails = [];
-      const exerciseIds = exercisesInTreino.map(ex => ex.exerciseId).filter(Boolean);
+  const merged = [...fromTemplates, ...fromCustom, ...fromLegacy];
 
-      const exerciseDocs = await Promise.all(exerciseIds.map(id => getDoc(doc(db, 'exercises', id))));
-      const exerciseDataMap = new Map(exerciseDocs.filter(doc => doc.exists()).map(doc => [doc.id, doc.data()]));
-
-      for (const ex of exercisesInTreino) {
-        const docData = exerciseDataMap.get(ex.exerciseId) || {};
-        
-        // CORREÇÃO CRÍTICA AQUI: LER O CAMPO 'sets' em vez de 'setDetails'
-        const setsData = ex.sets || [];
-
-        const exerciseDetail = {
-          ...docData,
-          ...ex,
-          id: ex.exerciseId || '',
-          exerciseName: ex.exerciseName || docData.nome_pt || 'Exercício Personalizado',
-          description: ex.description || docData.descricao_breve || '',
-          category: ex.category || docData.category || '',
-          targetMuscles: ex.targetMuscles || (docData.musculos_alvo ? docData.musculos_alvo.map(m => m.name || m.id).filter(Boolean) : []),
-          equipment: ex.equipment || docData.equipment || [],
-          // ATUALIZAR ESTA LINHA PARA USAR setsData
-          sets: setsData,
-          notes: ex.notes || '',
-          completed: false,
-        };
-        fetchedDetails.push(exerciseDetail);
-      }
-      
-      console.log('Dados detalhados dos exercícios:', fetchedDetails);
-      setDetailedExercises(fetchedDetails);
-      setLoadingExercisesDetails(false);
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 800,
-        useNativeDriver: true,
-      }).start();
-    };
-
-    if (treino) {
-      fetchExerciseDetails();
+  const normalizeSets = (ex) => {
+    if (Array.isArray(ex?.sets)) return ex.sets;
+    if (Array.isArray(ex?.setDetails)) {
+      return ex.setDetails.map(s => ({ ...s, type: s?.type || s?.seriesType }));
     }
-  }, [treino, fadeAnim]);
+    return [];
+  };
 
+  return merged.map((ex, idx) => ({
+    key: String(idx),
+    id: ex?.exerciseId ?? null,
+    name: ex?.exerciseName || ex?.nome || ex?.name || 'Exercício',
+    description: ex?.description || ex?.descricao_breve || '',
+    category: ex?.category || ex?.categoria || '',
+    imageUrl: ex?.imageUrl || '',
+    animationUrl: ex?.animationUrl || '',
+    notes: ex?.notes || '',
+    sets: normalizeSets(ex),
+    // Estes enriquecimentos são opcionais, caso existam nas tuas docs de exercises:
+    targetMuscles: ex?.targetMuscles || [],
+    equipment: ex?.equipment || [],
+  }));
+}
+
+/** Carrega detalhes de exercícios (nome/descrição/imagem) da coleção exercises quando houver exerciseId */
+async function hydrateFromDB(exercises) {
+  const withIds = exercises.filter(e => e.id);
+  if (!withIds.length) return exercises;
+
+  const docs = await Promise.all(
+    withIds.map(e => getDoc(doc(db, 'exercises', e.id)))
+  );
+
+  const map = new Map(docs.filter(d => d.exists()).map(d => [d.id, d.data()]));
+  return exercises.map(e => {
+    if (!e.id) return e;
+    const dbData = map.get(e.id) || {};
+    return {
+      ...e,
+      name: e.name || dbData?.nome_pt || 'Exercício',
+      description: e.description || dbData?.descricao_breve || '',
+      imageUrl: e.imageUrl || dbData?.imageUrl || '',
+      animationUrl: e.animationUrl || dbData?.animationUrl || '',
+      category: e.category || dbData?.category || '',
+      targetMuscles: e.targetMuscles?.length ? e.targetMuscles : (dbData?.musculos_alvo ? dbData.musculos_alvo.map(m => m.name || m.id).filter(Boolean) : []),
+      equipment: e.equipment?.length ? e.equipment : (dbData?.equipment || []),
+    };
+  });
+}
+
+/** Formata uma série para texto “bonito” */
+function formatSeries(set) {
+  const type = set?.type || set?.seriesType;
+  const fields = SERIES_TYPES[type] || [];
+  const parts = [];
+  for (const f of fields) {
+    const v = set?.[f];
+    if (v !== undefined && v !== null && String(v).trim() !== '') {
+      parts.push(`${FIELD_LABELS[f] || f}: ${String(v)}`);
+    }
+  }
+  return parts.join(' • ');
+}
+
+export default function ExecucaoTreinoScreen() {
+  const route = useRoute();
+  const navigation = useNavigation();
+  const treino = route?.params?.treino || {};
+
+  const [loading, setLoading] = useState(true);
+  const [exercises, setExercises] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  // Checklist de séries concluidas por exercício (boolean[])
+  const [checklist, setChecklist] = useState([]); // Array< Array<boolean> >
+  const [exerciseDone, setExerciseDone] = useState([]); // Array<boolean>
+
+  // Timer
+  const [running, setRunning] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const timerRef = useRef(null);
+
+  // Animação de topo (barra fina de progresso)
+  const progressAnim = useRef(new Animated.Value(0)).current;
+
+  // Modal de vídeo/GIF
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const [mediaUrl, setMediaUrl] = useState('');
+
+  // Modal de feedback final
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [rating, setRating] = useState(0);
+  const [observation, setObservation] = useState('');
+
+  // Carregar/normalizar sessão
   useEffect(() => {
-    if (emExecucao) {
-      timerRef.current = setInterval(() => setTempo((t) => t + 1), 1000);
+    (async () => {
+      try {
+        const base = normalizeExercises(treino);
+        const hydrated = await hydrateFromDB(base);
+        setExercises(hydrated);
+
+        // construir checklists
+        const ck = hydrated.map(ex => (Array.isArray(ex.sets) && ex.sets.length)
+          ? ex.sets.map(() => false)
+          : [] // sem sets
+        );
+        setChecklist(ck);
+        setExerciseDone(hydrated.map(() => false));
+      } catch (e) {
+        console.error('Erro ao carregar detalhes do treino:', e);
+        Alert.alert('Erro', 'Não foi possível carregar os exercícios do treino.');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [treino]);
+
+  // Timer loop
+  useEffect(() => {
+    if (running) {
+      timerRef.current = setInterval(() => setSeconds(s => s + 1), 1000);
     } else if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
     return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
+      if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [emExecucao]);
+  }, [running]);
 
-  const formatarTempo = (totalSegundos) => {
-    const horas = Math.floor(totalSegundos / 3600);
-    const min = Math.floor((totalSegundos % 3600) / 60);
-    const seg = totalSegundos % 60;
+  // Progresso animado (barra top) = % de exercícios concluídos
+  useEffect(() => {
+    const percent = exercises.length
+      ? exerciseDone.filter(Boolean).length / exercises.length
+      : 0;
+    Animated.timing(progressAnim, {
+      toValue: percent,
+      duration: 500,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [exerciseDone, exercises.length, progressAnim]);
 
-    const pad = (num) => String(num).padStart(2, '0');
+  const dataObj = useMemo(() => {
+    const raw =
+      treino?.data?.toDate?.() ??
+      (treino?.data ? new Date(treino.data) : undefined) ??
+      (treino?.dataAgendada ? new Date(treino.dataAgendada) : undefined);
+    return raw instanceof Date && !isNaN(raw) ? raw : null;
+  }, [treino]);
 
-    if (horas === 0) {
-      return `${pad(min)}:${pad(seg)}`;
-    }
-    return `${pad(horas)}:${pad(min)}:${pad(seg)}`;
+  const goPrev = () => {
+    const idx = Math.max(currentIndex - 1, 0);
+    setCurrentIndex(idx);
+    listRef.current?.scrollToIndex({ index: idx, animated: true });
+  };
+  const goNext = () => {
+    const idx = Math.min(currentIndex + 1, Math.max(exercises.length - 1, 0));
+    setCurrentIndex(idx);
+    listRef.current?.scrollToIndex({ index: idx, animated: true });
   };
 
-  const iniciarTreino = () => {
-    setEmExecucao(true);
+  const listRef = useRef(null);
+  const onMomentumEnd = (e) => {
+    const x = e.nativeEvent.contentOffset.x;
+    const i = Math.round(x / width);
+    if (i !== currentIndex) setCurrentIndex(i);
   };
 
-  const pausarTreino = () => {
-    setEmExecucao(false);
+  const formatTime = (s) => {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = s % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return h > 0 ? `${pad(h)}:${pad(m)}:${pad(ss)}` : `${pad(m)}:${pad(ss)}`;
   };
 
-  const resetarTreino = () => {
-    setEmExecucao(false);
-    setTempo(0);
-    setExercisesCompleted(0);
-    setDetailedExercises(detailedExercises.map(ex => ({ ...ex, completed: false })));
+  const toggleSet = (exIdx, setIdx) => {
+    setChecklist(prev => {
+      const next = prev.map(arr => [...arr]);
+      if (!next[exIdx]?.length) return prev;
+      next[exIdx][setIdx] = !next[exIdx][setIdx];
+      return next;
+    });
+    Vibration?.vibrate?.(15);
   };
 
-  const openAnimationModal = (url) => {
-    setCurrentAnimationUrl(url);
-    setIsAnimationModalVisible(true);
+  // Sempre que o checklist muda, ver se o exercício está concluído
+  useEffect(() => {
+    setExerciseDone(prev => {
+      if (!checklist.length) return prev;
+      const next = exercises.map((ex, i) => {
+        const ck = checklist[i];
+        if (!ck?.length) {
+          // Sem sets: considera concluído quando o utilizador marcar manualmente (botão)
+          return prev[i] || false;
+        }
+        const all = ck.every(Boolean);
+        return all;
+      });
+      return next;
+    });
+  }, [checklist, exercises]);
+
+  const markExerciseDoneManually = (idx) => {
+    setExerciseDone(prev => {
+      const next = [...prev];
+      next[idx] = true;
+      return next;
+    });
+    Vibration?.vibrate?.(20);
   };
 
-  const closeAnimationModal = () => {
-    setIsAnimationModalVisible(false);
-    setCurrentAnimationUrl('');
+  const openMedia = (url) => {
+    setMediaUrl(url);
+    setMediaOpen(true);
   };
 
-  const toggleExerciseCompleted = (index) => {
-    const newExercises = [...detailedExercises];
-    const exercise = newExercises[index];
-    exercise.completed = !exercise.completed;
-
-    if (exercise.completed) {
-      setExercisesCompleted(prev => prev + 1);
-    } else {
-      setExercisesCompleted(prev => prev - 1);
-    }
-    setDetailedExercises(newExercises);
+  const closeMedia = () => {
+    setMediaOpen(false);
+    setMediaUrl('');
   };
 
-  const concluirTreino = async () => {
-    pausarTreino();
-
+  const finishWorkout = () => {
+    setRunning(false);
+    const doneCount = exerciseDone.filter(Boolean).length;
+    const total = exercises.length;
     Alert.alert(
-      'Concluir Treino',
-      `Deseja realmente concluir o treino "${String(treino.nome)}" com duração de ${formatarTempo(tempo)}?`,
+      'Concluir treino',
+      `Concluir "${String(treino?.nome || treino?.name || 'Treino')}"?\nProgresso: ${doneCount}/${total} exercícios concluídos.\nDuração: ${formatTime(seconds)}`,
       [
-        {
-          text: 'Cancelar',
-          style: 'cancel',
-          onPress: () => iniciarTreino(),
-        },
-        {
-          text: 'Concluir',
-          onPress: () => {
-            setFeedbackModalVisible(true);
-          },
-        },
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Concluir', onPress: () => setFeedbackOpen(true) }
       ]
     );
   };
 
-  const handleSendFeedback = async () => {
-    if (!treino.id) {
-      Alert.alert('Erro', 'ID do treino não encontrado. Não foi possível registar o feedback.');
-      return;
-    }
-
+  const sendFeedbackAndSave = async () => {
     try {
       const userId = await getUserIdLoggedIn();
       if (!userId) {
@@ -214,666 +329,513 @@ export default function ExecucaoTreinoScreen({ route, navigation }) {
         return;
       }
 
-      const chaveAsyncStorage = `treinosConcluidos_${userId}`;
-      const dadosAtuaisJson = await AsyncStorage.getItem(chaveAsyncStorage);
-      const dadosAtuais = dadosAtuaisJson ? JSON.parse(dadosAtuaisJson) : {};
-      dadosAtuais[treino.id] = { completed: true, duration: tempo };
-      await AsyncStorage.setItem(chaveAsyncStorage, JSON.stringify(dadosAtuais));
+      // Persistência local de concluído (como já tinhas)
+      if (treino?.id) {
+        const key = `treinosConcluidos_${userId}`;
+        const json = await AsyncStorage.getItem(key);
+        const map = json ? JSON.parse(json) : {};
+        map[treino.id] = { completed: true, duration: seconds };
+        await AsyncStorage.setItem(key, JSON.stringify(map));
+      }
 
-      await salvarTreinoConcluido(
-        userId,
-        treino,
-        tempo,
-        workoutRating,
-        workoutObservation
-      );
+      // Firestore (service existente)
+      await salvarTreinoConcluido(userId, treino, seconds, rating, observation);
 
       Alert.alert('Sucesso', 'Treino concluído e feedback registado!');
-      setFeedbackModalVisible(false);
+      setFeedbackOpen(false);
       navigation.goBack();
-    } catch (error) {
-      console.error('Erro ao salvar treino concluído e feedback:', error);
-      Alert.alert('Erro', 'Não foi possível registar o treino e o feedback. Tente novamente.');
+    } catch (e) {
+      console.error('Erro ao salvar treino concluído:', e);
+      Alert.alert('Erro', 'Não foi possível registar o treino/feedback.');
     }
   };
 
-  const renderSetDetail = (set, type) => {
-    const detailText = [];
-    const fields = seriesTypes[type]?.fields || [];
+  // UI helpers
+  const totalSets = useMemo(() => {
+    return exercises.reduce((acc, ex) => acc + (ex.sets?.length || 0), 0);
+  }, [exercises]);
+  const doneSets = useMemo(() => {
+    if (!checklist.length) return 0;
+    return checklist.reduce((acc, arr) => acc + (arr?.filter(Boolean).length || 0), 0);
+  }, [checklist]);
+  const overallPercent = totalSets ? Math.round((doneSets / totalSets) * 100) : 0;
 
-    fields.forEach(field => {
-      // Usar 'type' do objeto set para compatibilidade com o CriarTreinosScreen.js
-      if (set[field]) {
-        const label = seriesFieldLabels[field] || field.charAt(0).toUpperCase() + field.slice(1);
-        detailText.push(`${label}: ${set[field]}`);
-      }
-    });
+  // header progress width
+  const headerProgressWidth = progressAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0%', '100%'],
+  });
 
-    return detailText.join(' | ');
+  const renderExercise = ({ item, index }) => {
+    const sets = Array.isArray(item.sets) ? item.sets : [];
+    const ckRow = checklist[index] || [];
+
+    return (
+      <View style={styles.slide}>
+        <View style={styles.slideHeader}>
+          <View style={{ flex: 1, paddingRight: 8 }}>
+            <Text style={styles.exerciseName} numberOfLines={1}>
+              {index + 1}. {item.name}
+            </Text>
+            {!!item.category && <Text style={styles.exerciseCategory}>{item.category}</Text>}
+          </View>
+
+          {item.animationUrl ? (
+            <TouchableOpacity onPress={() => openMedia(item.animationUrl)} style={styles.mediaBtn}>
+              <Ionicons name="play-circle-outline" size={28} color={Palette.onPrimary} />
+              <Text style={styles.mediaBtnText}>Ver animação</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        {item.imageUrl ? (
+          <Image source={{ uri: item.imageUrl }} style={styles.exerciseImage} resizeMode="cover" />
+        ) : (
+          <View style={styles.imagePlaceholder}>
+            <MaterialCommunityIcons name="dumbbell" size={38} color={Palette.primary} />
+          </View>
+        )}
+
+        {!!item.description && (
+          <View style={styles.descriptionBox}>
+            <Text style={styles.descriptionText}>{item.description}</Text>
+          </View>
+        )}
+
+        {/* Séries */}
+        {sets.length > 0 ? (
+          <View style={styles.setsCard}>
+            <View style={styles.setsHeader}>
+              <Text style={styles.setsTitle}>Séries</Text>
+              <Text style={styles.setsCounter}>
+                {ckRow.filter(Boolean).length}/{sets.length}
+              </Text>
+            </View>
+
+            {sets.map((s, i) => {
+              const isChecked = !!ckRow[i];
+              return (
+                <TouchableOpacity
+                  key={i}
+                  style={[styles.setRow, isChecked && styles.setRowChecked]}
+                  onPress={() => toggleSet(index, i)}
+                >
+                  <View style={[styles.checkCircle, isChecked && styles.checkCircleOn]}>
+                    {isChecked ? <Ionicons name="checkmark" size={14} color={Palette.onPrimary} /> : null}
+                  </View>
+                  <Text style={[styles.setText, isChecked && styles.setTextChecked]} numberOfLines={2}>
+                    {formatSeries(s) || 'Série'}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={styles.noSetsBox}>
+            <Text style={styles.noSetsText}>Este exercício não tem séries definidas.</Text>
+            {!exerciseDone[index] && (
+              <TouchableOpacity style={styles.manualDoneBtn} onPress={() => markExerciseDoneManually(index)}>
+                <Ionicons name="checkmark-circle" size={20} color={Palette.onSecondary} />
+                <Text style={styles.manualDoneText}>Marcar exercício concluído</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {/* Estado do exercício */}
+        <View style={styles.exerciseFooter}>
+          <View style={styles.footerLeft}>
+            {exerciseDone[index] ? (
+              <View style={styles.doneChip}>
+                <Ionicons name="checkmark-circle" size={16} color={Palette.onSecondary} />
+                <Text style={styles.doneChipText}>Concluído</Text>
+              </View>
+            ) : (
+              <View style={styles.progressChip}>
+                <Ionicons name="time-outline" size={16} color={Palette.onSecondary} />
+                <Text style={styles.progressChipText}>Em progresso</Text>
+              </View>
+            )}
+          </View>
+          <View style={styles.footerRight}>
+            <TouchableOpacity style={[styles.navBtn, { opacity: index === 0 ? 0.5 : 1 }]} disabled={index === 0} onPress={goPrev}>
+              <Ionicons name="chevron-back" size={22} color={Palette.onSecondary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.navBtn, { opacity: index === exercises.length - 1 ? 0.5 : 1 }]}
+              disabled={index === exercises.length - 1}
+              onPress={goNext}
+            >
+              <Ionicons name="chevron-forward" size={22} color={Palette.onSecondary} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
   };
 
-  const progress = detailedExercises.length > 0 ? (exercisesCompleted / detailedExercises.length) * 100 : 0;
+  if (loading) {
+    return (
+      <SafeAreaView style={[styles.safeArea, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={Palette.primary} />
+        <Text style={{ marginTop: 10, color: Palette.textSecondary }}>A carregar treino…</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <LinearGradient
-        colors={[Colors.background, Colors.surface]}
-        style={styles.gradientBackground}
-      >
-        <View style={styles.headerContainer}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color={Colors.primaryDark} />
-          </TouchableOpacity>
-          <View style={styles.headerTitleContainer}>
-            <Text style={styles.titulo}>{String(treino.nome)}</Text>
-          </View>
-        </View>
-        <View style={styles.progressBarContainer}>
-          <View style={styles.progressBarBackground} />
-          <Animated.View style={[styles.progressBar, { width: `${progress}%` }]} />
+      <StatusBar barStyle="light-content" />
+      {/* Header */}
+      <LinearGradient colors={[Palette.primary, Palette.primaryLight]} style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerBack}>
+          <Ionicons name="arrow-back" size={24} color={Palette.onPrimary} />
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {treino?.nome || treino?.name || 'Sessão de Treino'}
+          </Text>
+          <Text style={styles.headerSubtitle} numberOfLines={1}>
+            {(treino?.categoria || treino?.category || '—')} • {dataObj ? dataObj.toLocaleDateString() : 'Sem data'}
+          </Text>
         </View>
 
-        <ScrollView style={styles.scrollView}>
-          <Animated.View style={[styles.scrollContentContainer, { opacity: fadeAnim }]}>
-            <View style={styles.infoCard}>
-              <Text style={styles.subtitulo}>{String(treino.categoria)}</Text>
-              <Text style={styles.descricao}>{String(treino.descricao)}</Text>
-            </View>
-
-            <View style={styles.exercisesSection}>
-              <Text style={styles.sectionTitle}>Exercícios</Text>
-              {loadingExercisesDetails ? (
-                <ActivityIndicator size="large" color={Colors.accent} style={{ marginTop: 20 }} />
-              ) : (
-                detailedExercises.length > 0 ? (
-                  detailedExercises.map((ex, idx) => (
-                    <TouchableOpacity
-                      key={idx}
-                      style={[styles.exercicioCard, ex.completed && styles.exercicioCardCompleted]}
-                      onPress={() => toggleExerciseCompleted(idx)}
-                    >
-                      <View style={styles.exercicioHeader}>
-                        <Text style={styles.exercicioNome}>
-                          {`${idx + 1}. ${String(ex.exerciseName)}`}
-                        </Text>
-                        {ex.animationUrl && (
-                          <TouchableOpacity
-                            onPress={() => openAnimationModal(ex.animationUrl)}
-                            style={styles.animationIcon}
-                          >
-                            <Ionicons name="play-circle-outline" size={30} color={Colors.primaryLight} />
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                      {ex.imageUrl ? (
-                        <Image
-                          source={{ uri: ex.imageUrl }}
-                          style={styles.exercicioImage}
-                          resizeMode="cover"
-                        />
-                      ) : null}
-                      {ex.description ? (
-                        <Text style={styles.exercicioDescription}>{ex.description}</Text>
-                      ) : null}
-                      {/* ALTERAR ESTA CONDIÇÃO PARA USAR A NOVA PROPRIEDADE 'sets' */}
-                      {ex.sets && ex.sets.length > 0 && (
-                        <View style={styles.seriesContainer}>
-                          <Text style={styles.seriesTitle}>Séries:</Text>
-                          {ex.sets.map((set, setIndex) => (
-                            <View key={setIndex} style={styles.setCard}>
-                              {/* USAR set.type para obter o rótulo */}
-                              <Text style={styles.setCardTitle}>
-                                {seriesTypes[set.type]?.label || 'Série Personalizada'} {setIndex + 1}
-                              </Text>
-                              {/* USAR set.type para obter o detalhe correto */}
-                              <Text style={styles.setDetailText}>{renderSetDetail(set, set.type)}</Text>
-                            </View>
-                          ))}
-                        </View>
-                      )}
-                      {ex.completed && (
-                        <View style={styles.completedOverlay}>
-                          <Ionicons name="checkmark-circle-outline" size={50} color={Colors.success} />
-                        </View>
-                      )}
-                    </TouchableOpacity>
-                  ))
-                ) : (
-                  <Text style={styles.semExercicios}>Nenhum exercício cadastrado.</Text>
-                )
-              )}
-            </View>
-          </Animated.View>
-        </ScrollView>
-
-        <View style={styles.bottomBar}>
-          <TouchableOpacity onPress={concluirTreino} style={styles.botaoConcluir}>
-            <Ionicons name="checkmark-circle-outline" size={24} color={Colors.secondaryDark} />
-            <Text style={styles.botaoTextoConcluir}>Concluir Treino</Text>
-          </TouchableOpacity>
-          <View style={styles.timerControlContainer}>
-            <Text style={styles.tempo}>{formatarTempo(tempo)}</Text>
-            <View style={styles.timerButtonRow}>
-              <TouchableOpacity style={[styles.botao, styles.botaoIniciar]} onPress={iniciarTreino} disabled={emExecucao}>
-                <Ionicons name="play" size={24} color={Colors.surface} />
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.botao, styles.botaoPausar]} onPress={pausarTreino} disabled={!emExecucao}>
-                <Ionicons name="pause" size={24} color={Colors.surface} />
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.botao, styles.botaoResetar]} onPress={resetarTreino}>
-                <Ionicons name="refresh" size={24} color={Colors.surface} />
-              </TouchableOpacity>
-            </View>
-          </View>
+        {/* Timer pill */}
+        <View style={styles.timerPill}>
+          <Ionicons name="time-outline" size={16} color={Palette.onSecondary} />
+          <Text style={styles.timerText}>{formatTime(seconds)}</Text>
         </View>
-
-        {/* Modal de Animação */}
-        <Modal
-          animationType="fade"
-          transparent={true}
-          visible={isAnimationModalVisible}
-          onRequestClose={closeAnimationModal}
-        >
-          <View style={styles.animationModalOverlay}>
-            <View style={styles.animationModalContent}>
-              {currentAnimationUrl ? (
-                <WebView
-                  source={{
-                    html: `
-                      <html>
-                      <head>
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-                        <style>
-                          body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: black; overflow: hidden; }
-                          img, video { max-width: 100%; max-height: 100%; object-fit: contain; }
-                        </style>
-                      </head>
-                      <body>
-                        ${currentAnimationUrl.endsWith('.gif') ?
-                        `<img src="${currentAnimationUrl}" loop autoplay>` :
-                        `<video src="${currentAnimationUrl}" autoplay loop controls style="width:100%; height:100%;"></video>`
-                      }
-                      </body>
-                      </html>
-                    `
-                  }}
-                  style={styles.webView}
-                  allowsFullscreenVideo={true}
-                  mediaPlaybackRequiresUserAction={false}
-                  javaScriptEnabled={true}
-                  domStorageEnabled={true}
-                  containerStyle={{ width: width * 0.9, height: height * 0.6 }}
-                />
-              ) : (
-                <Text style={styles.noAnimationText}>Nenhuma animação disponível.</Text>
-              )}
-              <TouchableOpacity onPress={closeAnimationModal} style={styles.animationModalCloseButton}>
-                <Text style={styles.animationModalCloseButtonText}>Fechar</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
-
-        {/* Modal de Feedback do Treino */}
-        <Modal
-          animationType="slide"
-          transparent={true}
-          visible={feedbackModalVisible}
-          onRequestClose={() => setFeedbackModalVisible(false)}
-        >
-          <View style={styles.feedbackModalOverlay}>
-            <View style={styles.feedbackModalContent}>
-              <Text style={styles.feedbackModalTitle}>Avalie o Treino</Text>
-              <Text style={styles.feedbackModalSubtitle}>Como foi o seu treino?</Text>
-              <View style={styles.starRatingContainer}>
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <TouchableOpacity key={star} onPress={() => setWorkoutRating(star)}>
-                    <MaterialCommunityIcons
-                      name={star <= workoutRating ? 'star' : 'star-outline'}
-                      size={40}
-                      color={star <= workoutRating ? Colors.accent : Colors.secondaryLight}
-                      style={styles.starIcon}
-                    />
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <Text style={styles.feedbackModalSubtitle}>Observações (Opcional):</Text>
-              <TextInput
-                style={styles.observationInput}
-                placeholder="Ex: Treino desafiador, gostei dos exercícios de perna."
-                placeholderTextColor={Colors.secondaryLight}
-                multiline
-                numberOfLines={4}
-                value={workoutObservation}
-                onChangeText={setWorkoutObservation}
-              />
-              <View style={styles.feedbackModalButtons}>
-                <TouchableOpacity
-                  style={[styles.feedbackButton, { backgroundColor: Colors.error }]}
-                  onPress={() => setFeedbackModalVisible(false)}
-                >
-                  <Text style={styles.feedbackButtonText}>Cancelar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.feedbackButton, { backgroundColor: Colors.success }]}
-                  onPress={handleSendFeedback}
-                >
-                  <Text style={styles.feedbackButtonText}>Enviar Feedback</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
       </LinearGradient>
+
+      {/* Thin progress (exercícios concluídos) */}
+      <View style={styles.topProgressBar}>
+        <Animated.View style={[styles.topProgressFill, { width: headerProgressWidth }]} />
+      </View>
+
+      {/* Barra de KPI */}
+      <View style={styles.kpisRow}>
+        <View style={styles.kpiCard}>
+          <Text style={styles.kpiValue}>{exercises.length}</Text>
+          <Text style={styles.kpiLabel}>Exercícios</Text>
+        </View>
+        <View style={styles.kpiCard}>
+          <Text style={styles.kpiValue}>{doneSets}/{totalSets}</Text>
+          <Text style={styles.kpiLabel}>Séries</Text>
+        </View>
+        <View style={styles.kpiCardAccent}>
+          <Text style={styles.kpiValueAccent}>{overallPercent}%</Text>
+          <Text style={styles.kpiLabelAccent}>Progresso</Text>
+        </View>
+      </View>
+
+      {/* Carrossel de exercícios */}
+      <FlatList
+        ref={listRef}
+        data={exercises}
+        keyExtractor={(item) => item.key}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={onMomentumEnd}
+        contentContainerStyle={{ paddingHorizontal: 16 }}
+        renderItem={renderExercise}
+      />
+
+      {/* Dock inferior */}
+      <View style={styles.bottomDock}>
+        <TouchableOpacity
+          onPress={() => setRunning(prev => !prev)}
+          style={[styles.dockBtn, running ? styles.dockPause : styles.dockPlay]}
+        >
+          <Ionicons name={running ? 'pause' : 'play'} size={22} color={Palette.onPrimary} />
+          <Text style={styles.dockBtnText}>{running ? 'Pausar' : 'Iniciar'}</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={finishWorkout} style={[styles.dockBtn, styles.dockFinish]}>
+          <Ionicons name="checkmark-circle-outline" size={22} color={Palette.onSecondary} />
+          <Text style={[styles.dockBtnText, { color: Palette.onSecondary }]}>Concluir</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Modal Animação */}
+      <Modal visible={mediaOpen} transparent animationType="fade" onRequestClose={closeMedia}>
+        <View style={styles.mediaModalOverlay}>
+          <View style={styles.mediaModalContent}>
+            {mediaUrl ? (
+              <WebView
+                source={{
+                  html: `
+                  <html>
+                    <head>
+                      <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+                      <style>
+                        body { margin:0; display:flex; align-items:center; justify-content:center; height:100vh; background:#000; }
+                        img, video { max-width:100%; max-height:100%; object-fit:contain; }
+                      </style>
+                    </head>
+                    <body>
+                      ${mediaUrl.endsWith('.gif')
+                        ? `<img src="${mediaUrl}" />`
+                        : `<video src="${mediaUrl}" autoplay loop controls></video>`
+                      }
+                    </body>
+                  </html>`
+                }}
+                style={{ width: '100%', height: '85%' }}
+                allowsFullscreenVideo
+                javaScriptEnabled
+                domStorageEnabled
+              />
+            ) : (
+              <Text style={{ color: Palette.onPrimary }}>Sem media disponível.</Text>
+            )}
+            <TouchableOpacity onPress={closeMedia} style={styles.mediaCloseBtn}>
+              <Text style={styles.mediaCloseText}>Fechar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal Feedback */}
+      <Modal visible={feedbackOpen} transparent animationType="slide" onRequestClose={() => setFeedbackOpen(false)}>
+        <View style={styles.feedbackOverlay}>
+          <View style={styles.feedbackCard}>
+            <Text style={styles.feedbackTitle}>Avalie o Treino</Text>
+            <View style={styles.starsRow}>
+              {[1,2,3,4,5].map(s => (
+                <TouchableOpacity key={s} onPress={() => setRating(s)}>
+                  <MaterialCommunityIcons
+                    name={s <= rating ? 'star' : 'star-outline'}
+                    size={36}
+                    color={s <= rating ? Palette.secondary : '#E8D8A0'}
+                    style={{ marginHorizontal: 4 }}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.feedbackLabel}>Observações (opcional)</Text>
+            <TextInput
+              style={styles.feedbackInput}
+              placeholder="Ex.: Excelente sessão, senti evolução no agachamento."
+              placeholderTextColor="#B7B7B7"
+              value={observation}
+              onChangeText={setObservation}
+              multiline
+            />
+
+            <View style={styles.feedbackActions}>
+              <TouchableOpacity style={[styles.feedbackBtn, { backgroundColor: Palette.danger }]} onPress={() => setFeedbackOpen(false)}>
+                <Text style={styles.feedbackBtnText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.feedbackBtn, { backgroundColor: Palette.success }]} onPress={sendFeedbackAndSave}>
+                <Text style={styles.feedbackBtnText}>Enviar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
+/* ====================== STYLES ====================== */
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-  },
-  gradientBackground: {
-    flex: 1,
-  },
-  headerContainer: {
-    backgroundColor: Colors.primary,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
-    paddingBottom: 15,
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
+  safeArea: { flex: 1, backgroundColor: Palette.background },
+
+  header: {
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 6 : 12,
+    paddingBottom: 14,
+    paddingHorizontal: 16,
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    ...Platform.select({
-      ios: {
-        shadowColor: Colors.secondary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 5,
-      },
-    }),
+    gap: 12,
   },
-  backButton: {
-    position: 'absolute',
-    left: 20,
-    top: Platform.OS === 'android' ? StatusBar.currentHeight + 10 : 10,
-    zIndex: 1,
-    padding: 5,
-  },
-  headerTitleContainer: {
-    flex: 1,
+  headerBack: { padding: 6 },
+  headerTitle: { color: Palette.onPrimary, fontSize: 18, fontWeight: '700' },
+  headerSubtitle: { color: Palette.onPrimary, opacity: 0.85, marginTop: 2 },
+
+  timerPill: {
+    backgroundColor: '#FFF7E0',
+    borderColor: Palette.secondary,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 50,
+    gap: 6,
   },
-  titulo: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: Colors.primaryDark,
-    textAlign: 'center',
-  },
-  progressBarContainer: {
-    height: 5,
-    width: '100%',
-    backgroundColor: Colors.background,
-  },
-  progressBarBackground: {
-    height: 5,
-    width: '100%',
-    backgroundColor: Colors.secondaryLight,
-    position: 'absolute',
-    borderRadius: 5,
-  },
-  progressBar: {
-    height: 5,
-    backgroundColor: Colors.accent,
-    borderRadius: 5,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContentContainer: {
-    padding: 20,
-    paddingBottom: 100,
-  },
-  infoCard: {
-    backgroundColor: Colors.surface,
-    padding: 20,
-    borderRadius: 20,
-    marginBottom: 20,
-    ...Platform.select({
-      ios: {
-        shadowColor: Colors.secondary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 5,
-      },
-    }),
-  },
-  subtitulo: {
-    fontSize: 18,
-    color: Colors.primary,
-    textAlign: 'center',
-    marginBottom: 8,
-    fontStyle: 'italic',
-  },
-  descricao: {
-    fontSize: 16,
-    color: Colors.secondaryLight,
-    textAlign: 'center',
-  },
-  exercisesSection: {
-    marginTop: 10,
-  },
-  sectionTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    marginBottom: 15,
-    color: Colors.secondaryDark,
-  },
-  exercicioCard: {
-    backgroundColor: Colors.cardBackground,
-    padding: 20,
-    borderRadius: 20,
-    marginBottom: 15,
-    position: 'relative',
+  timerText: { color: Palette.onSecondary, fontWeight: '700' },
+
+  topProgressBar: {
+    height: 4,
+    backgroundColor: '#F8EFC8',
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 4,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'transparent',
-    ...Platform.select({
-      ios: {
-        shadowColor: Colors.secondary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 3,
-      },
-    }),
   },
-  exercicioCardCompleted: {
-    borderColor: Colors.success,
-    backgroundColor: '#F0F9F5',
+  topProgressFill: {
+    height: 4,
+    backgroundColor: Palette.secondary,
   },
-  completedOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  exercicioHeader: {
+
+  kpisRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  exercicioNome: {
-    fontSize: 19,
-    fontWeight: '600',
-    color: Colors.primary,
-    flexShrink: 1,
-  },
-  animationIcon: {
-    padding: 5,
-  },
-  exercicioDescription: {
-    fontSize: 14,
-    color: Colors.secondaryLight,
-    marginBottom: 10,
-    fontStyle: 'italic',
-  },
-  exercicioImage: {
-    width: '100%',
-    height: 200,
-    borderRadius: 15,
-    marginTop: 10,
-    marginBottom: 10,
-    backgroundColor: Colors.background,
-  },
-  seriesContainer: {
-    marginTop: 15,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: Colors.background,
-  },
-  seriesTitle: {
-    fontSize: 17,
-    fontWeight: 'bold',
-    color: Colors.secondaryDark,
-    marginBottom: 10,
-  },
-  setCard: {
-    backgroundColor: Colors.background,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.accent,
-  },
-  setCardTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: Colors.secondaryDark,
-    marginBottom: 5,
-  },
-  setDetailText: {
-    fontSize: 14,
-    color: Colors.secondaryLight,
-  },
-  semExercicios: {
-    fontStyle: 'italic',
-    color: Colors.secondaryLight,
-    textAlign: 'center',
-    marginTop: 20,
-  },
-  bottomBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: Colors.surface,
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 15,
-    alignItems: 'center',
-    ...Platform.select({
-      ios: {
-        shadowColor: Colors.secondary,
-        shadowOffset: { width: 0, height: -2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 8,
-      },
-    }),
-  },
-  botaoConcluir: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.accent,
-    width: '100%',
-    paddingVertical: 16,
-    borderRadius: 15,
-    elevation: 3,
-    marginBottom: 15,
-  },
-  botaoTextoConcluir: {
-    color: Colors.secondaryDark,
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginLeft: 10,
-  },
-  timerControlContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    width: '100%',
-  },
-  tempo: {
-    fontSize: 30,
-    fontWeight: 'bold',
-    color: Colors.accent,
-    fontVariant: ['tabular-nums'],
-    flex: 1,
-    textAlign: 'center',
-  },
-  timerButtonRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-  },
-  botao: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    marginHorizontal: 5,
-    elevation: 5,
-    shadowColor: Colors.secondary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-  },
-  botaoIniciar: {
-    backgroundColor: Colors.success,
-  },
-  botaoPausar: {
-    backgroundColor: Colors.warning,
-  },
-  botaoResetar: {
-    backgroundColor: Colors.error,
-  },
-  animationModalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-  },
-  animationModalContent: {
-    backgroundColor: Colors.secondaryDark,
-    borderRadius: 15,
-    width: '95%',
-    height: '70%',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 10,
-  },
-  webView: {
-    flex: 1,
-    width: '100%',
-    backgroundColor: Colors.secondaryDark,
-  },
-  noAnimationText: {
-    color: Colors.surface,
-    fontSize: 18,
-    textAlign: 'center',
-  },
-  animationModalCloseButton: {
-    marginTop: 15,
-    backgroundColor: Colors.accent,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-  },
-  animationModalCloseButtonText: {
-    color: Colors.secondaryDark,
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  feedbackModalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-  },
-  feedbackModalContent: {
-    backgroundColor: Colors.surface,
-    borderRadius: 15,
-    padding: 25,
-    width: '90%',
-    alignItems: 'center',
-    ...Platform.select({
-      ios: {
-        shadowColor: Colors.secondary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 10,
-      },
-    }),
-  },
-  feedbackModalTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: Colors.primaryDark,
-    marginBottom: 10,
-  },
-  feedbackModalSubtitle: {
-    fontSize: 16,
-    color: Colors.secondaryDark,
-    marginBottom: 15,
-    textAlign: 'center',
-  },
-  starRatingContainer: {
-    flexDirection: 'row',
-    marginBottom: 20,
-  },
-  starIcon: {
-    marginHorizontal: 4,
-  },
-  observationInput: {
-    borderWidth: 1,
-    borderColor: Colors.primaryLight,
-    borderRadius: 8,
-    padding: 10,
-    width: '100%',
-    minHeight: 100,
-    textAlignVertical: 'top',
-    fontSize: 16,
-    color: Colors.secondary,
-    marginBottom: 20,
-    backgroundColor: Colors.background,
-  },
-  feedbackModalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
-  },
-  feedbackButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
     paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    alignItems: 'center',
+  },
+  kpiCard: {
     flex: 1,
-    marginHorizontal: 5,
-    elevation: 3,
+    backgroundColor: Palette.surface,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Palette.divider,
+    alignItems: 'center',
   },
-  feedbackButtonText: {
-    color: Colors.surface,
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginLeft: 8,
+  kpiValue: { fontSize: 18, fontWeight: '800', color: Palette.textPrimary },
+  kpiLabel: { color: Palette.textSecondary, marginTop: 2 },
+  kpiCardAccent: {
+    flex: 1,
+    backgroundColor: '#FFF7E0',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Palette.secondary,
+    alignItems: 'center',
   },
+  kpiValueAccent: { fontSize: 18, fontWeight: '800', color: Palette.onSecondary },
+  kpiLabelAccent: { color: Palette.onSecondary, marginTop: 2 },
+
+  slide: {
+    width: width - 32,
+    marginRight: 16,
+    backgroundColor: Palette.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Palette.divider,
+    padding: 14,
+  },
+  slideHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  exerciseName: { fontSize: 18, fontWeight: '800', color: Palette.primary },
+  exerciseCategory: { color: Palette.textSecondary, marginTop: 2 },
+  mediaBtn: {
+    backgroundColor: Palette.secondary,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  mediaBtnText: { color: Palette.onSecondary, fontWeight: '800' },
+
+  exerciseImage: { width: '100%', height: 190, borderRadius: 12, backgroundColor: Palette.background },
+  imagePlaceholder: {
+    width: '100%', height: 190, borderRadius: 12, backgroundColor: Palette.background,
+    alignItems: 'center', justifyContent: 'center',
+  },
+
+  descriptionBox: { backgroundColor: Palette.surface, padding: 10, borderRadius: 10, marginTop: 10, borderWidth: 1, borderColor: Palette.divider },
+  descriptionText: { color: Palette.textSecondary },
+
+  setsCard: { backgroundColor: Palette.surface, borderRadius: 12, padding: 10, marginTop: 12, borderWidth: 1, borderColor: Palette.divider },
+  setsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  setsTitle: { fontSize: 16, fontWeight: '800', color: Palette.textPrimary },
+  setsCounter: { color: Palette.textSecondary, fontWeight: '700' },
+
+  setRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    marginVertical: 4,
+    backgroundColor: '#FAFAFA',
+    borderWidth: 1,
+    borderColor: Palette.divider,
+  },
+  setRowChecked: {
+    backgroundColor: '#F0F9F5',
+    borderColor: Palette.success,
+  },
+  checkCircle: {
+    width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: Palette.secondary,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent',
+  },
+  checkCircleOn: { backgroundColor: Palette.secondary, borderColor: Palette.secondary },
+  setText: { flex: 1, color: Palette.textPrimary },
+  setTextChecked: { color: Palette.primary },
+
+  noSetsBox: { backgroundColor: Palette.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: Palette.divider, marginTop: 12 },
+  noSetsText: { color: Palette.textSecondary, marginBottom: 10 },
+  manualDoneBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: Palette.secondary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  manualDoneText: { color: Palette.onSecondary, fontWeight: '800' },
+
+  exerciseFooter: { marginTop: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  footerLeft: { flexDirection: 'row', gap: 8 },
+  doneChip: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#E9F7EF', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20 },
+  doneChipText: { color: Palette.onSecondary, fontWeight: '700' },
+  progressChip: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#FFF7E0', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: Palette.secondary },
+  progressChipText: { color: Palette.onSecondary, fontWeight: '700' },
+  footerRight: { flexDirection: 'row', gap: 8 },
+  navBtn: { backgroundColor: Palette.secondary, borderRadius: 10, padding: 10 },
+
+  bottomDock: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    backgroundColor: Palette.surface,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    padding: 14,
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, shadowOffset: { width: 0, height: -2 } },
+      android: { elevation: 18 },
+    }),
+  },
+  dockBtn: {
+    flex: 1, paddingVertical: 14, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    flexDirection: 'row', gap: 8,
+  },
+  dockPlay: { backgroundColor: Palette.primary },
+  dockPause: { backgroundColor: '#334652' },
+  dockFinish: { backgroundColor: Palette.secondary },
+  dockBtnText: { color: Palette.onPrimary, fontWeight: '800', fontSize: 16 },
+
+  /* Media Modal */
+  mediaModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  mediaModalContent: { backgroundColor: '#000', borderRadius: 14, width: '100%', maxWidth: 700, height: '70%', padding: 10 },
+  mediaCloseBtn: { marginTop: 10, alignSelf: 'center', backgroundColor: Palette.secondary, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10 },
+  mediaCloseText: { color: Palette.onSecondary, fontWeight: '800' },
+
+  /* Feedback Modal */
+  feedbackOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  feedbackCard: { backgroundColor: Palette.surface, width: '100%', maxWidth: 680, borderRadius: 16, padding: 16 },
+  feedbackTitle: { fontSize: 20, fontWeight: '800', color: Palette.primary, textAlign: 'center' },
+  starsRow: { flexDirection: 'row', alignSelf: 'center', marginTop: 10 },
+  feedbackLabel: { color: Palette.textSecondary, marginTop: 14, marginBottom: 6 },
+  feedbackInput: {
+    borderWidth: 1, borderColor: Palette.divider, borderRadius: 12, padding: 12,
+    minHeight: 90, textAlignVertical: 'top', color: Palette.textPrimary, backgroundColor: '#FBFBFB',
+  },
+  feedbackActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  feedbackBtn: { flex: 1, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  feedbackBtnText: { color: Palette.onPrimary, fontWeight: '800' },
 });

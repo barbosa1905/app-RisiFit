@@ -92,8 +92,8 @@ android {
         applicationId 'com.anonymous.appRisiFit'
         minSdkVersion 31
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 6 // <--- MUDADO AQUI
-        versionName "1.0.6" // <--- MUDADO AQUI (exemplo)
+        versionCode 11 // <--- MUDADO AQUI
+        versionName "1.1.1" // <--- MUDADO AQUI (exemplo)
     }
     signingConfigs {
         debug {

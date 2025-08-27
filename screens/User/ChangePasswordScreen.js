@@ -1,0 +1,88 @@
+// screens/User/ChangePasswordScreen.js
+import React, { useState } from 'react';
+import {
+  View, Text, StyleSheet, TouchableOpacity, StatusBar, Platform, Alert, ScrollView
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useNavigation } from '@react-navigation/native';
+import { auth } from '../../services/firebaseConfig';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import Colors from '../../constants/Colors';
+
+export default function ChangePasswordScreen() {
+  const navigation = useNavigation();
+  const user = auth.currentUser;
+  const [loading, setLoading] = useState(false);
+
+  const sendReset = async () => {
+    if (!user?.email) return Alert.alert('Erro', 'Não foi possível obter o teu email.');
+    try {
+      setLoading(true);
+      await sendPasswordResetEmail(auth, user.email);
+      Alert.alert('Enviado', 'Recebeste um email para redefinir a tua palavra-passe.');
+      navigation.goBack();
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Erro', 'Não foi possível enviar o email de redefinição.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
+      {/* Top Bar */}
+      <View style={styles.topBarWrap}>
+        <LinearGradient colors={[Colors.primary, '#22313B']} style={StyleSheet.absoluteFill} />
+        <View style={styles.topBarRow}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconBtn}>
+            <Ionicons name="arrow-back" size={20} color={Colors.onPrimary} />
+          </TouchableOpacity>
+          <View style={styles.brandCenter} pointerEvents="none">
+            <Text style={styles.brandRisi}>RISI</Text>
+            <Text style={styles.brandFit}> FIT</Text>
+          </View>
+          <View style={{ width: 36 }} />
+        </View>
+      </View>
+
+      <ScrollView contentContainerStyle={{ padding: 16 }}>
+        <Text style={styles.title}>Alterar palavra-passe</Text>
+        <Text style={styles.subtitle}>
+          Vamos enviar um email para <Text style={{ fontWeight: '900', color: Colors.textPrimary }}>{user?.email || '—'}</Text> com as instruções para definires uma nova palavra-passe.
+        </Text>
+
+        <TouchableOpacity disabled={loading} onPress={sendReset} style={styles.primaryBtn}>
+          <Text style={styles.primaryText}>{loading ? 'A enviar…' : 'Enviar email de redefinição'}</Text>
+          <Ionicons name="mail-outline" size={18} color={Colors.onPrimary} />
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: Colors.background },
+  topBarWrap: {
+    backgroundColor: Colors.primary,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 6 : 10,
+    paddingBottom: 14, borderBottomLeftRadius: 24, borderBottomRightRadius: 24, overflow: 'hidden',
+  },
+  topBarRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, justifyContent: 'space-between' },
+  brandCenter: { flexDirection: 'row', alignItems: 'center' },
+  brandRisi: { color: Colors.onPrimary, fontWeight: '900', fontSize: 18, letterSpacing: 1 },
+  brandFit: { color: Colors.secondary, fontWeight: '900', fontSize: 18, letterSpacing: 1 },
+  iconBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)' },
+
+  title: { fontSize: 20, fontWeight: '900', color: Colors.textPrimary, marginBottom: 8 },
+  subtitle: { color: Colors.textSecondary, marginBottom: 16 },
+
+  primaryBtn: {
+    backgroundColor: Colors.primary, paddingVertical: 14, borderRadius: 14,
+    alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8,
+  },
+  primaryText: { color: Colors.onPrimary, fontWeight: '900', marginRight: 6 },
+});

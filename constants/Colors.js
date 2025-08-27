@@ -1,44 +1,54 @@
 // constants/Colors.js
-export default {
-  // Cores Primárias (Dourado/Preto)
-  primary: '#B8860B', // Dourado mais escuro para a marca principal
-  primaryLight: '#D4AF37', // Dourado mais claro para destaques
-  primaryDark: '#8B6B08', // Dourado mais profundo
+const Colors = {
+  // Marca (mantidos)
+  primary: '#2A3B47',      // barra/header/botões principais
+  secondary: '#FFB800',    // destaque (dourado)
+  background: '#F0F2F5',
+  cardBackground: '#FFFFFF',
 
-  secondary: '#000000ff', // Um preto muito escuro ou cinza carvão para secundário
-  secondaryLight: '#4A4E46', // Um cinza escuro um pouco mais claro
-  secondaryDark: '#1C201A', // Um preto quase absoluto
+  // Texto
+  textPrimary: '#333333',
+  textSecondary: '#666666',
 
-  accent: '#FFD700', // Dourado puro/ouro para ênfase forte
-  accentLight: '#FFE066', // Amarelo dourado mais suave
-  accentDark: '#CCAA00', // Dourado mais escuro para contraste
+  // Estados
+  success: '#4CAF50',
+  danger:  '#F44336',
+  info:    '#2196F3',
 
-  // Cores de Fundo
-  background: '#F0F0F0', // Fundo geral muito claro (quase branco)
-  surface: '#FFFFFF', // Fundo para cartões, headers (branco puro)
-  cardBackground: '#FFFFFF', // Alias para surface
+  // Extras existentes
+  placeholder: '#999999',
+  shadow: 'rgba(0, 0, 0, 0.1)',
 
-  // Cores de Texto
-  textPrimary: '#1A1A1A', // Texto principal (preto bem escuro)
-  textSecondary: '#505050', // Texto secundário (cinza médio-escuro)
-  textLight: '#8a8a8a96', // Texto mais claro (cinza claro)
+  // Derivadas úteis
+  onPrimary: '#FFFFFF',
+  onSecondary: '#1A1A1A',
 
-  // Cores Neutras (Pretos, Brancos, Tons de Cinza)
-  white: '#FFFFFF',
-  black: '#000000',
+  // UI comuns
+  surface: '#FFFFFF',
+  divider: '#E6E8EB',
+  lightGray: '#E9EDF2',
 
-  lightGray: '#E0E0E0', // Bordas, separadores
-  mediumGray: '#C0C0C0', // Componentes desabilitados, fundos sutis
-  darkGray: '#707070', // Texto e ícones gerais que não sejam primary/secondary
+  // ------------------------------
+  // ADIÇÕES p/ componentes novos
+  // ------------------------------
 
-  // Cores de Feedback
-  success: '#4CAF50', // Mantido verde para universalidade (sucesso)
-  warning: '#FFC107', // Mantido amarelo para universalidade (avisos)
-  error: '#DC3545', // Mantido vermelho para universalidade (erros)
-  info: '#17A2B8', // Mantido azul para universalidade (informações/links)
-  
-  // Cores de "On" (para texto/ícone sobre a cor base)
-  onPrimary: '#FFFFFF', // Branco sobre o dourado
-  onSecondary: '#871818ff', // Branco sobre o preto/cinza escuro
-  onAccent: '#1A1A1A', // Preto sobre o dourado de ênfase
+  // Gradiente dourado para tiles/botões (expo-linear-gradient)
+  gradientGold: ['#FFB800', '#D19A24'],
+
+  // Dourado suave para badges/estados
+  secondarySoft: 'rgba(255, 184, 0, 0.12)',
+
+  // Overlay de modais
+  overlay: 'rgba(0, 0, 0, 0.45)',
+
+  // Elevação comum (iOS + Android)
+  cardElevation: {
+    shadowColor: 'rgba(0,0,0,0.15)',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 6,
+  },
 };
+
+export default Colors;

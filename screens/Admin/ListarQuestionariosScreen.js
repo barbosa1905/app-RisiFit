@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+// screens/Admin/ListarQuestionariosScreen.js
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,292 +9,334 @@ import {
   Alert,
   ActivityIndicator,
   SafeAreaView,
-  Dimensions, // Importar Dimensions para cálculos de layout
+  TextInput,
+  StatusBar,
+  RefreshControl,
 } from 'react-native';
-import { 
-  collection, 
-  query, 
-  onSnapshot, 
-  doc, 
-  deleteDoc, 
-  getFirestore 
-} from 'firebase/firestore';
 import { useNavigation } from '@react-navigation/native';
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { Ionicons } from '@expo/vector-icons';
-import AppHeader from '../../components/AppHeader'; // Caminho corrigido para o AppHeader
-import Colors from '../../constants/Colors'; // Caminho corrigido para Colors
-import Layout from '../../constants/Layout'; // Caminho corrigido para Layout
+import {
+  collection,
+  onSnapshot,
+} from 'firebase/firestore';
 
-// --- FIREBASE CONFIGURATION: Makes the component self-sufficient ---
-// Replace with your credentials
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_STORAGE_BUCKET",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID",
+import AppHeader from '../../components/AppHeader';
+import Colors from '../../constants/Colors';
+import Layout from '../../constants/Layout';
+import { db, auth } from '../../services/firebaseConfig';
+
+// ——— utils ———
+const toDate = (v) => {
+  try {
+    if (!v) return null;
+    if (v.toDate) return v.toDate();
+    const d = new Date(v);
+    return isNaN(d) ? null : d;
+  } catch { return null; }
 };
-
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-const db = getFirestore(app);
-const auth = getAuth(app);
-
-
-// Color Palette and Global Styles
-const GlobalStyles = {
-  cardShadow: {
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15, // Aumentado para uma sombra mais visível
-    shadowRadius: 6, // Ajustado para uma sombra mais suave mas presente
-    elevation: 8, // Aumentado para Android
-  }
+const fmtDate = (d) => (d ? d.toLocaleDateString('pt-PT') : '—');
+const countPerguntas = (q) => {
+  if (Array.isArray(q?.perguntas)) return q.perguntas.length;
+  if (Array.isArray(q?.sections)) return q.sections.reduce((n, s) => n + (s?.questions?.length || 0), 0);
+  if (Array.isArray(q?.secoes)) return q.secoes.reduce((n, s) => n + (s?.perguntas?.length || 0), 0);
+  return q?.totalPerguntas || 0;
 };
 
 export default function ListarQuestionariosScreen() {
-  const [questionarios, setQuestionarios] = useState([]);
-  const [loading, setLoading] = useState(true);
   const navigation = useNavigation();
 
-  const adminId = auth.currentUser?.uid;
+  const [loading, setLoading] = useState(true);
+  const [questionarios, setQuestionarios] = useState([]);
+  const [search, setSearch] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    // Anonymous authentication to ensure Firestore can be accessed
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (!user) {
-        signInAnonymously(auth).catch(e => console.error("Error in anonymous authentication:", e));
+    // Lê diretamente de 'questionarios' (onde os crias com dataCriacao). :contentReference[oaicite:2]{index=2}
+    const col = collection(db, 'questionarios');
+    const unsub = onSnapshot(
+      col,
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        // ordena de forma robusta, mesmo que não exista updatedAt
+        list.sort((a, b) => {
+          const ad = toDate(a.updatedAt) || toDate(a.dataCriacao) || toDate(a.createdAt);
+          const bd = toDate(b.updatedAt) || toDate(b.dataCriacao) || toDate(b.createdAt);
+          return (bd?.getTime?.() || 0) - (ad?.getTime?.() || 0);
+        });
+        setQuestionarios(list);
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Erro ao ler questionários:', err);
+        Alert.alert('Erro', 'Não foi possível carregar os questionários.');
+        setLoading(false);
       }
-    });
-
-    const q = query(collection(db, 'questionarios'));
-
-    const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setQuestionarios(list);
-      setLoading(false);
-    }, (error) => {
-      console.error('Error listening to questionnaires:', error);
-      Alert.alert('Error', 'Failed to load questionnaires.');
-      setLoading(false);
-    });
-
-    // The cleanup function of useEffect returns the function to stop the listener
-    return () => {
-      unsubscribeAuth();
-      unsubscribeSnapshot();
-    };
+    );
+    return unsub;
   }, []);
 
-  const handleExcluir = (questionarioId) => {
+  const filtered = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    if (!s) return questionarios;
+    return questionarios.filter((q) => {
+      const t = (q.titulo || q.title || q.nome || '').toLowerCase();
+      const d = (q.descricao || q.description || '').toLowerCase();
+      return t.includes(s) || d.includes(s);
+    });
+  }, [search, questionarios]);
+
+  const onRefresh = useCallback(() => {
+    // onSnapshot já mantém live; isto é só UX
+    setRefreshing(true);
+    setTimeout(() => setRefreshing(false), 500);
+  }, []);
+
+  const handleEditar = (item) => {
+    navigation.navigate('EditarQuestionario', {
+      questionario: item,
+      adminId: auth.currentUser?.uid || null,
+    });
+  };
+
+  const handleExcluir = (item) => {
     Alert.alert(
-      'Confirmar exclusão',
-      'Tem certeza que deseja excluir este questionário?',
+      'Eliminar questionário',
+      `Queres mesmo eliminar “${item.titulo || item.title || item.id}”?`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
-          text: 'Excluir',
+          text: 'Eliminar',
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteDoc(doc(db, 'questionarios', questionarioId));
-              Alert.alert('Sucesso', 'Questionário excluído.');
-            } catch (error) {
-              console.error('Error deleting:', error);
-              Alert.alert('Error', 'Could not delete the questionnaire.');
+              const { doc, deleteDoc } = await import('firebase/firestore');
+              await deleteDoc(doc(db, 'questionarios', item.id));
+            } catch (e) {
+              console.error('Erro a eliminar:', e);
+              Alert.alert('Erro', 'Não foi possível eliminar.');
             }
-          }
-        }
+          },
+        },
       ]
     );
   };
-  
-  const renderItem = ({ item }) => (
-    <View style={[styles.itemContainer, GlobalStyles.cardShadow]}>
-      <Text style={styles.title}>{item.titulo || item.id}</Text>
-      <View style={styles.buttonsRow}>
-        {/* --- REMOVED: View button --- */}
-        
-        <TouchableOpacity
-          style={[styles.button, styles.editButton, GlobalStyles.cardShadow]}
-          onPress={() =>
-            navigation.navigate('CriarQuestionario', {
-              questionario: item,
-              adminId,
-            })
-          }
-        >
-          <Ionicons name="pencil-outline" size={18} color={Colors.white} />
-          <Text style={styles.buttonText}>Editar</Text>
-        </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.button, styles.deleteButton, GlobalStyles.cardShadow]}
-          onPress={() => handleExcluir(item.id)}
-        >
-          <Ionicons name="trash-outline" size={18} color={Colors.white} />
-          <Text style={styles.buttonText}>Excluir</Text>
-        </TouchableOpacity>
+  const renderItem = ({ item }) => {
+    const titulo = item.titulo || item.title || item.nome || `Questionário ${item.id}`;
+    const perguntas = countPerguntas(item);
+    const date = toDate(item.updatedAt) || toDate(item.dataCriacao) || toDate(item.createdAt);
+
+    return (
+      <View style={[styles.card, styles.cardElev]}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle} numberOfLines={2}>{titulo}</Text>
+        </View>
+
+        <View style={styles.metaRow}>
+          <View style={styles.chip}>
+            <Ionicons name="help-circle-outline" size={16} color={Colors.primary} />
+            <Text style={styles.chipText}>
+              {perguntas} {perguntas === 1 ? 'pergunta' : 'perguntas'}
+            </Text>
+          </View>
+          <View style={styles.chip}>
+            <Ionicons name="time-outline" size={16} color={Colors.primary} />
+            <Text style={styles.chipText}>Criado {fmtDate(date)}</Text>
+          </View>
+        </View>
+
+        {!!(item.descricao || item.description) && (
+          <Text style={styles.desc} numberOfLines={2}>
+            {item.descricao || item.description}
+          </Text>
+        )}
+
+        <View style={styles.actions}>
+          <TouchableOpacity style={[styles.btn, styles.btnEdit]} onPress={() => handleEditar(item)}>
+            <Ionicons name="pencil-outline" size={18} color={Colors.onPrimary} />
+            <Text style={styles.btnText}>Editar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.btn, styles.btnDelete]} onPress={() => handleExcluir(item)}>
+            <Ionicons name="trash-outline" size={18} color={Colors.onPrimary} />
+            <Text style={styles.btnText}>Eliminar</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
-  const headerTitle = "Meus Questionários";
+  const headerTitle = 'Meus Questionários';
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <AppHeader title={headerTitle} showBackButton={true} onBackPress={() => navigation.goBack()} />
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
+        <AppHeader title={headerTitle} showBackButton onBackPress={() => navigation.goBack()} />
         <View style={styles.center}>
           <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>A carregar questionários...</Text>
+          <Text style={styles.loadingText}>A carregar questionários…</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <AppHeader title={headerTitle} showBackButton={true} onBackPress={() => navigation.goBack()} />
-      {questionarios.length === 0 ? (
-        <View style={styles.emptyContainer}>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
+      <AppHeader
+        title={headerTitle}
+        showBackButton
+        onBackPress={() => navigation.goBack()}
+        rightContent={
+          <TouchableOpacity
+            onPress={() => navigation.navigate('CriarQuestionario', { adminId: auth.currentUser?.uid || null })}
+            style={styles.headerNewBtn}
+          >
+            <Ionicons name="add" size={20} color={Colors.onSecondary} />
+            <Text style={styles.headerNewBtnText}>Novo</Text>
+          </TouchableOpacity>
+        }
+      />
+
+      {/* Pesquisa */}
+      <View style={[styles.searchBox, styles.cardElev]}>
+        <Ionicons name="search-outline" size={18} color={Colors.textSecondary} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Pesquisar por título ou descrição…"
+          placeholderTextColor={Colors.textSecondary}
+          value={search}
+          onChangeText={setSearch}
+          returnKeyType="search"
+        />
+        {search.length > 0 && (
+          <TouchableOpacity onPress={() => setSearch('')}>
+            <Ionicons name="close-circle" size={18} color={Colors.mediumGray} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Lista */}
+      {filtered.length === 0 ? (
+        <View style={styles.empty}>
           <Ionicons name="clipboard-outline" size={50} color={Colors.mediumGray} />
-          <Text style={styles.emptyText}>Nenhum questionário encontrado.</Text>
+          <Text style={styles.emptyTitle}>Sem questionários</Text>
+          <Text style={styles.emptyText}>Cria o teu primeiro questionário para começar.</Text>
+
+          <TouchableOpacity
+            onPress={() => navigation.navigate('CriarQuestionario', { adminId: auth.currentUser?.uid || null })}
+            style={[styles.cta, styles.cardElev]}
+          >
+            <Ionicons name="add-circle-outline" size={20} />
+            <Text style={styles.ctaText}>Criar novo questionário</Text>
+          </TouchableOpacity>
         </View>
       ) : (
         <FlatList
-          data={questionarios}
-          keyExtractor={item => item.id}
+          data={filtered}
+          keyExtractor={(item) => item.id}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
+          }
+          showsVerticalScrollIndicator={false}
         />
       )}
-      <TouchableOpacity
-        style={[styles.newButton, GlobalStyles.cardShadow]}
-        onPress={() => navigation.navigate('CriarQuestionario', { adminId })}
-      >
-        <Ionicons name="add-circle-outline" size={24} color={Colors.onPrimary} />
-        <Text style={styles.newButtonText}>Criar Novo Questionário</Text>
-      </TouchableOpacity>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: Colors.background,
-  },
-  loadingText: {
-    marginTop: 15,
-    fontSize: 17,
-    color: Colors.textPrimary,
-    fontWeight: '500',
-  },
-  listContent: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    paddingBottom: 100, // Increased padding to prevent overlap with newButton
-  },
-  itemContainer: {
-    marginBottom: 15,
-    padding: 18,
-    backgroundColor: Colors.surface,
-    borderRadius: 15,
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.primary,
-  },
-  title: {
-    fontSize: 19,
-    fontWeight: '700',
-    marginBottom: 10,
-    color: Colors.textPrimary,
-  },
-  buttonsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between', // Usar space-between para distribuir melhor
-    marginTop: 10,
-    marginHorizontal: -4, // Margem negativa para compensar as margens dos botões
-  },
-  button: {
-    flexGrow: 1,
-    flexShrink: 1,
-    flexBasis: '48%', // Ajustado para 2 botões por linha
+  safe: { flex: 1, backgroundColor: Colors.background },
+
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
+  loadingText: { marginTop: 12, color: Colors.textSecondary, fontSize: 16 },
+
+  headerNewBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 8,
+    backgroundColor: Colors.secondary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 10,
-    marginHorizontal: 4, // Margem horizontal consistente entre os botões
-    marginBottom: 8,
+  },
+  headerNewBtnText: { color: Colors.onSecondary, fontWeight: '800', marginLeft: 6 },
+
+  searchBox: {
+    marginHorizontal: Layout?.padding ?? 16,
+    marginTop: Layout?.padding ?? 16,
+    marginBottom: 6,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderWidth: 1,
-    borderColor: Colors.lightGray,
-    shadowColor: Colors.black,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 4,
-  },
-  // --- CHANGES HERE: Button backgrounds updated based on the provided palette ---
-  editButton: { backgroundColor: Colors.primaryDark }, // Dourado mais profundo para Editar
-  deleteButton: { backgroundColor: Colors.error }, // Vermelho para Excluir (mantido)
-  // Removed viewButton style as the button was removed
-  buttonText: {
-    color: Colors.onPrimary, // Use onPrimary for text over primary/dark colors
-    fontWeight: '700',
-    marginLeft: 5,
-    fontSize: 13, // Slightly increased for better readability
-    textAlign: 'center',
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  emptyText: {
-    textAlign: 'center',
-    marginTop: 20,
-    fontSize: 17,
-    color: Colors.mediumGray,
-    fontWeight: '500',
-  },
-  newButton: {
+    borderColor: Colors.divider ?? '#E6E8EB',
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  searchInput: { flex: 1, marginHorizontal: 8, color: Colors.textPrimary, paddingVertical: 4, fontSize: 16 },
+
+  listContent: { paddingHorizontal: Layout?.padding ?? 16, paddingBottom: 24 + 16 },
+
+  card: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.divider ?? '#E6E8EB',
+  },
+  cardElev: {
+    ...(Layout?.cardElevation || {
+      shadowColor: Colors.shadow,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 4,
+    }),
+  },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  cardTitle: { flex: 1, color: Colors.textPrimary, fontSize: 18, fontWeight: '800', paddingRight: 12 },
+
+  metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 10, flexWrap: 'wrap' },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.lightGray,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  chipText: { color: Colors.textSecondary, fontWeight: '600' },
+
+  desc: { marginTop: 10, color: Colors.textSecondary, lineHeight: 20 },
+
+  actions: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  btn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    flexDirection: 'row',
     justifyContent: 'center',
-    backgroundColor: Colors.primary, // Primary gold for the create button
-    padding: 18, // Increased padding for a larger button
+  },
+  btnEdit: { backgroundColor: Colors.primary },
+  btnDelete: { backgroundColor: Colors.danger },
+  btnText: { marginLeft: 6, color: Colors.onPrimary, fontWeight: '800' },
+
+  empty: { flex: 1, alignItems: 'center', paddingHorizontal: 28, paddingTop: 40 },
+  emptyTitle: { fontSize: 18, fontWeight: '900', color: Colors.textPrimary, marginTop: 10 },
+  emptyText: { color: Colors.textSecondary, textAlign: 'center', marginTop: 6, marginBottom: 18 },
+  cta: {
+    flexDirection: 'row',
+    backgroundColor: Colors.secondary,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderRadius: 12,
-    marginHorizontal: 20,
-    marginBottom: 20,
-    position: 'absolute',
-    bottom: 0,
-    left: 20,
-    right: 20,
-    shadowColor: Colors.black,
-    shadowOffset: { width: 0, height: 6 }, // Increased shadow offset
-    shadowOpacity: 0.3, // Increased shadow opacity
-    shadowRadius: 8, // Increased shadow radius
-    elevation: 10, // Increased elevation for Android
+    alignItems: 'center',
   },
-  newButtonText: {
-    color: Colors.onPrimary, // Text color for the create button
-    fontSize: 19, // Slightly increased font size
-    fontWeight: '800', // Increased font weight
-    marginLeft: 10,
-  },
+  ctaText: { color: Colors.onSecondary, fontWeight: '900', marginLeft: 8 },
 });

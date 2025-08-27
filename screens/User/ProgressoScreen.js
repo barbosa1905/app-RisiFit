@@ -1,387 +1,791 @@
-import React, { useState, useEffect, useMemo } from 'react';
+// screens/User/ProgressoScreen.js
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  Dimensions,
-  StyleSheet,
-  ActivityIndicator,
-  Platform, // Importado para Platform.OS
+  View, Text, StyleSheet, Platform, StatusBar, Animated, FlatList, ScrollView,
+  TouchableOpacity, ActivityIndicator, RefreshControl, Dimensions, Alert,
 } from 'react-native';
-import { LineChart } from 'react-native-chart-kit';
-import { AntDesign } from '@expo/vector-icons';
-import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore'; // Adicionado doc, getDoc
+import { LinearGradient } from 'expo-linear-gradient';
+import { Feather } from '@expo/vector-icons';
+import { LineChart, BarChart } from 'react-native-chart-kit';
+import { Svg, Circle } from 'react-native-svg';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import * as Print from 'expo-print';
+
 import { auth, db } from '../../services/firebaseConfig';
-import Animated, { Layout, FadeIn, FadeOut } from 'react-native-reanimated';
+import { usePreferences } from '../../contexts/PreferencesContext';
+import { collection, getDocs, doc, getDoc, query, where } from 'firebase/firestore';
 
-const screenWidth = Dimensions.get('window').width - 32;
-
-const categorias = {
-  'Medidas Corporais': [
-    { label: 'Peso', key: 'peso', suffix: 'kg' },
-    { label: 'Altura', key: 'altura', suffix: 'm', decimals: 2 },
-    { label: 'IMC', key: 'imc' },
-    { label: 'Gordura Corporal', key: 'gorduraCorporal', suffix: '%' },
-    { label: 'Musculatura', key: 'musculatura', suffix: '%' },
-  ],
-  Perímetros: [
-    { label: 'Cintura', key: 'cintura', suffix: 'cm' },
-    { label: 'Quadril', key: 'quadril', suffix: 'cm' },
-    { label: 'Braço', key: 'braco', suffix: 'cm' },
-    { label: 'Coxa', key: 'coxa', suffix: 'cm' },
-    { label: 'Panturrilha', key: 'panturrilha', suffix: 'cm' },
-    { label: 'Peito', key: 'peito', suffix: 'cm' },
-  ],
-  'Dobras Cutâneas': [
-    { label: 'Tríceps', key: 'triceps', suffix: 'mm' },
-    { label: 'Bíceps', key: 'biceps', suffix: 'mm' },
-    { label: 'Subescapular', key: 'subescapular', suffix: 'mm' },
-    { label: 'Suprailíaca', key: 'suprailíaca', suffix: 'mm' },
-    { label: 'Abdominal', key: 'abdominal', suffix: 'mm' },
-    { label: 'Coxa (dobra)', key: 'coxaDobra', suffix: 'mm' },
-    { label: 'Panturrilha (dobra)', key: 'panturrilhaDobra', suffix: 'mm' },
-  ],
+const Colors = {
+  primary: '#2A3B47',
+  primaryLight: '#3A506B',
+  secondary: '#FFB800',
+  background: '#F0F2F5',
+  card: '#FFFFFF',
+  text: '#111827',
+  textMuted: '#6B7280',
+  border: '#E6E8EB',
+  success: '#22C55E',
+  danger: '#EF4444',
 };
 
-const formatDate = (date) => new Date(date).toLocaleDateString();
+const { width: W } = Dimensions.get('window');
 
-// Altura da barra fixa do cabeçalho
-const FIXED_HEADER_HEIGHT = Platform.OS === 'android' ? 90 : 80;
-
-const ProgressoScreen = () => {
-  const [avaliacoes, setAvaliacoes] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [expandedCategorias, setExpandedCategorias] = useState({});
-  const [userName, setUserName] = useState(''); // Estado para o nome do utilizador
-  const [userInitial, setUserInitial] = useState(''); // Estado para a inicial do utilizador
-
-  useEffect(() => {
-    const fetchUserDataAndAvaliacoes = async () => {
-      setLoading(true);
-      try {
-        // 1. Buscar dados do utilizador para o cabeçalho
-        if (auth.currentUser) {
-          const userDocRef = doc(db, 'users', auth.currentUser.uid);
-          const userDocSnap = await getDoc(userDocRef);
-          if (userDocSnap.exists()) {
-            const userData = userDocSnap.data();
-            setUserName(userData.name || 'Utilizador');
-            setUserInitial(userData.name ? userData.name.charAt(0).toUpperCase() : 'U');
-          } else {
-            setUserName('Utilizador');
-            setUserInitial('U');
-          }
-        }
-
-        // 2. Buscar avaliações
-        const q = query(
-          collection(db, 'avaliacoesFisicas'),
-          where('clienteId', '==', auth.currentUser.uid)
-        );
-        const querySnapshot = await getDocs(q);
-        const dados = [];
-
-        querySnapshot.forEach((doc) => {
-          const data = doc.data();
-          dados.push({
-            id: doc.id,
-            data: data.dataAvaliacao.toDate(),
-            peso: data.peso,
-            altura: data.altura,
-            imc: data.imc,
-            gorduraCorporal: data.outrosParametros?.gorduraCorporal,
-            musculatura: data.outrosParametros?.musculatura,
-            ...data.perimetros,
-            ...data.dobrasCutaneas,
-          });
-        });
-
-        setAvaliacoes(dados);
-      } catch (error) {
-        console.error('Erro ao buscar dados ou avaliações:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchUserDataAndAvaliacoes();
-  }, []);
-
-  const avaliacoesProcessadas = useMemo(() => {
-    return avaliacoes
-      .filter((a) => a.data)
-      .sort((a, b) => a.data - b.data);
-  }, [avaliacoes]);
-
-  const toggleCategoria = (cat) => {
-    setExpandedCategorias((prev) => ({
-      ...prev,
-      [cat]: !prev[cat],
-    }));
-  };
-
-  const renderChart = (label, key, suffix = '', decimals = 1, avaliacoes) => {
-    const pontosValidos = avaliacoes.filter(
-      (item) => item[key] !== undefined && item[key] !== null
-    );
-
-    if (pontosValidos.length === 0) return null;
-
-    const data = pontosValidos.map((item) => item[key]);
-    const labels = pontosValidos.map((item) => formatDate(item.data));
-    const ultimoValor = data[data.length - 1];
-
-    const maxLabels = 5;
-    const labelInterval = Math.ceil(labels.length / maxLabels);
-    const reducedLabels = labels.filter((_, idx) => idx % labelInterval === 0);
-    const reducedData = data.filter((_, idx) => idx % labelInterval === 0);
-
-    return (
-      <Animated.View
-        key={key}
-        entering={FadeIn.delay(100)}
-        layout={Layout.springify()}
-        style={styles.innerChartContainer}
-      >
-        <Text style={styles.chartLabel}>
-          {label}: {ultimoValor?.toFixed(decimals)}{suffix}
-        </Text>
-
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-          <Text style={{ fontSize: 12, color: '#6b7280' }}>{labels[0]}</Text>
-          <Text style={{ fontSize: 12, color: '#6b7280' }}>{labels[labels.length - 1]}</Text>
-        </View>
-
-        <LineChart
-          data={{
-            labels: reducedLabels,
-            datasets: [{ data: reducedData }],
-          }}
-          width={screenWidth - 30}
-          height={250}
-          yAxisSuffix={suffix}
-          yAxisInterval={1}
-          chartConfig={{
-            backgroundColor: '#ffffff',
-            backgroundGradientFrom: '#ffffff',
-            backgroundGradientTo: '#ffffff',
-            decimalPlaces: decimals,
-            color: (opacity = 1) => `rgba(208, 169, 86, ${opacity})`,
-            labelColor: () => '#1f2937',
-            propsForDots: {
-              r: '4',
-              strokeWidth: '2',
-              stroke: '#d0a956',
-            },
-            propsForBackgroundLines: {
-              stroke: '#e5e7eb',
-            },
-            propsForLabels: {
-              fontSize: 10,
-            },
-          }}
-          bezier
-          style={styles.chart}
-        />
-      </Animated.View>
-    );
-  };
-
-  const CategoriaSection = ({ categoria, itens, expanded, toggle, avaliacoes }) => {
-    const hasData = itens.some(({ key }) =>
-      avaliacoes.some((a) => a[key] !== undefined && a[key] !== null)
-    );
-    if (!hasData) return null;
-
-    return (
-      <View style={styles.categoryContainer} key={categoria}>
-        <TouchableOpacity
-          onPress={() => toggle(categoria)}
-          style={styles.categoryHeader}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.categoryTitle}>{categoria}</Text>
-          <AntDesign
-            name={expanded ? 'up' : 'down'}
-            size={22}
-            color="#d0a956"
-          />
-        </TouchableOpacity>
-
-        {expanded && (
-          <Animated.View
-            layout={Layout.springify()}
-            entering={FadeIn}
-            exiting={FadeOut}
-            style={styles.categoryContent}
-          >
-            {itens.map(({ label, key, suffix, decimals }) =>
-              renderChart(label, key, suffix, decimals, avaliacoes)
-            )}
-          </Animated.View>
-        )}
-      </View>
-    );
-  };
-
-  return (
-    <View style={styles.fullScreenContainer}>
-      {/* Cabeçalho Fixo (Barra Fixa) */}
-      <View style={styles.fixedHeader}>
-        <View style={styles.headerUserInfo}>
-          <View style={styles.headerAvatar}>
-            <Text style={styles.headerAvatarText}>{userInitial}</Text>
-          </View>
-          <Text style={styles.headerUserName}>{userName}</Text>
-        </View>
-        <Text style={styles.headerAppName}>RisiFit</Text>
-      </View>
-
-      <ScrollView contentContainerStyle={styles.scrollViewContent}>
-        <Text style={styles.title}>Progresso Físico</Text>
-
-        {loading ? (
-          <ActivityIndicator size="large" color="#d0a956" style={{ marginTop: 40 }} />
-        ) : avaliacoesProcessadas.length === 0 ? (
-          <Text style={{ textAlign: 'center', color: '#6b7280', fontStyle: 'italic' }}>
-            Nenhuma avaliação disponível.
-          </Text>
-        ) : (
-          Object.entries(categorias).map(([categoria, itens]) => (
-            <CategoriaSection
-              key={categoria}
-              categoria={categoria}
-              itens={itens}
-              expanded={expandedCategorias[categoria]}
-              toggle={toggleCategoria}
-              avaliacoes={avaliacoesProcessadas}
-            />
-          ))
-        )}
-      </ScrollView>
-    </View>
-  );
+// ==== Helpers ====
+const safeToNumber = (v) => {
+  if (v === null || v === undefined) return undefined;
+  const n = typeof v === 'number' ? v : parseFloat(String(v).replace(',', '.'));
+  return Number.isFinite(n) ? n : undefined;
 };
+const normalizeDate = (d) => {
+  try {
+    if (!d) return null;
+    if (d.toDate) return d.toDate();
+    if (typeof d === 'string') return new Date(d);
+    if (d.seconds) return new Date(d.seconds * 1000);
+    return new Date(d);
+  } catch {
+    return null;
+  }
+};
+const fmtDate = (date) => (date ? new Date(date).toLocaleDateString() : '—');
+const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 
-const styles = StyleSheet.create({
-  fullScreenContainer: {
-    flex: 1,
-    backgroundColor: '#f9fafb',
-  },
-  // ESTILO DA BARRA FIXA
-  fixedHeader: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: FIXED_HEADER_HEIGHT,
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'android' ? 40 : 20, // Ajuste para Android para status bar
-    backgroundColor: '#B8860B', 
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomLeftRadius: 15, // Arredondamento nas bordas inferiores
-    borderBottomRightRadius: 15,
-    elevation: 5, // Sombra para Android
-    shadowColor: '#000', // Sombra para iOS
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 5,
-    zIndex: 10, // Garante que fique acima do conteúdo que rola
-  },
-  headerUserInfo: { // Estilo para agrupar avatar e nome do user
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  headerAvatar: { // Estilo para o avatar na barra fixa
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  headerAvatarText: { // Estilo para o texto do avatar na barra fixa
-    color: '#d4ac54',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  headerUserName: { // Estilo para o nome do user na barra fixa
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  headerAppName: { // Estilo para o nome da app na barra fixa
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff', // Cor do texto da app
-  },
-  // Ajuste para o conteúdo da ScrollView para começar abaixo do cabeçalho fixo
-  scrollViewContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 60, // Mantenha o paddingBottom original
-    backgroundColor: '#f9fafb',
-    paddingTop: FIXED_HEADER_HEIGHT + 20, // Adiciona padding para o cabeçalho fixo + um pouco mais
-  },
-  container: { // O estilo 'container' original foi ajustado para ser o contentContainerStyle da ScrollView
-    // padding: 20, // Já definido em scrollViewContent
-    // paddingBottom: 60, // Já definido em scrollViewContent
-    backgroundColor: '#f9fafb',
-  },
-  title: {
-    fontSize: 30,
-    fontWeight: 'bold',
-    marginBottom: 30,
-    color: '#000',
-    textAlign: 'center',
-    marginTop: 0, // Removido marginTop extra, já que paddingTop do scrollViewContent já lida com isso
-  },
-  categoryContainer: {
-    marginBottom: 28,
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 3,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  categoryHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    alignItems: 'center',
-  },
-  categoryTitle: {
-    fontWeight: '700',
-    fontSize: 22,
-    color: '#000',
-  },
-  categoryContent: {
-    marginTop: 16,
-  },
-  innerChartContainer: {
-    marginBottom: 24,
-    paddingHorizontal: 4,
-  },
-  chartLabel: {
-    fontWeight: '600',
-    fontSize: 16,
-    color: '#000',
-    marginBottom: 8,
-  },
-  chart: {
-    borderRadius: 20,
-  },
+const mapRoot = (raw) => {
+  const outros = raw.outrosParametros || {};
+  const per = raw.perimetros || raw.perimetrosCorporais || {};
+  return {
+    data:
+      normalizeDate(raw.dataAvaliacao) ||
+      normalizeDate(raw.data) ||
+      normalizeDate(raw.createdAt) ||
+      normalizeDate(raw.criadoEm),
+
+    peso: safeToNumber(raw.peso ?? outros.peso),
+    altura: safeToNumber(raw.altura ?? outros.altura),
+    imc: safeToNumber(raw.imc ?? outros.imc),
+    gorduraCorporal: safeToNumber(outros.gorduraCorporal ?? raw.gorduraCorporal),
+    musculatura: safeToNumber(outros.musculatura ?? raw.musculatura),
+
+    cintura: safeToNumber(per.cintura ?? raw.cintura),
+    quadril: safeToNumber(per.quadril ?? raw.quadril),
+    braco: safeToNumber(per.braco ?? raw.braco ?? per.bracoDireito),
+    coxa: safeToNumber(per.coxa ?? raw.coxa),
+    panturrilha: safeToNumber(per.panturrilha ?? raw.panturrilha),
+    peito: safeToNumber(per.peito ?? raw.peito),
+  };
+};
+const mapSub = (raw) => ({
+  data:
+    normalizeDate(raw.data) ||
+    normalizeDate(raw.dataAvaliacao) ||
+    normalizeDate(raw.createdAt) ||
+    normalizeDate(raw.criadoEm),
+
+  peso: safeToNumber(raw.peso),
+  altura: safeToNumber(raw.altura),
+  imc: safeToNumber(raw.imc),
+  gorduraCorporal: safeToNumber(raw.gorduraCorporal ?? raw.gordura),
+  musculatura: safeToNumber(raw.musculatura),
+
+  cintura: safeToNumber(raw.cintura),
+  quadril: safeToNumber(raw.quadril),
+  braco: safeToNumber(raw.braco),
+  coxa: safeToNumber(raw.coxa),
+  panturrilha: safeToNumber(raw.panturrilha),
+  peito: safeToNumber(raw.peito),
 });
 
-export default ProgressoScreen;
+// ==== Ring ====
+function Ring({ size = 116, stroke = 12, percent = 0, color = Colors.secondary, label, value, suffix }) {
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const p = Math.max(0, Math.min(100, percent));
+  const dash = (p / 100) * c;
+
+  return (
+    <View style={{ width: size, height: size, alignSelf: 'center', alignItems: 'center', justifyContent: 'center' }}>
+      <Svg width={size} height={size}>
+        <Circle cx={size / 2} cy={size / 2} r={r} stroke="#E6E8EB" strokeWidth={stroke} fill="none" />
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          stroke={color}
+          strokeWidth={stroke}
+          fill="none"
+          strokeDasharray={`${dash} ${c - dash}`}
+          strokeLinecap="round"
+          rotation="-90"
+          originX={size / 2}
+          originY={size / 2}
+        />
+      </Svg>
+      <View style={{ position: 'absolute', alignItems: 'center' }}>
+        <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.9)', fontWeight: '700' }}>{label}</Text>
+        <Text style={{ fontSize: 20, color: '#fff', fontWeight: '800' }}>
+          {value}{suffix ? ` ${suffix}` : ''}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// ==== Screen ====
+export default function ProgressoScreen() {
+  const { prefs } = (usePreferences?.() || {});
+  const units = prefs?.units || 'metric';
+  const weightSuffix = units === 'imperial' ? 'lb' : 'kg';
+
+  // Header animado sem absolute — sem sobreposições
+  const HEADER_MAX = 260;
+  const HEADER_MIN = 120;
+  const COLLAPSE = HEADER_MAX - HEADER_MIN;
+
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const headerHeight = scrollY.interpolate({
+    inputRange: [0, COLLAPSE],
+    outputRange: [HEADER_MAX, HEADER_MIN],
+    extrapolate: 'clamp',
+  });
+  const headerScaleRing = scrollY.interpolate({
+    inputRange: [0, COLLAPSE],
+    outputRange: [1, 0.75],
+    extrapolate: 'clamp',
+  });
+  const headerFadeBig = scrollY.interpolate({
+    inputRange: [0, 60],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+  const headerFadeCompact = scrollY.interpolate({
+    inputRange: [0, 60, 120],
+    outputRange: [0, 0.4, 1],
+    extrapolate: 'clamp',
+  });
+
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [rows, setRows] = useState([]);
+  const [userName, setUserName] = useState('');
+  const [userInitial, setUserInitial] = useState('U');
+
+  const [range, setRange] = useState('ALL');
+  const metricCatalog = useMemo(
+    () => [
+      { key: 'peso', label: 'Peso', suffix: weightSuffix, decimals: 1, icon: 'activity' },
+      { key: 'gorduraCorporal', label: 'Gordura %', suffix: '%', decimals: 1, icon: 'percent' },
+      { key: 'imc', label: 'IMC', suffix: '', decimals: 1, icon: 'trending-up' },
+      { key: 'musculatura', label: 'Massa %', suffix: '%', decimals: 1, icon: 'bar-chart-2' },
+      { key: 'cintura', label: 'Cintura', suffix: 'cm', decimals: 1, icon: 'maximize' },
+      { key: 'quadril', label: 'Quadril', suffix: 'cm', decimals: 1, icon: 'maximize' },
+    ],
+    [weightSuffix]
+  );
+  const [selectedMetric, setSelectedMetric] = useState(() => metricCatalog[0]);
+
+  const convertWeightIfNeeded = useCallback(
+    (val, key) => {
+      const n = safeToNumber(val);
+      if (n === undefined) return undefined;
+      if (key === 'peso' && units === 'imperial') return n * 2.2046226218;
+      return n;
+    },
+    [units]
+  );
+
+  const loadData = useCallback(async () => {
+    setError('');
+    setLoading(true);
+    try {
+      const uid = auth.currentUser?.uid;
+      if (!uid) {
+        setRows([]);
+        setLoading(false);
+        return;
+      }
+      // Nome
+      try {
+        const us = await getDoc(doc(db, 'users', uid));
+        if (us.exists()) {
+          const d = us.data() || {};
+          const nome = d.name || d.nome || '';
+          setUserName(nome);
+          setUserInitial(nome?.trim()?.charAt(0)?.toUpperCase() || 'U');
+        }
+      } catch {}
+
+      // Subcoleção
+      let list = [];
+      const subRef = collection(db, 'users', uid, 'avaliacoes');
+      const subSnap = await getDocs(subRef);
+      subSnap.forEach((docu) => list.push({ id: docu.id, ...mapSub(docu.data() || {}) }));
+
+      // Fallback root
+      if (!list.length) {
+        const rootRef = collection(db, 'avaliacoesFisicas');
+        const q = query(rootRef, where('clienteId', '==', uid));
+        const rootSnap = await getDocs(q);
+        rootSnap.forEach((docu) => list.push({ id: docu.id, ...mapRoot(docu.data() || {}) }));
+      }
+
+      setRows(
+        list
+          .filter((a) => a.data instanceof Date && !Number.isNaN(a.data))
+          .sort((a, b) => a.data - b.data)
+      );
+    } catch (e) {
+      console.error('Erro ao carregar progresso:', e);
+      setError('Não foi possível carregar os dados de progresso.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadData();
+    setRefreshing(false);
+  }, [loadData]);
+
+  const filtered = useMemo(() => {
+    if (!rows.length) return [];
+    if (range === 'ALL') return rows;
+    const now = new Date();
+    const msRange = { '3M': 1000 * 60 * 60 * 24 * 90, '6M': 1000 * 60 * 60 * 24 * 180, '12M': 1000 * 60 * 60 * 24 * 365 }[range];
+    return rows.filter((e) => now - e.data <= msRange);
+  }, [rows, range]);
+
+  const kpis = useMemo(() => {
+    if (!filtered.length) return [];
+    const last = filtered[filtered.length - 1];
+    const prev = filtered.length > 1 ? filtered[filtered.length - 2] : null;
+    const defs = [
+      { key: 'peso', label: 'Peso', suffix: weightSuffix, decimals: 1 },
+      { key: 'gorduraCorporal', label: 'Gordura', suffix: '%', decimals: 1 },
+      { key: 'imc', label: 'IMC', suffix: '', decimals: 1 },
+    ];
+    return defs.map((d) => {
+      const cur = convertWeightIfNeeded(last[d.key], d.key);
+      const ant = prev ? convertWeightIfNeeded(prev[d.key], d.key) : undefined;
+      const delta = cur !== undefined && ant !== undefined ? cur - ant : undefined;
+      return { ...d, value: cur, delta };
+    });
+  }, [filtered, convertWeightIfNeeded, weightSuffix]);
+
+  const mainChart = useMemo(() => {
+    const arr = filtered
+      .map((e) => ({
+        x: fmtDate(e.data),
+        y: convertWeightIfNeeded(e[selectedMetric.key], selectedMetric.key),
+      }))
+      .filter((p) => p.y !== undefined);
+
+    const first = arr.length ? arr[0].y : undefined;
+    const last = arr.length ? arr[arr.length - 1].y : undefined;
+    const delta = first !== undefined && last !== undefined ? last - first : undefined;
+    const percent = first && last !== undefined ? (first !== 0 ? (delta / first) * 100 : undefined) : undefined;
+
+    return {
+      labels: arr.map((v) => v.x),
+      data: arr.map((v) => Number(v.y.toFixed(selectedMetric.decimals))),
+      last,
+      delta,
+      percent,
+    };
+  }, [filtered, selectedMetric, convertWeightIfNeeded]);
+
+  const monthlyBar = useMemo(() => {
+    if (!filtered.length) return { labels: [], data: [] };
+    const map = new Map();
+    filtered.forEach((e) => {
+      const y = convertWeightIfNeeded(e[selectedMetric.key], selectedMetric.key);
+      if (y === undefined) return;
+      const k = monthKey(e.data);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(y);
+    });
+    const entries = [...map.entries()].sort(([a], [b]) => (a > b ? 1 : -1)).slice(-6);
+    const labels = entries.map(([k]) => {
+      const [Y, M] = k.split('-');
+      return `${M}/${String(Y).slice(2)}`;
+    });
+    const data = entries.map(([, arr]) =>
+      Number((arr.reduce((s, v) => s + v, 0) / arr.length).toFixed(selectedMetric.decimals))
+    );
+    return { labels, data };
+  }, [filtered, selectedMetric, convertWeightIfNeeded]);
+
+  const ringInfo = useMemo(() => {
+    const vals = filtered
+      .map((e) => convertWeightIfNeeded(e[selectedMetric.key], selectedMetric.key))
+      .filter((v) => v !== undefined);
+    if (!vals.length) return { last: undefined, percent: 0 };
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const last = vals[vals.length - 1];
+    const percent = min === max ? 100 : ((last - min) / (max - min)) * 100;
+    return { last, percent: Math.max(0, Math.min(100, percent)) };
+  }, [filtered, selectedMetric, convertWeightIfNeeded]);
+
+  const flatForExport = useMemo(
+    () =>
+      rows.map((r) => ({
+        data: fmtDate(r.data),
+        peso: convertWeightIfNeeded(r.peso, 'peso'),
+        imc: r.imc,
+        gordura: r.gorduraCorporal,
+        musculatura: r.musculatura,
+        cintura: r.cintura,
+        quadril: r.quadril,
+        braco: r.braco,
+        coxa: r.coxa,
+        peito: r.peito,
+      })),
+    [rows, convertWeightIfNeeded]
+  );
+
+  const exportCSV = useCallback(async () => {
+    try {
+      if (!flatForExport.length) return Alert.alert('Sem dados', 'Não há avaliações para exportar.');
+      const headers = [
+        'Data', `Peso (${weightSuffix})`, 'IMC', 'Gordura (%)', 'Massa (%)',
+        'Cintura (cm)', 'Quadril (cm)', 'Braço (cm)', 'Coxa (cm)', 'Peito (cm)',
+      ];
+      const lines = flatForExport.map((r) =>
+        [r.data, r.peso ?? '', r.imc ?? '', r.gordura ?? '', r.musculatura ?? '', r.cintura ?? '', r.quadril ?? '', r.braco ?? '', r.coxa ?? '', r.peito ?? ''].join(';')
+      );
+      const csv = [headers.join(';'), ...lines].join('\n');
+      const fileUri = FileSystem.documentDirectory + `risifit_progresso_${Date.now()}.csv`;
+      await FileSystem.writeAsStringAsync(fileUri, csv, { encoding: FileSystem.EncodingType.UTF8 });
+      await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'Exportar CSV' });
+    } catch (e) {
+      console.error('CSV error', e);
+      Alert.alert('Erro', 'Não foi possível exportar o CSV.');
+    }
+  }, [flatForExport, weightSuffix]);
+
+  const exportPDF = useCallback(async () => {
+    try {
+      if (!flatForExport.length) return Alert.alert('Sem dados', 'Não há avaliações para exportar.');
+      const rowsHtml = flatForExport
+        .map(
+          (r) => `<tr>
+            <td>${r.data}</td><td>${r.peso ?? '-'}</td><td>${r.imc ?? '-'}</td>
+            <td>${r.gordura ?? '-'}</td><td>${r.musculatura ?? '-'}</td>
+            <td>${r.cintura ?? '-'}</td><td>${r.quadril ?? '-'}</td>
+            <td>${r.braco ?? '-'}</td><td>${r.coxa ?? '-'}</td><td>${r.peito ?? '-'}</td>
+          </tr>`
+        )
+        .join('');
+      const html = `
+        <html><head><meta charset="utf-8" />
+          <style>
+            body { font-family: -apple-system, Roboto, Arial; padding: 24px; color: #111827; }
+            .title { font-size: 20px; font-weight: 800; margin-bottom: 6px; }
+            .sub { color:#6B7280; margin-bottom: 18px; }
+            table { width: 100%; border-collapse: collapse; font-size: 12px; }
+            th, td { border: 1px solid #E6E8EB; padding: 8px; text-align: center; }
+            th { background: #F7F7F7; }
+            .badge { display:inline-block; background:#FFB800; padding: 4px 10px; border-radius: 999px; font-weight: 700; margin-left:8px;}
+          </style>
+        </head>
+        <body>
+          <div class="title">Relatório de Progresso <span class="badge">RISI<span style="color:#1A1A1A">FIT</span></span></div>
+          <div class="sub">${userName || 'Utilizador'} • Exportado em ${fmtDate(new Date())}</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Data</th><th>Peso (${weightSuffix})</th><th>IMC</th><th>Gordura (%)</th><th>Massa (%)</th>
+                <th>Cintura (cm)</th><th>Quadril (cm)</th><th>Braço (cm)</th><th>Coxa (cm)</th><th>Peito (cm)</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </body></html>`;
+      const { uri } = await Print.printToFileAsync({ html });
+      await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Exportar PDF' });
+    } catch (e) {
+      console.error('PDF error', e);
+      Alert.alert('Erro', 'Não foi possível exportar o PDF.');
+    }
+  }, [flatForExport, userName, weightSuffix]);
+
+  const hasData = filtered.length > 0;
+
+  return (
+    <View style={{ flex: 1, backgroundColor: Colors.background }}>
+      <StatusBar barStyle="light-content" />
+
+      {/* HEADER EM FLUXO (sem absolute) */}
+      <Animated.View style={[styles.headerWrap, { height: headerHeight }]}>
+        <LinearGradient colors={[Colors.primary, Colors.primaryLight]} style={styles.headerGradient}>
+          {/* Top actions */}
+          <View style={styles.headerTopRow}>
+            <View style={styles.brandPill}>
+              <Text style={styles.brandLeft}>RISI</Text>
+              <Text style={styles.brandRight}>FIT</Text>
+            </View>
+            <View style={{ flexDirection: 'row' }}>
+              <TouchableOpacity onPress={exportCSV} style={styles.actionIcon} activeOpacity={0.75}>
+                <Feather name="file-text" size={18} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={exportPDF} style={styles.actionIcon} activeOpacity={0.75}>
+                <Feather name="download" size={18} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Secção expandida */}
+          <Animated.View style={{ opacity: headerFadeBig }}>
+            <View style={styles.userRow}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{userInitial}</Text>
+              </View>
+              <View style={{ flex: 1, paddingHorizontal: 8 }}>
+                <Text style={styles.hello}>Olá,</Text>
+                <Text style={styles.userName} numberOfLines={1}>{userName || 'Utilizador'}</Text>
+              </View>
+              <Animated.View style={{ transform: [{ scale: headerScaleRing }] }}>
+                <Ring
+                  size={116}
+                  stroke={12}
+                  percent={hasData ? (ringInfo.percent ?? 0) : 0}
+                  label={selectedMetric.label}
+                  value={
+                    hasData && ringInfo.last !== undefined
+                      ? ringInfo.last.toFixed(selectedMetric.decimals)
+                      : '—'
+                  }
+                  suffix={selectedMetric.suffix}
+                />
+              </Animated.View>
+            </View>
+
+            {/* Range chips */}
+            <View style={styles.rangeRow}>
+              {['3M', '6M', '12M', 'ALL'].map((r) => (
+                <TouchableOpacity
+                  key={r}
+                  onPress={() => setRange(r)}
+                  style={[styles.rangeChip, range === r && styles.rangeChipActive]}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[styles.rangeText, range === r && styles.rangeTextActive]}>
+                    {r === 'ALL' ? 'Todos' : r}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Animated.View>
+
+          {/* Barra compacta (quando colapsa) */}
+          <Animated.View style={[styles.compactBar, { opacity: headerFadeCompact }]}>
+            <Text style={styles.compactTitle} numberOfLines={1}>
+              {selectedMetric.label} • {userName || 'Utilizador'}
+            </Text>
+            <View style={styles.compactChip}>
+              <Feather name="trending-up" size={14} color="#1A1A1A" />
+              <Text style={styles.compactChipText}>
+                {hasData && ringInfo.last !== undefined
+                  ? `${ringInfo.last.toFixed(selectedMetric.decimals)} ${selectedMetric.suffix}`
+                  : '—'}
+              </Text>
+            </View>
+          </Animated.View>
+        </LinearGradient>
+      </Animated.View>
+
+      {/* CONTEÚDO — fica logo abaixo do header (sem paddingTop gigante) */}
+      <Animated.ScrollView
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
+        scrollEventThrottle={16}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[Colors.secondary]} />}
+        contentContainerStyle={{ paddingBottom: 28 }}
+      >
+        {/* Chips de métricas */}
+        <View style={{ paddingTop: 12 }}>
+          <FlatList
+            data={metricCatalog}
+            horizontal
+            keyExtractor={(i) => i.key}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
+            renderItem={({ item }) => {
+              const active = selectedMetric.key === item.key;
+              return (
+                <TouchableOpacity
+                  onPress={() => setSelectedMetric(item)}
+                  style={[styles.metricChip, active && styles.metricChipActive]}
+                  activeOpacity={0.85}
+                >
+                  <Feather name={item.icon} size={14} color={active ? '#1A1A1A' : Colors.text} style={{ marginRight: 6 }} />
+                  <Text style={[styles.metricChipText, active && styles.metricChipTextActive]}>{item.label}</Text>
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </View>
+
+        {/* KPIs */}
+        <View style={styles.kpiWrap}>
+          {loading ? (
+            <View style={styles.loadingCard}>
+              <ActivityIndicator color={Colors.secondary} />
+            </View>
+          ) : hasData ? (
+            <View style={styles.kpiRow}>
+              {[
+                ...kpis,
+              ].map((k) => (
+                <View key={k.key} style={styles.kpiCard}>
+                  <Text style={styles.kpiLabel}>{k.label}</Text>
+                  <Text style={styles.kpiValue}>
+                    {k.value !== undefined ? k.value.toFixed(k.decimals) : '—'}
+                    {!!k.suffix && <Text style={styles.kpiSuffix}> {k.suffix}</Text>}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.deltaInline,
+                      { color: typeof k.delta === 'number' ? (k.delta >= 0 ? Colors.danger : Colors.success) : Colors.textMuted },
+                    ]}
+                  >
+                    {typeof k.delta === 'number'
+                      ? `${k.delta >= 0 ? '+' : ''}${k.delta.toFixed(1)}${k.suffix ? ' ' + k.suffix : ''} vs. ant.`
+                      : '—'}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View style={[styles.loadingCard, { backgroundColor: '#fff' }]}>
+              <Feather name="database" color={Colors.textMuted} size={18} />
+              <Text style={{ color: Colors.textMuted, marginTop: 8, fontWeight: '600' }}>
+                Sem dados ainda. Puxe para atualizar.
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Resumo */}
+        <View style={styles.dualCard}>
+          <View style={styles.dualBlock}>
+            <Text style={styles.dualTitle}>Desde o início</Text>
+            <Text style={styles.dualValue}>
+              {mainChart.delta !== undefined
+                ? `${mainChart.delta >= 0 ? '+' : ''}${mainChart.delta.toFixed(selectedMetric.decimals)}${selectedMetric.suffix ? ' ' + selectedMetric.suffix : ''}`
+                : '—'}
+            </Text>
+            <Text style={styles.dualSub}>
+              {mainChart.percent !== undefined ? `${mainChart.percent >= 0 ? '+' : ''}${mainChart.percent.toFixed(1)}%` : '—'}
+            </Text>
+          </View>
+          <View style={styles.sep} />
+          <View style={styles.dualBlock}>
+            <Text style={styles.dualTitle}>Valor atual</Text>
+            <Text style={styles.dualValue}>
+              {mainChart.last !== undefined
+                ? `${Number(mainChart.last).toFixed(selectedMetric.decimals)}${selectedMetric.suffix ? ' ' + selectedMetric.suffix : ''}`
+                : '—'}
+            </Text>
+            <Text style={styles.dualSub}>Métrica: {selectedMetric.label}</Text>
+          </View>
+        </View>
+
+        {/* Gráfico principal */}
+        <View style={styles.mainCard}>
+          <Text style={styles.mainTitle}>Histórico • {selectedMetric.label}</Text>
+          <View style={{ alignItems: 'center', marginTop: 6 }}>
+            {loading ? (
+              <ActivityIndicator color={Colors.primary} style={{ marginVertical: 24 }} />
+            ) : mainChart.data?.length > 1 ? (
+              <LineChart
+                data={{ labels: mainChart.labels, datasets: [{ data: mainChart.data }] }}
+                width={W - 32}
+                height={240}
+                yAxisSuffix={selectedMetric.suffix ? ` ${selectedMetric.suffix}` : ''}
+                chartConfig={{
+                  backgroundColor: '#fff',
+                  backgroundGradientFrom: '#fff',
+                  backgroundGradientTo: '#fff',
+                  decimalPlaces: selectedMetric.decimals,
+                  color: () => '#2A3B47',
+                  labelColor: () => Colors.textMuted,
+                  propsForDots: { r: '4', strokeWidth: '2', stroke: Colors.secondary },
+                  propsForBackgroundLines: { stroke: Colors.border, strokeDasharray: '3' },
+                }}
+                bezier
+                style={{ borderRadius: 16 }}
+              />
+            ) : (
+              <Text style={styles.emptyText}>Precisas de pelo menos 2 registos para o gráfico.</Text>
+            )}
+          </View>
+        </View>
+
+        {/* Barras mensais */}
+        <View style={styles.mainCard}>
+          <Text style={styles.mainTitle}>Média mensal ({selectedMetric.label})</Text>
+          {monthlyBar.data.length ? (
+            <BarChart
+              data={{ labels: monthlyBar.labels, datasets: [{ data: monthlyBar.data }] }}
+              width={W - 32}
+              height={210}
+              fromZero
+              yAxisSuffix={selectedMetric.suffix ? ` ${selectedMetric.suffix}` : ''}
+              chartConfig={{
+                backgroundGradientFrom: '#fff',
+                backgroundGradientTo: '#fff',
+                color: () => '#2A3B47',
+                labelColor: () => Colors.textMuted,
+                propsForBackgroundLines: { stroke: Colors.border, strokeDasharray: '3' },
+                barPercentage: 0.5,
+              }}
+              style={{ borderRadius: 16 }}
+            />
+          ) : (
+            <Text style={styles.emptyText}>Sem dados mensais suficientes.</Text>
+          )}
+        </View>
+
+        {!!error && (
+          <View style={styles.errorBox}>
+            <Feather name="alert-triangle" size={18} color={Colors.danger} />
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity onPress={loadData} style={styles.retryBtn}>
+              <Text style={styles.retryText}>Tentar novamente</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </Animated.ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  // Header
+  headerWrap: {
+    backgroundColor: 'transparent',
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
+    overflow: 'hidden',
+  },
+  headerGradient: {
+    flex: 1,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 12 : 20,
+    paddingBottom: 12,
+    paddingHorizontal: 16,
+  },
+  headerTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  brandPill: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  brandLeft: { color: '#fff', fontWeight: '800', letterSpacing: 1 },
+  brandRight: { color: Colors.secondary, fontWeight: '800', letterSpacing: 1 },
+  actionIcon: {
+    marginLeft: 12,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    padding: 8,
+    borderRadius: 999,
+  },
+
+  userRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 16,
+    justifyContent: 'space-between',
+  },
+  avatar: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: Colors.secondary, alignItems: 'center', justifyContent: 'center',
+  },
+  avatarText: { fontWeight: '800', color: '#1A1A1A', fontSize: 20 },
+  hello: { color: '#D1D5DB', fontSize: 12 },
+  userName: { color: 'white', fontSize: 18, fontWeight: '700', maxWidth: 180 },
+
+  rangeRow: { flexDirection: 'row', marginTop: 14, gap: 8, alignSelf: 'center' },
+  rangeChip: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.32)',
+  },
+  rangeChipActive: { backgroundColor: '#fff' },
+  rangeText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  rangeTextActive: { color: Colors.primary },
+
+  compactBar: {
+    position: 'absolute',
+    bottom: 10, left: 16, right: 16,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  compactTitle: { color: '#fff', fontWeight: '800', fontSize: 16 },
+  compactChip: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: Colors.secondary, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+  },
+  compactChipText: { marginLeft: 6, fontWeight: '800', color: '#1A1A1A', fontSize: 12 },
+
+  // Content
+  kpiWrap: { paddingHorizontal: 16, marginTop: 12 },
+  kpiRow: { flexDirection: 'row', gap: 12 },
+  kpiCard: {
+    flex: 1, backgroundColor: Colors.card, borderRadius: 16, padding: 12,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  kpiLabel: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
+  kpiValue: { fontSize: 22, fontWeight: '800', color: Colors.text, marginTop: 4 },
+  kpiSuffix: { fontSize: 12, color: Colors.textMuted },
+  deltaInline: { marginTop: 4, fontSize: 12 },
+
+  dualCard: {
+    marginTop: 12, marginHorizontal: 16, padding: 12,
+    backgroundColor: Colors.card, borderRadius: 16, borderWidth: 1, borderColor: Colors.border,
+    flexDirection: 'row',
+  },
+  dualBlock: { flex: 1, paddingHorizontal: 8 },
+  dualTitle: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
+  dualValue: { color: Colors.text, fontSize: 22, fontWeight: '800', marginTop: 4 },
+  dualSub: { color: Colors.textMuted, marginTop: 4 },
+  sep: { width: 1, backgroundColor: Colors.border, marginVertical: 6 },
+
+  mainCard: {
+    marginTop: 12, marginHorizontal: 16, padding: 12,
+    backgroundColor: Colors.card, borderRadius: 16, borderWidth: 1, borderColor: Colors.border,
+  },
+  mainTitle: { fontSize: 16, fontWeight: '800', color: Colors.text, marginBottom: 8 },
+
+  emptyText: { textAlign: 'center', color: Colors.textMuted, marginVertical: 12, fontStyle: 'italic' },
+
+  loadingCard: {
+    height: 96, borderRadius: 16, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border,
+    alignItems: 'center', justifyContent: 'center', marginHorizontal: 0, gap: 6,
+  },
+
+  errorBox: {
+    marginTop: 12, marginHorizontal: 16,
+    backgroundColor: '#FFF6F7', borderColor: '#FECAD5', borderWidth: 1, borderRadius: 12, padding: 14,
+    alignItems: 'center',
+  },
+  errorText: { color: Colors.text, marginTop: 6, textAlign: 'center' },
+  retryBtn: {
+    marginTop: 10, backgroundColor: Colors.primary, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
+  },
+  retryText: { color: 'white', fontWeight: '700' },
+
+  metricChip: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#F3F4F6', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  metricChipActive: { backgroundColor: Colors.secondary, borderColor: Colors.secondary },
+  metricChipText: { color: Colors.text, fontWeight: '700', fontSize: 12 },
+  metricChipTextActive: { color: '#1A1A1A' },
+});

@@ -1,208 +1,179 @@
-import React from 'react';
-import { View, Text, StyleSheet, Platform, StatusBar, TouchableOpacity } from 'react-native';
+// components/AppHeader.js — Aurora Glass Header (com PressableScale)
+import React, { useRef, useEffect, useState } from 'react';
+import {
+  View, Text, StyleSheet, Platform, StatusBar, SafeAreaView, TextInput, Animated, Easing,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+let BlurView = ({ style, children }) => <View style={style}>{children}</View>;
+try { BlurView = require('expo-blur').BlurView; } catch {}
+import Colors from '../constants/Colors';
+import Layout from '../constants/Layout';
+import PressableScale from './PressableScale';
 
-// --- CONSTANTES DE CORES E LAYOUT ---
-// Estas constantes devem ser as mesmas que você usa em seus outros arquivos
-const Colors = {
-    primaryGold: '#B8860B', // Dourado mais clássico e vibrante
-    darkBrown: '#3E2723',   // Marrom bem escuro para textos e ícones principais
-    lightBrown: '#795548',  // Marrom mais suave para detalhes e placeholders
-    creamBackground: '#FDF7E4', // Fundo creme claro para a maioria da tela
+export default function AppHeader({
+  title = 'Painel',
+  subtitle = '',
+  backgroundColor,
+  showBackButton = false,
+  onBackPress = () => {},
+  showMenu = false,
+  onMenuPress = () => {},
+  showBell = true,
+  onBellPress = () => {},
+  notificationCount = 0,
+  rightContent = null,
+  leftContent = null,
+  statusBarStyle,
+  onSearch,
+  searchPlaceholder = 'Pesquisar…',
+  defaultSearch = '',
+}) {
+  const blobA = useRef(new Animated.Value(0)).current;
+  const blobB = useRef(new Animated.Value(0)).current;
+  const underline = useRef(new Animated.Value(0)).current;
 
-    white: '#FFFFFF',
-    lightGray: '#ECEFF1',   // Cinza muito claro para fundos secundários
-    mediumGray: '#B0BEC5',   // Cinza médio para textos secundários e bordas inativas
-    darkGray: '#424242',    // Cinza escuro para textos principais
-    accentBlue: '#2196F3',   // Azul vibrante para links/destaques (ex: treino completo)
-    successGreen: '#4CAF50', // Verde para sucesso
-    errorRed: '#EF5350',    // Vermelho para erros/alertes (urgente)
+  useEffect(() => {
+    const mkLoop = (val, d1, d2) => Animated.loop(Animated.sequence([
+      Animated.timing(val, { toValue: 1, duration: d1, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      Animated.timing(val, { toValue: 0, duration: d2, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    ]));
+    const l1 = mkLoop(blobA, 5200, 4800); const l2 = mkLoop(blobB, 4300, 5200);
+    l1.start(); l2.start();
+    Animated.loop(Animated.sequence([
+      Animated.timing(underline, { toValue: 1, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(underline, { toValue: 0, duration: 1600, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+    ])).start();
+    return () => { l1.stop(); l2.stop(); };
+  }, [blobA, blobB, underline]);
 
-    headerBackground: '#B8860B', // Fundo do header, igual ao primaryGold
-    headerText: '#000000',     // Texto e ícones do header (ajustado para ser mais visível no dourado)
-    tabBarBackground: '#FDF7E4', // Fundo da tab bar
-    tabBarIconActive: '#D4AF37', // Ícone ativo da tab bar
-    tabBarIconInactive: '#8D8D8D', // Ícone inativo da tab bar
-    tabBarTextActive: '#D4AF37', // Texto ativo da tab bar
-    tabBarTextInactive: '#8D8D8D', // Texto inativo da tab bar
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState(defaultSearch);
+  const openAnim = useRef(new Animated.Value(0)).current;
+  const toggleSearch = () => {
+    const to = searchOpen ? 0 : 1;
+    setSearchOpen(!searchOpen);
+    Animated.timing(openAnim, { toValue: to, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  };
+  const handleSubmit = () => onSearch?.(query);
 
-    shadowColor: 'rgba(0, 0, 0, 0.2)', // Sombra mais pronunciada mas suave
-    cardBackground: '#FFFFFF', // Fundo dos cartões (items de lista)
-    borderColor: '#D4AF37', // Borda para inputs e elementos selecionáveis (ativo)
-    placeholderText: '#A1887F', // Marrom suave para placeholders
-    inputBackground: '#FBF5EB', // Fundo de inputs para contraste suave
+  const GlassIconBtn = ({ icon, onPress, label, badge }) => (
+    <PressableScale onPress={onPress} accessibilityLabel={label} onDark rounded={999} style={styles.iconBtnWrap}>
+      <BlurView intensity={40} tint="dark" style={styles.iconBtnGlass}>
+        <Ionicons name={icon} size={20} color={Colors.onSecondary} />
+        {badge ? (
+          <View style={styles.badge}><Text style={styles.badgeTxt}>{badge > 99 ? '99+' : badge}</Text></View>
+        ) : null}
+      </BlurView>
+    </PressableScale>
+  );
 
-    // Cores adicionais para o tema
-    textPrimary: '#3E2723', // Marrom escuro para texto principal
-    textSecondary: '#795548', // Marrom suave para texto secundário
-    info: '#2196F3', // Azul para links/informações
-    warning: '#FFC107', // Amarelo para avisos
-    error: '#EF5350', // Vermelho para erros
-    onPrimary: '#FFFFFF', // Cor do texto sobre o primaryGold (anteriormente 'primary')
-    accent: '#D4AF37', // Dourado mais claro para acentos
-    surface: '#FFFFFF', // Fundo de superfície para cards, etc.
-    textOnPrimary: '#000000', // Cor do texto sobre o fundo primário (dourado) - ALTERADO PARA PRETO
-};
+  return (
+    <SafeAreaView style={{ backgroundColor: backgroundColor ?? Colors.primary }}>
+      <StatusBar barStyle={statusBarStyle || 'light-content'} backgroundColor={backgroundColor ?? Colors.primary} />
+      <View style={styles.container}>
+        <LinearGradient colors={[Colors.primary, '#1E2F3A']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+        <Animated.View pointerEvents="none" style={[styles.blob, {
+          left: -40, top: -30, backgroundColor: '#FFFFFF22',
+          transform: [
+            { translateX: blobA.interpolate({ inputRange: [0, 1], outputRange: [-10, 18] }) },
+            { translateY: blobA.interpolate({ inputRange: [0, 1], outputRange: [-6, 10] }) },
+            { scale: 1.05 },
+          ],
+        }]} />
+        <Animated.View pointerEvents="none" style={[styles.blob, {
+          right: -40, bottom: -30, backgroundColor: '#00000022',
+          transform: [
+            { translateX: blobB.interpolate({ inputRange: [0, 1], outputRange: [0, -14] }) },
+            { translateY: blobB.interpolate({ inputRange: [0, 1], outputRange: [0, -12] }) },
+          ],
+        }]} />
 
-const Layout = {
-    padding: 20,
-    spacing: {
-        xsmall: 4,
-        small: 8,
-        medium: 16,
-        large: 24,
-        xlarge: 32,
-    },
-    borderRadius: {
-        small: 6,
-        medium: 12,
-        large: 20,
-        pill: 50,
-    },
-    fontSizes: {
-        xsmall: 12,
-        small: 14,
-        medium: 16,
-        large: 18,
-        xlarge: 22,
-        title: 28,
-        header: 24,
-    },
-    cardElevation: Platform.select({
-        ios: {
-            shadowColor: 'rgba(0, 0, 0, 0.2)',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.3,
-            shadowRadius: 8,
-        },
-        android: {
-            elevation: 6,
-        },
-    }),
-};
+        <View style={styles.topRow}>
+          <View style={styles.left}>
+            {showBackButton && <GlassIconBtn icon="arrow-back-outline" onPress={onBackPress} label="Voltar" />}
+            {showMenu && !showBackButton && <GlassIconBtn icon="menu-outline" onPress={onMenuPress} label="Abrir menu" />}
+            {leftContent}
+          </View>
 
+          <View style={styles.center} pointerEvents="none">
+            {!!title && <Text numberOfLines={1} style={styles.title}>{title}</Text>}
+            {!!subtitle && <Text numberOfLines={2} style={styles.subtitle}>{subtitle}</Text>}
+            <Animated.View style={[styles.titleUnderline, {
+              transform: [{ scaleX: underline.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.05] }) }],
+            }]} />
+          </View>
 
-// AppHeader.js - Com o fundo dourado (Colors.primary)
-const AppHeader = ({ 
-    title = 'Painel Admin',
-    subtitle = '',
-    showBackButton = false,
-    onBackPress = () => {},
-    showBell = true, // Alterado para true por padrão
-    showMenu = false,
-    notificationCount = 0, // NOVO: Propriedade para o contador de notificações
-}) => {
-    return (
-        <View style={styles.headerContainer}>
-            <StatusBar barStyle="dark-content" backgroundColor={Colors.headerBackground} />
-            <View style={styles.leftContainer}>
-                {showBackButton && (
-                    <TouchableOpacity onPress={onBackPress} style={styles.backButton}>
-                        <Ionicons name="arrow-back-outline" size={28} color={Colors.textOnPrimary} />
-                    </TouchableOpacity>
-                )}
-                {showMenu && (
-                    <TouchableOpacity style={styles.menuButton}>
-                        <Ionicons name="menu-outline" size={28} color={Colors.textOnPrimary} />
-                    </TouchableOpacity>
-                )}
-            </View>
-            <View style={styles.centerContainer}>
-                {title && <Text style={styles.headerTitle}>{title}</Text>}
-                {subtitle && <Text style={styles.headerSubtitle}>{subtitle}</Text>}
-            </View>
-            <View style={styles.rightContainer}>
-                {showBell && (
-                    <TouchableOpacity style={styles.notificationButton}>
-                        <Ionicons name="notifications-outline" size={24} color={Colors.textOnPrimary} />
-                        {notificationCount > 0 && ( // Renderiza o badge apenas se houver notificações
-                            <View style={styles.notificationBadge}>
-                                <Text style={styles.notificationBadgeText}>
-                                    {notificationCount > 99 ? '99+' : notificationCount}
-                                </Text>
-                            </View>
-                        )}
-                    </TouchableOpacity>
-                )}
-            </View>
+          <View style={styles.right}>
+            {onSearch ? (
+              <GlassIconBtn icon={searchOpen ? 'close' : 'search-outline'} onPress={toggleSearch} label={searchOpen ? 'Fechar pesquisa' : 'Pesquisar'} />
+            ) : null}
+            {showBell && <GlassIconBtn icon="notifications-outline" onPress={onBellPress} label="Notificações" badge={notificationCount > 0 ? notificationCount : undefined} />}
+            {rightContent}
+          </View>
         </View>
-    );
-};
+
+        {onSearch ? (
+          <Animated.View
+            style={[
+              styles.searchWrap,
+              {
+                transform: [
+                  { translateY: openAnim.interpolate({ inputRange: [0, 1], outputRange: [-16, 0] }) },
+                  { scaleY: openAnim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) },
+                ],
+                opacity: openAnim,
+              },
+            ]}
+            pointerEvents={searchOpen ? 'auto' : 'none'}
+          >
+            <BlurView intensity={50} tint="dark" style={styles.searchGlass}>
+              <Ionicons name="search-outline" size={18} color={Colors.onSecondary} />
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                onSubmitEditing={handleSubmit}
+                placeholder={searchPlaceholder}
+                placeholderTextColor="rgba(255,255,255,0.8)"
+                style={styles.searchInput}
+                returnKeyType="search"
+                accessibilityLabel="Pesquisar"
+              />
+              <PressableScale onPress={handleSubmit} onDark rounded={12} style={styles.searchBtn}>
+                <Ionicons name="arrow-forward-circle" size={22} color={Colors.onSecondary} />
+              </PressableScale>
+            </BlurView>
+          </Animated.View>
+        ) : null}
+      </View>
+    </SafeAreaView>
+  );
+}
 
 const styles = StyleSheet.create({
-    headerContainer: {
-        paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + Layout.spacing.small : Layout.spacing.medium,
-        backgroundColor: Colors.primaryGold, // Usando primaryGold como o AppHeader original
-        paddingHorizontal: Layout.padding,
-        paddingBottom: Layout.spacing.medium,
-        borderBottomLeftRadius: Layout.borderRadius.large * 2, // Ajustado para maior arredondamento
-        borderBottomRightRadius: Layout.borderRadius.large * 2, // Ajustado para maior arredondamento
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        elevation: 4,
-        shadowColor: Colors.shadowColor, // Usando shadowColor da paleta
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.23,
-        shadowRadius: 2.62,
-    },
-    leftContainer: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'flex-start',
-    },
-    centerContainer: {
-        flex: 2,
-        alignItems: 'center',
-    },
-    rightContainer: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'flex-end',
-    },
-    headerTitle: {
-        fontSize: Layout.fontSizes.title,
-        fontWeight: 'bold',
-        color: Colors.textOnPrimary, // Usando textOnPrimary
-        textAlign: 'center',
-    },
-    headerSubtitle: {
-        fontSize: Layout.fontSizes.small,
-        color: Colors.textOnPrimary, // Usando textOnPrimary
-        textAlign: 'center',
-        marginTop: Layout.spacing.xsmall,
-    },
-    backButton: {
-        padding: Layout.spacing.small,
-    },
-    menuButton: {
-        padding: Layout.spacing.small,
-    },
-    notificationButton: {
-        padding: Layout.spacing.small,
-        position: 'relative', // Necessário para posicionar o badge
-    },
-    // NOVO: Estilos para o badge de notificação
-    notificationBadge: {
-        position: 'absolute',
-        top: 5, // Ajuste a posição conforme necessário
-        right: 5, // Ajuste a posição conforme necessário
-        backgroundColor: Colors.errorRed, // Cor de destaque para o badge
-        borderRadius: 10,
-        width: 20,
-        height: 20,
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: Colors.white, // Borda branca para contraste
-    },
-    notificationBadgeText: {
-        color: Colors.white,
-        fontSize: Layout.fontSizes.xsmall,
-        fontWeight: 'bold',
-    },
+  container: { paddingHorizontal: Layout?.padding ?? 16, paddingTop: (Layout?.spacing?.small ?? 8), paddingBottom: (Layout?.spacing?.medium ?? 12), overflow: 'hidden' },
+  blob: { position: 'absolute', width: 180, height: 180, borderRadius: 180 },
+  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  left: { flexDirection: 'row', alignItems: 'center', minWidth: 72, columnGap: 8 },
+  center: { flex: 1, alignItems: 'center' },
+  right: { flexDirection: 'row', alignItems: 'center', minWidth: 72, justifyContent: 'flex-end', columnGap: 8 },
+  title: { fontWeight: '900', fontSize: 20, color: Colors.onPrimary, letterSpacing: 0.2 },
+  subtitle: { marginTop: 2, fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.9)' },
+  titleUnderline: { marginTop: 6, width: 44, height: 3, borderRadius: 3, backgroundColor: Colors.secondary },
+  iconBtnWrap: { borderRadius: 999, overflow: 'hidden' },
+  iconBtnGlass: {
+    width: 40, height: 40, borderRadius: 999, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Platform.OS === 'android' ? 'rgba(255,255,255,0.06)' : undefined,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+  },
+  badge: { position: 'absolute', top: -2, right: -2, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: Colors.error ?? '#EF5350', borderWidth: 1, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  badgeTxt: { color: '#fff', fontSize: 10, fontWeight: '900', includeFontPadding: false },
+  searchWrap: { marginTop: 10 },
+  searchGlass: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, height: 44, borderRadius: 12,
+    backgroundColor: Platform.OS === 'android' ? 'rgba(255,255,255,0.08)' : undefined,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)',
+  },
+  searchInput: { flex: 1, color: Colors.onSecondary, paddingVertical: 0 },
+  searchBtn: { overflow: 'hidden', borderRadius: 12 },
 });
-
-export default AppHeader;

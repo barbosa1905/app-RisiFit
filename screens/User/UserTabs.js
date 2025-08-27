@@ -1,40 +1,52 @@
-import React, { createContext, useState, useContext } from 'react';
+// screens/User/UserTabs.js
+import React, { useContext } from 'react';
+import { Platform, View, Text, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+
+import HomeScreen from './UserHomeScreen';
 import TreinosScreen from './TreinosScreen';
 import ProgressoScreen from './ProgressoScreen';
-import PerfilUserScreen from './PerfilUserScreen';
 import HistoricoScreen from './HistoricoScreen';
-import Icon from 'react-native-vector-icons/FontAwesome5';
-import CreateChatScreen from './CreateChatScreen';
-import ChatListScreen from './ChatListScreen';
-import ChatRoomScreen from './ChatRoomScreen';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { UnreadContext } from '../../contexts/UnreadContext';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import HomeScreen from './UserHomeScreen';
+import PerfilUserScreen from './PerfilUserScreen';
 
+import CreateChatScreen from './CreateChatScreen';
+import ChatRoomScreen from './ChatRoomScreen';
+
+import { UnreadContext } from '../../contexts/UnreadContext';
+
+const Colors = {
+  primary: '#2A3B47',
+  secondary: '#FFB800',
+  background: '#F0F2F5',
+  card: '#FFFFFF',
+  text: '#111827',
+  muted: '#88909A',
+  border: '#E6E8EB',
+};
 
 const Tab = createBottomTabNavigator();
 const ChatStack = createNativeStackNavigator();
 
-// Este componente 'ChatStackScreen' define a navegação em stack para as telas de chat.
-// Ele permite que você navegue entre ChatList, CreateChat e ChatRoom como um fluxo separado
-// dentro da aba "Chat Online".
 function ChatStackScreen() {
   return (
-    <ChatStack.Navigator>
-    
-      <ChatStack.Screen
-        name="CreateChat"
-        component={CreateChatScreen}
-        options={{ title: 'Nova Conversa', headerShown: false }} // <-- ESTA É A LINHA CRÍTICA
-      />
-
+    <ChatStack.Navigator
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: 'transparent' }, // <- transparente para ver o fundo global
+      }}
+    >
+      <ChatStack.Screen name="CreateChat" component={CreateChatScreen} />
       <ChatStack.Screen
         name="ChatRoom"
         component={ChatRoomScreen}
-        options={({ route }) => ({ // Permite que o título seja dinâmico (nome do chat)
-          title: route.params?.userName || 'Conversa', // Exibe o nome do usuário/chat
+        options={({ route }) => ({
+          headerShown: true,
+          headerTitle: route.params?.userName || 'Conversa',
+          headerStyle: { backgroundColor: Colors.primary },
+          headerTintColor: '#fff',
+          headerShadowVisible: false,
         })}
       />
     </ChatStack.Navigator>
@@ -42,71 +54,94 @@ function ChatStackScreen() {
 }
 
 export default function UserTabs() {
-  const context = useContext(UnreadContext);
-  const unreadCount = context?.unreadCount || 0;
+  const { unreadCount = 0 } = useContext(UnreadContext) || {};
 
   return (
     <Tab.Navigator
       initialRouteName="UserHome"
       screenOptions={({ route }) => ({
-        tabBarIcon: ({ color, size }) => {
-          let iconName;
-          let IconComponent = Icon; // Assume FontAwesome5 por padrão para a maioria dos ícones
-
-          if (route.name === 'Treinos') {
-            iconName = 'dumbbell';
-          } else if (route.name === 'Progresso') {
-            iconName = 'chart-line';
-          } else if (route.name === 'Perfil') {
-            iconName = 'user';
-          } else if (route.name === 'Histórico') {
-            iconName = 'history';
-          } else if (route.name === 'Chat Online') {
-            iconName = 'comments'; // Ícone para a aba de chat
-          }
-          return <IconComponent name={iconName} size={size} color={color} solid />;
+        headerShown: false,
+        tabBarShowLabel: true,
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '700',
+          marginBottom: Platform.OS === 'android' ? 6 : 2,
         },
-        tabBarActiveTintColor: '#d4ac54', // Cor para abas ativas
-        tabBarInactiveTintColor: '#888',  // Cor para abas inativas
-        headerShown: false, // Esconde o cabeçalho padrão do Tab Navigator
+        tabBarActiveTintColor: Colors.secondary,
+        tabBarInactiveTintColor: Colors.muted,
+        tabBarStyle: {
+          backgroundColor: Colors.card,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: Colors.border,
+          height: 60,
+          paddingBottom: Platform.OS === 'ios' ? 10 : 6,
+          paddingTop: 6,
+        },
+        tabBarIcon: ({ focused, color, size }) => {
+          const iconSize = size + (focused ? 1 : 0);
+          const common = { color, size: iconSize };
+
+          switch (route.name) {
+            case 'UserHome':
+              return <MaterialCommunityIcons name={focused ? 'home' : 'home-outline'} {...common} />;
+            case 'Treinos':
+              return <Ionicons name={focused ? 'barbell' : 'barbell-outline'} {...common} />;
+            case 'Progresso':
+              return <Ionicons name={focused ? 'stats-chart' : 'stats-chart-outline'} {...common} />;
+            case 'Chat Online':
+              return (
+                <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name={focused ? 'chatbubble-ellipses' : 'chatbubble-ellipses-outline'} {...common} />
+                  {unreadCount > 0 && (
+                    <View
+                      style={{
+                        position: 'absolute',
+                        top: -2,
+                        right: -10,
+                        backgroundColor: '#e53935',
+                        borderRadius: 10,
+                        minWidth: 18,
+                        paddingHorizontal: 4,
+                        height: 18,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              );
+            case 'Histórico':
+              return <Ionicons name={focused ? 'time' : 'time-outline'} {...common} />;
+            case 'Perfil':
+              return <Ionicons name={focused ? 'person' : 'person-outline'} {...common} />;
+            default:
+              return <Ionicons name="ellipse-outline" {...common} />;
+          }
+        },
       })}
+      sceneContainerStyle={{ backgroundColor: 'transparent' }} // <- chave para o fundo nas tabs
     >
-      {/* Aba "Início" */}
-      <Tab.Screen
-        name="UserHome" // Nome da rota para a HomeScreen do utilizador
-        component={HomeScreen} // Componente da tela inicial
-        options={{
-          title: 'Início', // Título que aparece na aba
-          tabBarIcon: ({ color, size }) => (
-            // Usa MaterialCommunityIcons especificamente para o ícone da home
-            <MaterialCommunityIcons name="home" color={color} size={size} />
-          ),
-        }}
-      />
-
-      {/* Aba "Treinos" */}
+      <Tab.Screen name="UserHome" component={HomeScreen} options={{ title: 'Início' }} />
       <Tab.Screen name="Treinos" component={TreinosScreen} />
-      
-      {/* Aba "Progresso" */}
       <Tab.Screen name="Progresso" component={ProgressoScreen} />
-
-      {/* Aba "Chat Online" */}
-      {/* Esta aba agora carrega o ChatStackScreen, que é um stack de navegação.
-          Isso permite que ChatList, CreateChat e ChatRoom funcionem como um fluxo coeso. */}
       <Tab.Screen
         name="Chat Online"
-        component={ChatStackScreen} // Aponta para o stack de navegação do chat
+        component={ChatStackScreen}
         options={{
-          headerShown: false, // Esconde o cabeçalho do Tab Navigator para o stack de chat
-          tabBarBadge: unreadCount > 0 ? unreadCount : null, // Mostra badge apenas se houver mensagens não lidas
-          tabBarBadgeStyle: { backgroundColor: '#e53935', color: '#fff', fontSize: 12 },
+          tabBarBadge: unreadCount > 0 ? (unreadCount > 99 ? '99+' : unreadCount) : undefined,
+          tabBarBadgeStyle: {
+            backgroundColor: '#e53935',
+            color: '#fff',
+            fontSize: 11,
+            fontWeight: '800',
+          },
         }}
       />
-      
-      {/* Aba "Histórico" */}
       <Tab.Screen name="Histórico" component={HistoricoScreen} />
-
-      {/* Aba "Perfil" */}
       <Tab.Screen name="Perfil" component={PerfilUserScreen} />
     </Tab.Navigator>
   );

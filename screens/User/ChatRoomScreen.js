@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useLayoutEffect, useRef } from 'react';
+// screens/User/ChatRoomScreen.js
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   FlatList,
@@ -9,9 +10,10 @@ import {
   StyleSheet,
   ActivityIndicator,
   Text,
-  Image,
+  Alert,
+  SafeAreaView,
+  Animated,
 } from 'react-native';
-import { db, auth } from '../../services/firebaseConfig';
 import {
   collection,
   addDoc,
@@ -22,287 +24,462 @@ import {
   getDoc,
   doc,
   updateDoc,
+  deleteDoc,
+  setDoc,
 } from 'firebase/firestore';
-import ChatMessageItem from '../../components/ChatMessageItem';
+import { getAuth } from 'firebase/auth';
 import { Ionicons } from '@expo/vector-icons';
+import moment from 'moment';
+import 'moment/locale/pt';
+moment.locale('pt');
 
-export default function ChatRoomScreen({ route, navigation }) {
-  const { chatId, userId } = route.params;
-  const [messages, setMessages] = useState([]);
-  const [text, setText] = useState('');
-  const [usersMap, setUsersMap] = useState({});
-  const [contact, setContact] = useState({ name: 'Carregando...', avatar: '' });
-  const [sending, setSending] = useState(false);
-  const [lastReplyTime, setLastReplyTime] = useState(null);
-  const flatListRef = useRef();
+import { db } from '../../services/firebaseConfig';
+import Colors from '../../constants/Colors';
+import AppHeader from '../../components/AppHeader';
 
-  useEffect(() => {
-    if (!userId) {
-      console.warn('userId não fornecido');
-      setContact({ name: 'Usuário', avatar: '' });
-      return;
-    }
+const tsToDate = (t) => (t?.toDate ? t.toDate() : t instanceof Date ? t : null);
+const isSameDay = (a, b) =>
+  a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const humanDay = (d) => {
+  if (!d) return '';
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (isSameDay(d, today)) return 'Hoje';
+  if (isSameDay(d, yesterday)) return 'Ontem';
+  return moment(d).format('DD/MM/YYYY');
+};
 
-    const fetchContact = async () => {
-      try {
-        const userRef = doc(db, 'users', userId);
-        const userDoc = await getDoc(userRef);
+const copyToClipboard = async (txt) => {
+  try {
+    const mod = await import('@react-native-clipboard/clipboard');
+    const Clipboard = mod?.default || mod;
+    Clipboard?.setString?.(txt || '');
+    Alert.alert('Copiado', 'Mensagem copiada para a área de transferência.');
+  } catch (e) {
+    Alert.alert('Indisponível', 'Copiar texto não está disponível nesta build.');
+  }
+};
 
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          setContact({
-            name: typeof data.name === 'string' ? data.name : 'Usuário',
-            avatar: data.avatar || '',
-          });
-        } else {
-          console.warn(`Utilizador com ID ${userId} não encontrado na coleção 'users'.`);
-          setContact({ name: 'Usuário', avatar: '' });
-        }
-      } catch (error) {
-        console.error('Erro ao buscar dados do contato:', error);
-        setContact({ name: 'Usuário', avatar: '' });
-      }
-    };
-
-    fetchContact();
-  }, [userId]);
-
-  useEffect(() => {
-    const q = query(
-      collection(db, 'chats', chatId, 'messages'),
-      orderBy('createdAt', 'asc')
-    );
-
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const msgs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      setMessages(msgs);
-
-      const unread = msgs.filter(
-        (msg) => msg.senderId !== auth.currentUser.uid && !msg.lida
-      );
-
-      await Promise.all(
-        unread.map((msg) => {
-          const msgRef = doc(db, 'chats', chatId, 'messages', msg.id);
-          return updateDoc(msgRef, { lida: true });
-        })
-      );
-
-      // Atualizar lastReadTimestamps
-      await updateDoc(doc(db, 'chats', chatId), {
-        [`lastReadTimestamps.${auth.currentUser.uid}`]: serverTimestamp(),
-      });
-
-      const replies = msgs.filter(
-        (msg) => msg.senderId !== auth.currentUser.uid && msg.createdAt?.toDate
-      );
-
-      if (replies.length > 0) {
-        const last = replies[replies.length - 1];
-        setLastReplyTime(last.createdAt.toDate());
-      }
-
-      const senderIdsToFetch = [
-        ...new Set(
-          msgs
-            .map((m) => m.senderId)
-            .filter((id) => id && id !== auth.currentUser.uid && !usersMap[id])
-        ),
-      ];
-
-      if (senderIdsToFetch.length > 0) {
-        senderIdsToFetch.forEach(async (id) => {
-          try {
-            const userDoc = await getDoc(doc(db, 'users', id));
-            const data = userDoc.exists() ? userDoc.data() : {};
-            setUsersMap((prev) => ({
-              ...prev,
-              [id]: data.name || 'Usuário',
-            }));
-          } catch {
-            setUsersMap((prev) => ({ ...prev, [id]: 'Usuário' }));
-          }
-        });
-      }
-    });
-
-    return unsubscribe;
-  }, [chatId, usersMap]);
-
-  useLayoutEffect(() => {
-    navigation.setOptions({ headerShown: false });
-  }, [navigation]);
-
-  const sendMessage = async () => {
-    if (!text.trim() || sending) return;
-    setSending(true);
-
-    try {
-      const trimmed = text.trim();
-
-      await addDoc(collection(db, 'chats', chatId, 'messages'), {
-        text: trimmed,
-        senderId: auth.currentUser.uid,
-        createdAt: serverTimestamp(),
-        lida: false,
-      });
-
-      // Atualizar o último estado do chat
-      await updateDoc(doc(db, 'chats', chatId), {
-        lastMessage: {
-          text: trimmed,
-          senderId: auth.currentUser.uid,
-          timestamp: serverTimestamp(),
-        },
-      });
-
-      setText('');
-      flatListRef.current?.scrollToEnd({ animated: true });
-    } catch (error) {
-      console.error('Erro ao enviar mensagem:', error);
-    } finally {
-      setSending(false);
-    }
-  };
+function MessageBubble({ item, isMine, onLongPress }) {
+  const createdAt = tsToDate(item.createdAt);
+  const time = createdAt ? moment(createdAt).format('HH:mm') : '';
+  const isRead = !!item.lida && isMine;
+  const ticksIcon = isRead ? 'checkmark-done' : 'checkmark';
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-      keyboardVerticalOffset={90}
+    <TouchableOpacity
+      activeOpacity={0.9}
+      onLongPress={() => onLongPress?.(item, isMine)}
+      style={[styles.row, isMine ? styles.rowMine : styles.rowOther]}
     >
-      <View style={styles.headerBar}>
-        {contact.avatar ? (
-          <Image source={{ uri: contact.avatar }} style={styles.avatar} />
-        ) : (
-          <Ionicons name="person-circle-outline" size={40} color="#007bff" />
+      <View
+        style={[
+          styles.bubble,
+          isMine ? styles.bubbleMine : styles.bubbleOther,
+          item.temp && styles.bubblePending,
+        ]}
+      >
+        {!!item.text && (
+          <Text style={[styles.msgText, isMine ? styles.msgTextMine : styles.msgTextOther]}>
+            {item.text}
+          </Text>
         )}
-        <Text style={styles.headerTitle}>
-          {contact.name === 'Carregando...' ? '...' : contact.name}
-        </Text>
-      </View>
-
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <ChatMessageItem
-            message={item}
-            senderName={usersMap[item.senderId]}
-            lastReplyTime={lastReplyTime}
-          />
-        )}
-        contentContainerStyle={styles.messagesContainer}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-        keyboardShouldPersistTaps="handled"
-        initialNumToRender={20}
-        style={{ marginTop: 56 }}
-      />
-
-      <View style={styles.inputContainer}>
-        <TextInput
-          value={text}
-          onChangeText={setText}
-          placeholder="Digite uma mensagem..."
-          style={[styles.input, sending && styles.inputDisabled]}
-          multiline
-          editable={!sending}
-          placeholderTextColor="#999"
-        />
-
-        <TouchableOpacity
-          onPress={sendMessage}
-          style={[styles.sendButton, (sending || !text.trim()) && styles.sendButtonDisabled]}
-          disabled={sending || text.trim().length === 0}
-          activeOpacity={0.7}
-        >
-          {sending ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
+        <View style={styles.meta}>
+          <Text style={[styles.time, isMine ? styles.timeMine : styles.timeOther]}>{time}</Text>
+          {isMine && (
             <Ionicons
-              name="send"
-              size={24}
-              color={text.trim() ? '#fff' : 'rgba(255, 255, 255, 0.5)'}
+              name={ticksIcon}
+              size={14}
+              style={{ marginLeft: 6 }}
+              color={isRead ? Colors.onPrimary : (styles.timeMine.color || '#fff')}
             />
           )}
-        </TouchableOpacity>
+        </View>
       </View>
-    </KeyboardAvoidingView>
+    </TouchableOpacity>
   );
 }
 
+const DateSeparator = ({ date }) => (
+  <View style={styles.sepWrap}>
+    <View style={styles.sepLine} />
+    <Text style={styles.sepText}>{humanDay(date)}</Text>
+    <View style={styles.sepLine} />
+  </View>
+);
+
+function TypingPill({ visible }) {
+  const dot1 = useRef(new Animated.Value(0.3)).current;
+  const dot2 = useRef(new Animated.Value(0.3)).current;
+  const dot3 = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const mkAnim = (v, delay) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(v, { toValue: 1, duration: 450, delay, useNativeDriver: true }),
+          Animated.timing(v, { toValue: 0.3, duration: 450, useNativeDriver: true }),
+        ])
+      );
+    const a1 = mkAnim(dot1, 0);
+    const a2 = mkAnim(dot2, 150);
+    const a3 = mkAnim(dot3, 300);
+
+    if (visible) {
+      a1.start(); a2.start(); a3.start();
+    }
+    return () => { dot1.stopAnimation(); dot2.stopAnimation(); dot3.stopAnimation(); };
+  }, [visible, dot1, dot2, dot3]);
+
+  if (!visible) return null;
+  return (
+    <View style={styles.typingBar}>
+      <Animated.View style={[styles.typingDot, { opacity: dot1 }]} />
+      <Animated.View style={[styles.typingDot, { opacity: dot2 }]} />
+      <Animated.View style={[styles.typingDot, { opacity: dot3 }]} />
+      <Text style={styles.typingText}>a escrever…</Text>
+    </View>
+  );
+}
+
+export default function ChatRoomScreen({ route, navigation }) {
+  const { chatId, userId, userName: initialName } = route.params || {};
+  const auth = getAuth();
+
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const [contactName, setContactName] = useState(initialName || 'Personal Trainer');
+  const [sending, setSending] = useState(false);
+  const [typingOther, setTypingOther] = useState(false);
+  const [showJump, setShowJump] = useState(false);
+
+  const flatRef = useRef(null);
+
+  useEffect(() => {
+    if (!chatId || !userId) {
+      Alert.alert('Conversa inválida', 'Não foi possível abrir esta conversa.');
+      navigation.goBack();
+    }
+  }, [chatId, userId, navigation]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', userId));
+        if (!alive) return;
+        if (snap.exists()) setContactName(snap.data().name || snap.data().email || 'Personal Trainer');
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [userId]);
+
+  useEffect(() => {
+    const me = auth.currentUser?.uid;
+    if (!chatId || !me) return;
+
+    const q = query(collection(db, 'chats', chatId, 'messages'), orderBy('createdAt', 'asc'));
+    const unsubMsgs = onSnapshot(
+      q,
+      async (snapshot) => {
+        const list = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setMessages(list);
+
+        const unread = list.filter((m) => m.senderId !== me && !m.lida);
+        if (unread.length) {
+          try {
+            await Promise.all(unread.map((m) => updateDoc(doc(db, 'chats', chatId, 'messages', m.id), { lida: true })));
+            await setDoc(doc(db, 'chats', chatId), { lastRead: { [me]: serverTimestamp() } }, { merge: true });
+          } catch {}
+        }
+
+        setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 60);
+      },
+      (err) => {
+        if (String(err?.message || '').includes('insufficient permissions')) {
+          Alert.alert('Permissão', 'Sem permissão para esta conversa.');
+          navigation.goBack();
+        }
+      }
+    );
+
+    const unsubTyping = onSnapshot(doc(db, 'chats', chatId), (snap) => {
+      const data = snap.data() || {};
+      const typing = data?.typing || {};
+      setTypingOther(!!typing?.[userId]);
+    });
+
+    return () => {
+      unsubMsgs();
+      unsubTyping();
+    };
+  }, [chatId, userId, auth.currentUser?.uid, navigation]);
+
+  const updateTyping = useCallback(
+    async (value) => {
+      try {
+        const me = auth.currentUser?.uid;
+        if (!me || !chatId) return;
+        await setDoc(doc(db, 'chats', chatId), { typing: { [me]: !!value } }, { merge: true });
+      } catch {}
+    },
+    [auth.currentUser?.uid, chatId]
+  );
+
+  const onChangeText = (t) => {
+    setText(t);
+    updateTyping(!!t);
+  };
+
+  const sendMessage = useCallback(async () => {
+    const body = (text || '').trim();
+    if (!body || sending) return;
+
+    const user = auth.currentUser;
+    if (!user || !chatId) {
+      Alert.alert('Erro', 'Inicia sessão para enviar mensagens.');
+      return;
+    }
+
+    setSending(true);
+    try {
+      await addDoc(collection(db, 'chats', chatId, 'messages'), {
+        text: body,
+        senderId: user.uid,
+        createdAt: serverTimestamp(),
+        lida: false,
+      });
+      await setDoc(
+        doc(db, 'chats', chatId),
+        { lastMessage: { text: body, senderId: user.uid, timestamp: serverTimestamp() } },
+        { merge: true }
+      );
+      setText('');
+      updateTyping(false);
+      setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 50);
+    } catch {
+      Alert.alert('Erro', 'Não foi possível enviar a mensagem.');
+    } finally {
+      setSending(false);
+    }
+  }, [text, sending, auth.currentUser?.uid, chatId, updateTyping]);
+
+  const dataWithSeparators = useMemo(() => {
+    const out = [];
+    let lastDate = null;
+    for (const m of messages) {
+      const d = tsToDate(m.createdAt);
+      if (!lastDate || !isSameDay(d, lastDate)) {
+        out.push({ __type: 'sep', id: `sep-${d?.getTime?.() || Math.random()}`, date: d });
+        lastDate = d;
+      }
+      out.push({ __type: 'msg', ...m });
+    }
+    return out;
+  }, [messages]);
+
+  const onLongPressMessage = (msg, isMine) => {
+    const opts = [
+      { text: 'Copiar', onPress: () => copyToClipboard(msg.text || '') },
+      ...(isMine
+        ? [{
+            text: 'Apagar',
+            style: 'destructive',
+            onPress: async () => {
+              try { await deleteDoc(doc(db, 'chats', chatId, 'messages', msg.id)); }
+              catch { Alert.alert('Erro', 'Não foi possível apagar.'); }
+            },
+          }]
+        : []),
+      { text: 'Fechar', style: 'cancel' },
+    ];
+    Alert.alert('Mensagem', 'O que pretende fazer?', opts, { cancelable: true });
+  };
+
+  const renderItem = ({ item }) => {
+    if (item.__type === 'sep') return <DateSeparator date={item.date} />;
+    const isMine = auth.currentUser ? item.senderId === auth.currentUser.uid : false;
+    return <MessageBubble item={item} isMine={isMine} onLongPress={onLongPressMessage} />;
+  };
+
+  const onScroll = (e) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    const atBottom = contentOffset.y + layoutMeasurement.height >= contentSize.height - 40;
+    setShowJump(!atBottom);
+  };
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <AppHeader title={contactName} showBackButton onBackPress={() => navigation.goBack()} />
+
+      {/* Sub-status sob o header */}
+      <View style={styles.subHeader}>
+        <View style={[styles.statusDot, { backgroundColor: typingOther ? Colors.success : Colors.textSecondary }]} />
+        <Text style={styles.subHeaderText}>{typingOther ? 'a escrever…' : 'conectado'}</Text>
+      </View>
+
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <FlatList
+          ref={flatRef}
+          data={dataWithSeparators}
+          keyExtractor={(it) => it.id || it.__type + Math.random().toString(36).slice(2)}
+          renderItem={renderItem}
+          contentContainerStyle={styles.listContent}
+          ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={() => flatRef.current?.scrollToEnd({ animated: true })}
+          onScroll={onScroll}
+          showsVerticalScrollIndicator={false}
+        />
+
+        <TypingPill visible={typingOther} />
+
+        {/* FAB - Scroll to bottom */}
+        {showJump && (
+          <TouchableOpacity
+            onPress={() => flatRef.current?.scrollToEnd({ animated: true })}
+            style={styles.jumpBtn}
+            activeOpacity={0.9}
+          >
+            <Ionicons name="chevron-down" size={20} color={Colors.onPrimary} />
+          </TouchableOpacity>
+        )}
+
+        {/* Input */}
+        <View style={styles.inputBar}>
+          <TextInput
+            value={text}
+            onChangeText={onChangeText}
+            placeholder="Escrever mensagem…"
+            placeholderTextColor={Colors.textSecondary}
+            style={[styles.input, sending && styles.inputDisabled]}
+            multiline
+            editable={!sending}
+          />
+          <TouchableOpacity
+            onPress={sendMessage}
+            disabled={sending || !text.trim()}
+            style={[styles.sendBtn, (sending || !text.trim()) && styles.sendBtnDisabled]}
+            activeOpacity={0.85}
+          >
+            {sending ? <ActivityIndicator color={Colors.onPrimary} /> : <Ionicons name="send" size={22} color={Colors.onPrimary} />}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+const BUBBLE_RADIUS = 16;
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fafafa' },
-  headerBar: {
-    height: 56,
+  safeArea: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1, backgroundColor: Colors.background },
+  listContent: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14 },
+
+  // Subheader com estado
+  subHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     borderBottomWidth: 1,
-    borderColor: '#ddd',
-    backgroundColor: 'white',
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 10,
+    borderColor: Colors.divider,
+    backgroundColor: Colors.cardBackground,
   },
-  avatar: { width: 40, height: 40, borderRadius: 20 },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginLeft: 10,
-    color: '#007bff',
-  },
-  messagesContainer: {
+  statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
+  subHeaderText: { color: Colors.textSecondary, fontSize: 12 },
+
+  row: { flexDirection: 'row', paddingHorizontal: 6 },
+  rowMine: { justifyContent: 'flex-end' },
+  rowOther: { justifyContent: 'flex-start' },
+
+  bubble: {
+    maxWidth: '82%',
+    borderRadius: BUBBLE_RADIUS,
     paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
   },
-  inputContainer: {
+  bubbleMine: { backgroundColor: Colors.secondary, borderColor: Colors.secondary, borderTopRightRadius: 6 },
+  bubbleOther: { backgroundColor: Colors.cardBackground, borderColor: Colors.divider, borderTopLeftRadius: 6 },
+  bubblePending: { opacity: 0.6 },
+
+  msgText: { fontSize: 15, lineHeight: 20 },
+  msgTextMine: { color: Colors.onPrimary },
+  msgTextOther: { color: Colors.textPrimary },
+
+  meta: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 4 },
+  time: { fontSize: 11 },
+  timeMine: { color: Colors.onPrimary },
+  timeOther: { color: Colors.textSecondary },
+
+  sepWrap: { flexDirection: 'row', alignItems: 'center', alignSelf: 'center', gap: 8, marginVertical: 10 },
+  sepLine: { height: 1, width: 56, backgroundColor: Colors.divider },
+  sepText: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: Colors.cardBackground,
+    color: Colors.textSecondary,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    fontSize: 12,
+  },
+
+  typingBar: {
     flexDirection: 'row',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderTopWidth: 1,
-    borderColor: '#ddd',
-    backgroundColor: '#fff',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: -2 },
-    elevation: 3,
+    alignSelf: 'flex-start',
+    marginLeft: 12,
+    marginBottom: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: Colors.cardBackground,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    gap: 6,
+  },
+  typingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.textSecondary },
+  typingText: { color: Colors.textSecondary, fontSize: 12 },
+
+  inputBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'ios' ? 18 : 12,
+    borderTopWidth: 1,
+    borderColor: Colors.divider,
+    backgroundColor: Colors.cardBackground,
   },
   input: {
     flex: 1,
-    backgroundColor: '#f1f3f6',
-    borderRadius: 25,
-    paddingHorizontal: 20,
-    paddingVertical: Platform.OS === 'ios' ? 10 : 6,
-    fontSize: 16,
-    color: '#222',
-    maxHeight: 100,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    backgroundColor: Colors.cardBackground,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: Colors.textPrimary,
+    maxHeight: 140,
   },
-  inputDisabled: {
-    backgroundColor: '#e0e0e0',
-  },
-  sendButton: {
-    marginLeft: 10,
-    backgroundColor: '#007bff',
-    borderRadius: 24,
-    padding: 12,
-    justifyContent: 'center',
+  inputDisabled: { opacity: 0.6 },
+  sendBtn: { marginLeft: 8, backgroundColor: Colors.primary, height: 46, width: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  sendBtnDisabled: { backgroundColor: Colors.textSecondary },
+
+  jumpBtn: {
+    position: 'absolute',
+    right: 16,
+    bottom: 86,
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     alignItems: 'center',
-    shadowColor: '#007bff',
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
     elevation: 4,
-  },
-  sendButtonDisabled: {
-    backgroundColor: '#999',
-    shadowOpacity: 0,
-    elevation: 0,
   },
 });

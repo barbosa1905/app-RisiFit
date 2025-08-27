@@ -1,65 +1,18 @@
+// screens/Admin/RespostasQuestionariosClientes.js
 import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  FlatList,
-  StyleSheet,
-  ActivityIndicator,
-  SafeAreaView,
-  Alert,
+  View, Text, FlatList, StyleSheet, ActivityIndicator, SafeAreaView, Alert,
 } from 'react-native';
-import { collection, query, getDocs, where, doc, getDoc, getFirestore } from 'firebase/firestore';
+import { collection, query, getDocs, where, doc, getDoc } from 'firebase/firestore';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import AppHeader from '../../components/AppHeader';
+import { getAuth, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { Ionicons } from '@expo/vector-icons';
 
-// --- CONFIGURAÇÃO FIREBASE: Torna o componente auto-suficiente ---
-// Substitua com as suas credenciais
-const firebaseConfig = {
-  apiKey: "AIzaSyDOP9sg9slVIXrkEvdTpXrL-DRAeolLI8I",
-  authDomain: "risifit-4defe.firebaseapp.com",
-  projectId: "risifit-4defe",
-  storageBucket: "risifit-4defe.firebasestorage.app",
-  messagingSenderId: "485424698583",
-  appId: "1:485424698583:web:0d6095f3ca5a071b4ccc92",
-  measurementId: "G-J7PVBCXMT5"
-};
+import AppHeader from '../../components/AppHeader';
+import Colors from '../../constants/Colors';
+import { db } from '../../services/firebaseConfig';
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-const db = getFirestore(app);
-const auth = getAuth(app);
-
-
-// Paleta de Cores e Estilos Globais
-const Colors = {
-  primaryGold: '#B8860B',
-  darkBrown: '#3E2723',
-  lightBrown: '#795548',
-  creamBackground: '#FDF7E4',
-  white: '#FFFFFF',
-  lightGray: '#ECEFF1',
-  mediumGray: '#B0BEC5',
-  darkGray: '#424242',
-  accentBlue: '#2196F3',
-  successGreen: '#4CAF50',
-  errorRed: '#F44336',
-  buttonTextLight: '#FFFFFF',
-  buttonTextDark: '#3E2723',
-  shadow: 'rgba(0,0,0,0.08)',
-  black: '#000000',
-};
-
-const GlobalStyles = {
-  cardShadow: {
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-};
+const auth = getAuth();
 
 export default function RespostasQuestionariosCliente() {
   const route = useRoute();
@@ -68,170 +21,155 @@ export default function RespostasQuestionariosCliente() {
 
   const [respostasDetalhadas, setRespostasDetalhadas] = useState([]);
   const [nomeQuestionario, setNomeQuestionario] = useState('');
+  const [timestamp, setTimestamp] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [err, setErr] = useState('');
 
   useEffect(() => {
-    // Autenticação anónima para garantir que o Firestore pode ser acedido
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (!user) {
-        signInAnonymously(auth).catch(e => console.error("Erro na autenticação anónima:", e));
-      }
+    const unsubAuth = onAuthStateChanged(auth, (u) => {
+      if (!u) signInAnonymously(auth).catch(() => {});
     });
 
-    const carregarRespostas = async () => {
+    const load = async () => {
       if (!clienteId || !questionarioId) {
-        setError('ID do cliente ou do questionário não encontrado.');
+        setErr('ID do cliente ou do questionário não encontrado.');
         setLoading(false);
         return;
       }
-
       try {
-        // Busca o questionário e as respostas em paralelo para maior eficiência
-        const [questionarioSnap, respostaSnapshot] = await Promise.all([
+        setLoading(true);
+
+        const [qSnap, respSnap] = await Promise.all([
           getDoc(doc(db, 'questionarios', questionarioId)),
-          getDocs(query(
-            collection(db, 'respostasQuestionarios'),
-            where('userId', '==', clienteId),
-            where('questionarioId', '==', questionarioId)
-          ))
+          getDocs(
+            query(
+              collection(db, 'respostasQuestionarios'),
+              where('userId', '==', clienteId),
+              where('questionarioId', '==', questionarioId)
+            )
+          ),
         ]);
 
-        // Trata o resultado da busca do questionário
-        if (questionarioSnap.exists()) {
-          setNomeQuestionario(questionarioSnap.data().titulo || 'Questionário sem Título');
-        } else {
-          setNomeQuestionario('Questionário desconhecido');
-        }
+        setNomeQuestionario(qSnap.exists() ? (qSnap.data()?.titulo || 'Questionário') : 'Questionário desconhecido');
 
-        // Trata o resultado da busca das respostas
-        if (!respostaSnapshot.empty) {
-          const respostaData = respostaSnapshot.docs[0].data();
-          setRespostasDetalhadas(respostaData.respostasDetalhadas || []);
+        if (!respSnap.empty) {
+          const data = respSnap.docs[0].data();
+          setRespostasDetalhadas(data.respostasDetalhadas || []);
+          setTimestamp(data.timestamp || null);
         } else {
-          setError('Respostas não encontradas para este questionário.');
+          setErr('Respostas não encontradas para este questionário.');
         }
-
       } catch (e) {
-        console.error('Erro ao buscar dados:', e);
+        if (__DEV__) console.error('[RespostasQuestionariosClientes] load', e);
         Alert.alert('Erro', 'Ocorreu um erro ao carregar os dados do questionário.');
-        setError('Erro ao carregar os dados do questionário.');
+        setErr('Erro ao carregar os dados do questionário.');
       } finally {
         setLoading(false);
       }
     };
 
-    carregarRespostas();
-    // Limpa a subscrição da autenticação
-    return () => unsubscribeAuth();
+    load();
+    return () => unsubAuth();
   }, [clienteId, questionarioId]);
 
-  const renderItem = ({ item }) => (
-    <View style={[styles.card, GlobalStyles.cardShadow]}>
-      <Text style={styles.cardTitle}>{item.pergunta}</Text>
-      <Text style={styles.cardAnswer}>{item.resposta || 'Sem resposta'}</Text>
+  const renderItem = ({ item, index }) => (
+    <View style={styles.card}>
+      <View style={styles.index}>
+        <Text style={styles.indexText}>{index + 1}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.q}>{item.pergunta}</Text>
+        <Text style={styles.a}>{item.resposta || 'Sem resposta'}</Text>
+      </View>
     </View>
   );
 
-  if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={Colors.primaryGold} />
-        <Text style={styles.loadingText}>A carregar respostas...</Text>
-      </View>
-    );
-  }
-
-  if (error) {
-    return (
-      <View style={styles.center}>
-        <Ionicons name="alert-circle-outline" size={50} color={Colors.errorRed} />
-        <Text style={styles.errorText}>{error}</Text>
-      </View>
-    );
-  }
+  const dataStr =
+    timestamp?.toDate?.() &&
+    timestamp.toDate().toLocaleString('pt-PT', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safe}>
       <AppHeader
         title={nomeQuestionario}
-        subtitle={`Respostas de ${clienteNome}`}
-        showBackButton={true}
+        subtitle={clienteNome ? `Respostas de ${clienteNome}` : undefined}
+        showBackButton
         onBackPress={() => navigation.goBack()}
       />
-      {respostasDetalhadas.length > 0 ? (
-        <FlatList
-          data={respostasDetalhadas}
-          keyExtractor={(_, index) => index.toString()}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
-        />
-      ) : (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="reader-outline" size={50} color={Colors.mediumGray} />
-          <Text style={styles.emptyText}>Nenhuma resposta encontrada.</Text>
+
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+          <Text style={styles.loadingText}>A carregar…</Text>
         </View>
+      ) : err ? (
+        <View style={styles.center}>
+          <Ionicons name="alert-circle-outline" size={48} color={Colors.error} />
+          <Text style={styles.errorText}>{err}</Text>
+        </View>
+      ) : respostasDetalhadas.length === 0 ? (
+        <View style={styles.emptyWrap}>
+          <View style={styles.emptyIcon}><Ionicons name="reader-outline" size={28} color={Colors.secondary} /></View>
+          <Text style={styles.emptyTitle}>Sem respostas</Text>
+          <Text style={styles.emptyText}>Não encontrámos respostas para este questionário.</Text>
+        </View>
+      ) : (
+        <>
+          {!!dataStr && (
+            <View style={styles.meta}>
+              <Ionicons name="time-outline" size={16} color={Colors.textSecondary} />
+              <Text style={styles.metaText}>Respondido em {dataStr}</Text>
+            </View>
+          )}
+          <FlatList
+            data={respostasDetalhadas}
+            keyExtractor={(_, i) => String(i)}
+            renderItem={renderItem}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
+            showsVerticalScrollIndicator={false}
+          />
+        </>
       )}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: Colors.creamBackground,
+  safe: { flex: 1, backgroundColor: 'transparent' },
+
+  center: { alignItems: 'center', justifyContent: 'center', paddingTop: 40 },
+  loadingText: { marginTop: 10, color: Colors.textSecondary },
+  errorText: { marginTop: 10, color: Colors.error, textAlign: 'center', paddingHorizontal: 24 },
+
+  emptyWrap: { alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
+  emptyIcon: {
+    width: 56, height: 56, borderRadius: 16, backgroundColor: `${Colors.secondary}22`,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 10,
   },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: Colors.creamBackground,
+  emptyTitle: { fontWeight: '900', color: Colors.textPrimary, fontSize: 18 },
+  emptyText: { color: Colors.textSecondary, marginTop: 6 },
+
+  meta: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginHorizontal: 16, marginTop: 8, marginBottom: 6,
+    paddingHorizontal: 12, paddingVertical: 8,
+    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.divider,
+    borderRadius: 10,
   },
-  loadingText: {
-    marginTop: 15,
-    fontSize: 17,
-    color: Colors.darkBrown,
-    fontWeight: '500',
-  },
-  errorText: {
-    marginTop: 15,
-    fontSize: 17,
-    color: Colors.errorRed,
-    textAlign: 'center',
-    paddingHorizontal: 20,
-  },
-  listContent: {
-    padding: 20,
-  },
+  metaText: { color: Colors.textSecondary, fontWeight: '700' },
+
   card: {
-    backgroundColor: Colors.white,
-    padding: 18,
-    borderRadius: 15,
-    marginBottom: 15,
-    borderLeftWidth: 4, // Adiciona uma borda à esquerda
-    borderLeftColor: Colors.primaryGold,
+    flexDirection: 'row', gap: 12,
+    backgroundColor: Colors.cardBackground,
+    borderRadius: 14, borderWidth: 1, borderColor: Colors.divider,
+    padding: 14, marginTop: 10,
   },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.darkBrown,
-    marginBottom: 5,
+  index: {
+    width: 26, height: 26, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.secondary,
   },
-  cardAnswer: {
-    fontSize: 16,
-    color: Colors.darkGray,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 40,
-    paddingHorizontal: 20,
-  },
-  emptyText: {
-    textAlign: 'center',
-    marginTop: 20,
-    fontSize: 16,
-    color: Colors.mediumGray,
-  },
+  indexText: { color: Colors.onSecondary, fontWeight: '900', fontSize: 12 },
+  q: { color: Colors.textPrimary, fontWeight: '800', marginBottom: 4 },
+  a: { color: Colors.textSecondary, lineHeight: 20 },
 });

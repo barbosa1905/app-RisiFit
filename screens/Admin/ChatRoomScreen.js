@@ -1,486 +1,381 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+// screens/Admin/ChatRoomScreen.js
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
-    View,
-    FlatList,
-    TextInput,
-    TouchableOpacity,
-    KeyboardAvoidingView,
-    Platform,
-    StyleSheet,
-    ActivityIndicator,
-    Text,
-    Image,
-    Alert,
-    LayoutAnimation,
-    UIManager,
-    SafeAreaView, // Adicionado para safe area
-    StatusBar,    // Adicionado para status bar
+  View,
+  FlatList,
+  TextInput,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  ActivityIndicator,
+  Text,
+  Alert,
+  SafeAreaView,
 } from 'react-native';
 import {
-    collection,
-    addDoc,
-    onSnapshot,
-    query,
-    orderBy,
-    serverTimestamp,
-    getDoc,
-    doc,
-    updateDoc,
-    getFirestore, // Importar getFirestore
+  collection,
+  addDoc,
+  onSnapshot,
+  query,
+  orderBy,
+  serverTimestamp,
+  getDoc,
+  doc,
+  updateDoc,
+  deleteDoc,
+  setDoc,
 } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth'; // Importar getAuth
-import { initializeApp, getApps, getApp } from 'firebase/app'; // Importar initializeApp, getApps, getApp
-import { useFocusEffect } from '@react-navigation/native';
+import { getAuth } from 'firebase/auth';
 import { Ionicons } from '@expo/vector-icons';
-import ChatMessageItem from '../../components/ChatMessageItem'; // Assumindo que este componente existe e está estilizado
+import moment from 'moment';
+import 'moment/locale/pt';
+moment.locale('pt');
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-    UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+import { db } from '../../services/firebaseConfig';
+import Colors from '../../constants/Colors';
+import AppHeader from '../../components/AppHeader';
 
-// --- FIREBASE CONFIGURATION: Torna o componente auto-suficiente ---
-// Substitua com as suas credenciais
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_STORAGE_BUCKET",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID",
+/* ---------------- utils ---------------- */
+const tsToDate = (t) => (t?.toDate ? t.toDate() : t instanceof Date ? t : null);
+const isSameDay = (a, b) =>
+  a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const humanDay = (d) => {
+  if (!d) return '';
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (isSameDay(d, today)) return 'Hoje';
+  if (isSameDay(d, yesterday)) return 'Ontem';
+  return moment(d).format('DD/MM/YYYY');
 };
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-const db = getFirestore(app);
-const auth = getAuth(app);
-
-
-// Paleta de Cores Refinada (adaptada para o estilo das imagens fornecidas)
-const Colors = {
-    // Cores principais do tema (inspiradas no dourado/mostarda e marrom)
-    primaryGold: '#B8860B', // Dourado mais clássico e vibrante
-    darkBrown: '#3E2723',   // Marrom bem escuro para textos e ícones principais
-    lightBrown: '#795548',  // Marrom mais suave para detalhes e placeholders
-    creamBackground: '#FDF7E4', // Fundo creme claro para a maioria da tela
-
-    // Cores neutras e de feedback
-    white: '#FFFFFF',
-    lightGray: '#ECEFF1',   // Cinza muito claro para fundos secundários
-    mediumGray: '#B0BEC5',   // Cinza médio para textos secundários e bordas inativas
-    darkGray: '#424242',    // Cinza escuro para textos principais
-    accentBlue: '#2196F3',   // Azul vibrante para links/destaques (ex: treino completo)
-    successGreen: '#4CAF50', // Verde para sucesso
-    errorRed: '#EF5350',    // Vermelho para erros/alertes (urgente)
-
-    // Cores específicas de componentes
-    headerBackground: '#B8860B', // Fundo do header, igual ao primaryGold
-    headerText: '#000000',     // Texto e ícones do header
-    tabBarBackground: '#FDF7E4', // Fundo da tab bar
-    tabBarIconActive: '#D4AF37', // Ícone ativo da tab bar
-    tabBarIconInactive: '#8D8D8D', // Ícone inativo da tab bar
-    tabBarTextActive: '#D4AF37', // Texto ativo da tab bar
-    tabBarTextInactive: '#8D8D8D', // Texto inativo da tab bar
-
-    shadowColor: 'rgba(0, 0, 0, 0.2)', // Sombra mais pronunciada mas suave
-    cardBackground: '#FFFFFF', // Fundo dos cartões (items de lista)
-    borderColor: '#D4AF37', // Borda para inputs e elementos selecionáveis (ativo)
-    placeholderText: '#A1887F', // Marrom suave para placeholders
-    inputBackground: '#FBF5EB', // Fundo de inputs para contraste suave
-
-    // Cores para bolhas de chat
-    myBubbleBackground: '#D4AF37', // Dourado claro para minhas mensagens
-    myBubbleText: '#FFFFFF', // Texto branco nas minhas mensagens
-    otherBubbleBackground: '#FFFFFF', // Branco para mensagens do outro
-    otherBubbleText: '#3E2723', // Marrom escuro para texto do outro
-    timestampText: '#A1887F', // Marrom suave para timestamps
-    readIndicator: '#2196F3', // Azul para indicador de lido
+/* -------- copiar texto (import lazy, evita crash se módulo não estiver pronto) -------- */
+const copyToClipboard = async (txt) => {
+  try {
+    const mod = await import('@react-native-clipboard/clipboard'); // só carrega quando necessário
+    const Clipboard = mod?.default || mod;
+    Clipboard?.setString?.(txt || '');
+    Alert.alert('Copiado', 'Mensagem copiada para o clipboard.');
+  } catch (e) {
+    console.warn('Clipboard indisponível:', e?.message || e);
+    Alert.alert('Indisponível', 'Copiar texto não está disponível nesta build.');
+  }
 };
 
+/* ---------------- bolha de mensagem ---------------- */
+function MessageBubble({ item, isMine, onLongPress }) {
+  const createdAt = tsToDate(item.createdAt);
+  const time = createdAt ? moment(createdAt).format('HH:mm') : '';
+  const isRead = !!item.lida && isMine;
+  const ticksIcon = isRead ? 'checkmark-done' : 'checkmark';
 
-// Layout (melhorado com valores mais consistentes)
-const Layout = {
-    padding: 20, // Padding geral
-    spacing: {
-        xsmall: 4,
-        small: 8,
-        medium: 16,
-        large: 24,
-        xlarge: 32,
-    },
-    borderRadius: {
-        small: 6,
-        medium: 12, // Usar este para bordas arredondadas de cards/botões
-        large: 20,
-        pill: 50, // Ajustado para ser mais arredondado em elementos pequenos
-    },
-    fontSizes: {
-        xsmall: 12,
-        small: 14,
-        medium: 16,
-        large: 18,
-        xlarge: 22,
-        title: 28, // Usado para o título "Agenda"
-        header: 24, // Tamanho do texto no cabeçalho
-    },
-    cardElevation: Platform.select({
-        ios: {
-            shadowColor: Colors.shadowColor,
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.3, // Mais sutil
-            shadowRadius: 8,    // Mais espalhada
-        },
-        android: {
-            elevation: 6, // Equivalente à sombra iOS
-        },
-    }),
-};
+  return (
+    <TouchableOpacity
+      activeOpacity={0.85}
+      onLongPress={() => onLongPress?.(item, isMine)}
+      style={[styles.row, isMine ? styles.rowMine : styles.rowOther]}
+    >
+      <View
+        style={[
+          styles.bubble,
+          isMine ? styles.bubbleMine : styles.bubbleOther,
+          item.temp && styles.bubblePending,
+        ]}
+      >
+        {!!item.text && (
+          <Text style={[styles.msgText, isMine ? styles.msgTextMine : styles.msgTextOther]}>
+            {item.text}
+          </Text>
+        )}
 
-// Componente AppHeader para a sala de chat
-const ChatRoomHeader = ({ title, onBackPress }) => {
-    return (
-        <View style={headerStyles.headerContainer}>
-            <StatusBar barStyle="dark-content" backgroundColor={Colors.headerBackground} />
-            <View style={headerStyles.headerContent}>
-                <TouchableOpacity onPress={onBackPress} style={headerStyles.backButton}>
-                    <Ionicons name="arrow-back" size={24} color={Colors.headerText} />
-                </TouchableOpacity>
-                <Text style={headerStyles.headerTitle}>{title}</Text>
-            </View>
+        <View style={styles.meta}>
+          <Text style={[styles.time, isMine ? styles.timeMine : styles.timeOther]}>{time}</Text>
+          {isMine && (
+            <Ionicons
+              name={ticksIcon}
+              size={14}
+              style={{ marginLeft: 6 }}
+              color={isRead ? Colors.onPrimary : (styles.timeMine.color || '#fff')}
+            />
+          )}
         </View>
-    );
-};
-
-const headerStyles = StyleSheet.create({
-    headerContainer: {
-        backgroundColor: Colors.headerBackground,
-        paddingHorizontal: Layout.padding,
-        paddingVertical: Layout.spacing.medium,
-        paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + Layout.spacing.small : Layout.spacing.medium,
-        borderBottomLeftRadius: Layout.borderRadius.medium, // Ajustado para um visual mais suave
-        borderBottomRightRadius: Layout.borderRadius.medium,
-        ...Layout.cardElevation, // Sombra para o header
-        marginBottom: Layout.spacing.small, // Pequeno espaçamento
-        width: '100%',
-        position: 'absolute', // Fixa o header no topo
-        top: 0,
-        zIndex: 10,
-    },
-    headerContent: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: '100%',
-    },
-    headerTitle: {
-        fontSize: Layout.fontSizes.header,
-        fontWeight: 'bold',
-        color: Colors.headerText,
-        flex: 1, // Permite que o título ocupe o espaço restante
-        textAlign: 'center',
-        marginLeft: -Layout.spacing.xlarge, // Compensa o backButton para centralizar melhor
-    },
-    backButton: {
-        position: 'absolute',
-        left: 0,
-        padding: Layout.spacing.xsmall,
-        zIndex: 1, // Garante que o botão seja clicável
-    }
-});
-
-
-export default function AdminChatRoomScreen({ route, navigation }) {
-    const { chatId, userId, userName: initialUserName } = route.params;
-    const [messages, setMessages] = useState([]);
-    const [text, setText] = useState('');
-    const [contact, setContact] = useState({ name: initialUserName || 'Carregando...', avatar: null });
-    const [sending, setSending] = useState(false);
-    const [clientLastMessageTimestamp, setClientLastMessageTimestamp] = useState(null);
-    const flatListRef = useRef();
-
-    useEffect(() => {
-        if (!userId) {
-            setContact({ name: 'Cliente Desconhecido', avatar: null });
-            return;
-        }
-
-        const fetchContactData = async () => {
-            try {
-                const userRef = doc(db, 'users', userId);
-                const userDoc = await getDoc(userRef);
-
-                if (userDoc.exists()) {
-                    const data = userDoc.data();
-                    if (auth.currentUser && data.adminId !== auth.currentUser.uid) {
-                        Alert.alert('Erro de Acesso', 'Você não tem permissão para aceder a esta conversa.');
-                        navigation.goBack();
-                        return;
-                    }
-                    setContact({
-                        name: data.name || 'Cliente',
-                        avatar: data.avatar || null,
-                    });
-                } else {
-                    setContact({ name: 'Cliente', avatar: null });
-                    Alert.alert('Erro', 'Cliente não encontrado. A conversa pode estar corrompida.');
-                }
-            } catch (error) {
-                console.error('Erro ao buscar contato do cliente:', error);
-                setContact({ name: 'Cliente', avatar: null });
-                Alert.alert('Erro', 'Não foi possível carregar informações do cliente.');
-            }
-        };
-
-        fetchContactData();
-    }, [userId, navigation, auth.currentUser]);
-
-
-    useFocusEffect(
-        useCallback(() => {
-            if (!chatId || !auth.currentUser?.uid) {
-                setMessages([]);
-                return () => {};
-            }
-
-            const messagesQuery = query(
-                collection(db, 'chats', chatId, 'messages'),
-                orderBy('createdAt', 'asc')
-            );
-
-            const unsubscribeMessages = onSnapshot(messagesQuery, async (snapshot) => {
-                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                const fetchedMessages = snapshot.docs.map(doc => ({ id: doc.id, chatId: chatId, ...doc.data() }));
-                setMessages(fetchedMessages);
-
-                const lastClientMessage = fetchedMessages
-                    .filter(msg => msg.senderId === userId && msg.createdAt)
-                    .sort((a, b) => b.createdAt.toDate().getTime() - a.createdAt.toDate().getTime())
-                    .at(0);
-
-                setClientLastMessageTimestamp(lastClientMessage?.createdAt?.toDate ? lastClientMessage.createdAt.toDate() : null);
-
-                const unreadMessagesFromClient = fetchedMessages.filter(
-                    msg => msg.senderId === userId && !msg.lida
-                );
-
-                if (unreadMessagesFromClient.length > 0) {
-                    try {
-                        await Promise.all(
-                            unreadMessagesFromClient.map(msg =>
-                                updateDoc(doc(db, 'chats', chatId, 'messages', msg.id), { lida: true })
-                            )
-                        );
-                    } catch (error) {
-                        console.error('Erro ao marcar mensagens do cliente como lidas:', error);
-                    }
-                }
-
-                if (fetchedMessages.length > 0 && auth.currentUser) {
-                    try {
-                        await updateDoc(doc(db, 'chats', chatId), {
-                            [`lastReadTimestamps.${auth.currentUser.uid}`]: serverTimestamp(),
-                        });
-                    } catch (error) {
-                        console.error('Erro ao atualizar timestamp de leitura do admin:', error);
-                    }
-                }
-
-                setTimeout(() => {
-                    if (flatListRef.current) {
-                        flatListRef.current.scrollToEnd({ animated: true });
-                    }
-                }, 100);
-            }, (error) => {
-                console.error(`ERRO FATAL no onSnapshot de mensagens para chat ${chatId}:`, error);
-                if (error.code === 'permission-denied' || error.message.includes('Missing or insufficient permissions')) {
-                    Alert.alert(
-                        'Sessão Expirada',
-                        'Sua sessão expirou ou você não tem permissão para aceder a esta conversa. Por favor, faça login novamente.',
-                        [{ text: 'OK' }]
-                    );
-                    setMessages([]);
-                }
-            });
-
-            return () => {
-                unsubscribeMessages();
-            };
-        }, [chatId, userId])
-    );
-
-
-    const sendMessage = useCallback(async () => {
-        if (!text.trim() || sending) {
-            return;
-        }
-
-        setSending(true);
-        const trimmedText = text.trim();
-        const currentUser = auth.currentUser;
-
-        if (!currentUser || !chatId) {
-            Alert.alert('Erro', 'Você precisa estar logado para enviar mensagens.');
-            setSending(false);
-            return;
-        }
-
-        try {
-            await addDoc(collection(db, 'chats', chatId, 'messages'), {
-                text: trimmedText,
-                senderId: currentUser.uid,
-                createdAt: serverTimestamp(),
-                lida: false,
-            });
-
-            await updateDoc(doc(db, 'chats', chatId), {
-                lastMessage: {
-                    text: trimmedText,
-                    senderId: currentUser.uid,
-                    timestamp: serverTimestamp(),
-                },
-            });
-            setText('');
-        } catch (error) {
-            console.error('Erro ao enviar mensagem:', error);
-            Alert.alert('Erro', 'Não foi possível enviar a mensagem. Tente novamente.');
-        } finally {
-            setSending(false);
-        }
-    }, [chatId, text, sending]);
-
-    return (
-        <SafeAreaView style={styles.safeArea}>
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={styles.container}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? headerStyles.headerContainer.height + (Layout.spacing.medium * 2) : 0} // Ajusta offset para o header
-            >
-                {/* Header da Sala de Chat */}
-                <ChatRoomHeader title={contact.name} onBackPress={() => navigation.goBack()} />
-
-                {/* Lista de Mensagens */}
-                <FlatList
-                    ref={flatListRef}
-                    data={messages}
-                    keyExtractor={item => item.id}
-                    renderItem={({ item }) => {
-                        const isMyMessage = auth.currentUser ? item.senderId === auth.currentUser.uid : false;
-                        return (
-                            <ChatMessageItem
-                                message={item}
-                                isMyMessage={isMyMessage} // Passa a prop para o ChatMessageItem
-                                senderName={isMyMessage ? 'Você (Admin)' : contact.name}
-                                lastReplyTime={clientLastMessageTimestamp}
-                                chatId={chatId}
-                                // Passa as cores para o ChatMessageItem
-                                myBubbleBackground={Colors.myBubbleBackground}
-                                myBubbleText={Colors.myBubbleText}
-                                otherBubbleBackground={Colors.otherBubbleBackground}
-                                otherBubbleText={Colors.otherBubbleText}
-                                timestampText={Colors.timestampText}
-                                readIndicatorColor={Colors.readIndicator}
-                                // Passa o Layout para o ChatMessageItem
-                                layoutSpacing={Layout.spacing}
-                                layoutBorderRadius={Layout.borderRadius}
-                                layoutFontSizes={Layout.fontSizes}
-                            />
-                        );
-                    }}
-                    contentContainerStyle={styles.messagesContainer}
-                    onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-                    keyboardShouldPersistTaps="handled"
-                    style={styles.flatList}
-                    initialNumToRender={20}
-                    maxToRenderPerBatch={10}
-                    windowSize={10}
-                    removeClippedSubviews={true}
-                />
-
-                {/* Input de Mensagem */}
-                <View style={styles.inputContainer}>
-                    <TextInput
-                        value={text}
-                        onChangeText={setText}
-                        placeholder="Digite uma mensagem..."
-                        style={[styles.input, sending && styles.inputDisabled]}
-                        multiline
-                        editable={!sending}
-                        placeholderTextColor={Colors.placeholderText} // Usar cor da paleta
-                        autoCorrect={false}
-                    />
-                    <TouchableOpacity
-                        onPress={sendMessage}
-                        style={[styles.sendButton, (sending || !text.trim()) && styles.sendButtonDisabled]}
-                        disabled={sending || !text.trim()}
-                        activeOpacity={0.7}
-                    >
-                        {sending ? <ActivityIndicator size="small" color={Colors.white} /> : <Ionicons name="send" size={24} color={Colors.white} />}
-                    </TouchableOpacity>
-                </View>
-            </KeyboardAvoidingView>
-        </SafeAreaView>
-    );
+      </View>
+    </TouchableOpacity>
+  );
 }
+
+/* ---------------- separador de data ---------------- */
+const DateSeparator = ({ date }) => (
+  <View style={styles.sepWrap}>
+    <View style={styles.sepLine} />
+    <Text style={styles.sepText}>{humanDay(date)}</Text>
+    <View style={styles.sepLine} />
+  </View>
+);
+
+/* =======================================================================
+   ChatRoomScreen
+   ======================================================================= */
+export default function ChatRoomScreen({ route, navigation }) {
+  const { chatId, userId, userName: initialUserName } = route.params || {};
+  const auth = getAuth();
+
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const [contactName, setContactName] = useState(initialUserName || 'Cliente');
+  const [sending, setSending] = useState(false);
+  const [typingOther, setTypingOther] = useState(false);
+
+  const flatRef = useRef(null);
+
+  useEffect(() => {
+    if (!chatId || !userId) {
+      Alert.alert('Conversa inválida', 'Não foi possível abrir esta conversa.');
+      navigation.goBack();
+    }
+  }, [chatId, userId, navigation]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadName = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', userId));
+        if (!isMounted) return;
+        if (snap.exists()) setContactName(snap.data().name || snap.data().email || 'Cliente');
+      } catch {}
+    };
+    loadName();
+    return () => { isMounted = false; };
+  }, [userId]);
+
+  useEffect(() => {
+    if (!chatId || !auth.currentUser?.uid) return;
+    const q = query(collection(db, 'chats', chatId, 'messages'), orderBy('createdAt', 'asc'));
+
+    const unsubMsgs = onSnapshot(
+      q,
+      async (snapshot) => {
+        const list = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setMessages(list);
+
+        // marcar como lidas (mensagens do cliente)
+        const myId = auth.currentUser.uid;
+        const unread = list.filter((m) => m.senderId === userId && !m.lida);
+        if (unread.length) {
+          try {
+            await Promise.all(
+              unread.map((m) => updateDoc(doc(db, 'chats', chatId, 'messages', m.id), { lida: true }))
+            );
+            await setDoc(doc(db, 'chats', chatId), { lastRead: { [myId]: serverTimestamp() } }, { merge: true });
+          } catch (e) {
+            console.warn('Falha a marcar lidas:', e?.message || e);
+          }
+        }
+
+        setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 50);
+      },
+      (err) => {
+        console.error('[ChatRoom] snapshot:', err);
+        if (String(err?.message || '').includes('insufficient permissions')) {
+          Alert.alert('Permissão', 'Sem permissão para esta conversa.');
+          navigation.goBack();
+        }
+      }
+    );
+
+    const unsubTyping = onSnapshot(doc(db, 'chats', chatId), (snap) => {
+      const data = snap.data() || {};
+      const typing = data?.typing || {};
+      setTypingOther(!!typing?.[userId]);
+    });
+
+    return () => {
+      unsubMsgs();
+      unsubTyping();
+    };
+  }, [chatId, userId, auth.currentUser?.uid, navigation]);
+
+  const updateTyping = useCallback(
+    async (value) => {
+      try {
+        const me = auth.currentUser?.uid;
+        if (!me || !chatId) return;
+        await setDoc(doc(db, 'chats', chatId), { typing: { [me]: !!value } }, { merge: true });
+      } catch {}
+    },
+    [auth.currentUser?.uid, chatId]
+  );
+
+  const onChangeText = (t) => {
+    setText(t);
+    updateTyping(!!t);
+  };
+
+  const sendMessage = useCallback(async () => {
+    const body = (text || '').trim();
+    if (!body || sending) return;
+
+    const user = auth.currentUser;
+    if (!user || !chatId) {
+      Alert.alert('Erro', 'Inicia sessão para enviar mensagens.');
+      return;
+    }
+
+    setSending(true);
+    try {
+      await addDoc(collection(db, 'chats', chatId, 'messages'), {
+        text: body,
+        senderId: user.uid,
+        createdAt: serverTimestamp(),
+        lida: false,
+      });
+      await setDoc(
+        doc(db, 'chats', chatId),
+        { lastMessage: { text: body, senderId: user.uid, timestamp: serverTimestamp() } },
+        { merge: true }
+      );
+      setText('');
+      updateTyping(false);
+    } catch (e) {
+      console.error('Erro ao enviar mensagem:', e);
+      Alert.alert('Erro', 'Não foi possível enviar a mensagem.');
+    } finally {
+      setSending(false);
+    }
+  }, [text, sending, auth.currentUser?.uid, chatId, updateTyping]);
+
+  const dataWithSeparators = useMemo(() => {
+    const out = [];
+    let lastDate = null;
+    for (const m of messages) {
+      const d = tsToDate(m.createdAt);
+      if (!lastDate || !isSameDay(d, lastDate)) {
+        out.push({ __type: 'sep', id: `sep-${d?.getTime?.() || Math.random()}`, date: d });
+        lastDate = d;
+      }
+      out.push({ __type: 'msg', ...m });
+    }
+    return out;
+  }, [messages]);
+
+  const onLongPressMessage = (msg, isMine) => {
+    const opts = [
+      { text: 'Copiar', onPress: () => copyToClipboard(msg.text || '') },
+      ...(isMine
+        ? [{
+            text: 'Apagar',
+            style: 'destructive',
+            onPress: async () => {
+              try { await deleteDoc(doc(db, 'chats', chatId, 'messages', msg.id)); }
+              catch { Alert.alert('Erro', 'Não foi possível apagar.'); }
+            },
+          }]
+        : []),
+      { text: 'Fechar', style: 'cancel' },
+    ];
+    Alert.alert('Mensagem', 'O que pretende fazer?', opts, { cancelable: true });
+  };
+
+  const renderItem = ({ item }) => {
+    if (item.__type === 'sep') return <DateSeparator date={item.date} />;
+    const isMine = auth.currentUser ? item.senderId === auth.currentUser.uid : false;
+    return <MessageBubble item={item} isMine={isMine} onLongPress={onLongPressMessage} />;
+  };
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <AppHeader title={contactName} showBackButton onBackPress={() => navigation.goBack()} />
+
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <FlatList
+          ref={flatRef}
+          data={dataWithSeparators}
+          keyExtractor={(it) => it.id || it.__type + Math.random().toString(36).slice(2)}
+          renderItem={renderItem}
+          contentContainerStyle={styles.listContent}
+          ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={() => flatRef.current?.scrollToEnd({ animated: true })}
+          showsVerticalScrollIndicator={false}
+        />
+
+        {typingOther && (
+          <View style={styles.typingBar}>
+            <View style={styles.typingDot} />
+            <View style={styles.typingDot} />
+            <View style={styles.typingDot} />
+            <Text style={styles.typingText}>a escrever…</Text>
+          </View>
+        )}
+
+        <View style={styles.inputBar}>
+          <TextInput
+            value={text}
+            onChangeText={onChangeText}
+            placeholder="Escrever mensagem…"
+            placeholderTextColor={Colors.textSecondary}
+            style={[styles.input, sending && styles.inputDisabled]}
+            multiline
+            editable={!sending}
+          />
+          <TouchableOpacity
+            onPress={sendMessage}
+            disabled={sending || !text.trim()}
+            style={[styles.sendBtn, (sending || !text.trim()) && styles.sendBtnDisabled]}
+            activeOpacity={0.85}
+          >
+            {sending ? <ActivityIndicator color={Colors.onPrimary} /> : <Ionicons name="send" size={22} color={Colors.onPrimary} />}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+/* ---------------- styles ---------------- */
+const BUBBLE_RADIUS = 16;
 
 const styles = StyleSheet.create({
-    safeArea: {
-        flex: 1,
-        backgroundColor: Colors.creamBackground, // Fundo geral da tela
-    },
-    container: {
-        flex: 1,
-        backgroundColor: Colors.creamBackground,
-    },
-    flatList: {
-        // Ajusta o marginTop para abaixo do header fixo
-        marginTop: Platform.OS === 'android' ? StatusBar.currentHeight + Layout.spacing.small + Layout.spacing.medium + Layout.padding * 2 : Layout.spacing.medium * 2 + Layout.padding * 2, // Aproximadamente a altura do header
-    },
-    messagesContainer: {
-        paddingHorizontal: Layout.spacing.medium,
-        paddingVertical: Layout.spacing.medium,
-        flexGrow: 1,
-        justifyContent: 'flex-end',
-    },
-    inputContainer: {
-        flexDirection: 'row',
-        paddingVertical: Layout.spacing.small, // Ajustado o padding vertical
-        paddingHorizontal: Layout.padding,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderColor: Colors.borderColor, // Cor da borda
-        backgroundColor: Colors.cardBackground, // Fundo do input container
-        alignItems: 'flex-end',
-        ...Layout.cardElevation, // Sombra
-        paddingBottom: Platform.OS === 'ios' ? Layout.spacing.medium : Layout.spacing.small, // Ajuste para iOS
-    },
-    input: {
-        flex: 1,
-        backgroundColor: Colors.inputBackground, // Fundo do input
-        borderRadius: Layout.borderRadius.large, // Mais arredondado
-        paddingHorizontal: Layout.spacing.medium,
-        paddingVertical: Platform.OS === 'ios' ? Layout.spacing.medium : Layout.spacing.small,
-        fontSize: Layout.fontSizes.medium,
-        color: Colors.darkBrown, // Cor do texto
-        maxHeight: 120,
-        lineHeight: Platform.OS === 'ios' ? 20 : 22,
-        borderWidth: 1, // Adiciona borda
-        borderColor: Colors.lightGray, // Cor da borda do input
-    },
-    inputDisabled: {
-        backgroundColor: Colors.lightGray, // Cor mais clara para desabilitado
-        opacity: 0.8,
-    },
-    sendButton: {
-        marginLeft: Layout.spacing.small,
-        backgroundColor: Colors.primaryGold, // Cor do botão de enviar
-        borderRadius: Layout.borderRadius.pill, // Totalmente arredondado
-        width: 52,
-        height: 52,
-        justifyContent: 'center',
-        alignItems: 'center',
-        ...Layout.cardElevation, // Sombra
-    },
-    sendButtonDisabled: {
-        backgroundColor: Colors.mediumGray, // Cor para botão desabilitado
-        shadowOpacity: 0,
-        elevation: 0,
-        opacity: 0.6,
-    },
+  safeArea: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1, backgroundColor: Colors.background },
+  listContent: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10 },
+
+  row: { flexDirection: 'row', paddingHorizontal: 6 },
+  rowMine: { justifyContent: 'flex-end' },
+  rowOther: { justifyContent: 'flex-start' },
+
+  bubble: {
+    maxWidth: '82%',
+    borderRadius: BUBBLE_RADIUS,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+  },
+  bubbleMine: { backgroundColor: Colors.secondary || Colors.primary, borderColor: Colors.secondary || Colors.primary, borderTopRightRadius: 6 },
+  bubbleOther: { backgroundColor: Colors.cardBackground, borderColor: Colors.divider, borderTopLeftRadius: 6 },
+  bubblePending: { opacity: 0.6 },
+
+  msgText: { fontSize: 15, lineHeight: 20 },
+  msgTextMine: { color: Colors.onPrimary || '#fff' },
+  msgTextOther: { color: Colors.textPrimary },
+
+  meta: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 4 },
+  time: { fontSize: 11 },
+  timeMine: { color: Colors.onPrimary || '#fff' },
+  timeOther: { color: Colors.textSecondary },
+
+  sepWrap: { flexDirection: 'row', alignItems: 'center', alignSelf: 'center', gap: 8, marginVertical: 8 },
+  sepLine: { height: 1, width: 56, backgroundColor: Colors.divider },
+  sepText: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: Colors.cardBackground, color: Colors.textSecondary, borderWidth: 1, borderColor: Colors.divider, fontSize: 12 },
+
+  typingBar: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', marginLeft: 12, marginBottom: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: Colors.cardBackground, borderWidth: 1, borderColor: Colors.divider, gap: 6 },
+  typingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.textSecondary },
+  typingText: { color: Colors.textSecondary, fontSize: 12 },
+
+  inputBar: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 18 : 10, borderTopWidth: 1, borderColor: Colors.divider, backgroundColor: Colors.cardBackground },
+  input: { flex: 1, borderWidth: 1, borderColor: Colors.divider, backgroundColor: Colors.cardBackground, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, color: Colors.textPrimary, maxHeight: 140 },
+  inputDisabled: { opacity: 0.6 },
+  sendBtn: { marginLeft: 8, backgroundColor: Colors.primary, height: 46, width: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  sendBtnDisabled: { backgroundColor: Colors.textSecondary },
 });

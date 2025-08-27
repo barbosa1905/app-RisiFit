@@ -46,6 +46,7 @@ import {
   orderBy,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
+import AppHeader from '../../components/AppHeader';
 
 // Nova Paleta de Cores Profissional
 const Colors = {
@@ -109,32 +110,7 @@ const seriesTypes = {
 
 const gerarIDUnico = () => Date.now().toString() + Math.random().toString(36).substring(2, 9);
 
-const AppHeader = ({ title, showBackButton = false, onBackPress = () => {}, adminInfo }) => {
-  return (
-    <View style={localStyles.headerContainer}>
-      <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
-      <SafeAreaView style={{ backgroundColor: Colors.primary }}>
-        <View style={localStyles.header}>
-          {showBackButton && (
-            <TouchableOpacity onPress={onBackPress} style={localStyles.backButton}>
-              <Ionicons name="arrow-back" size={24} color={Colors.cardBackground} />
-            </TouchableOpacity>
-          )}
-          <Text style={localStyles.headerTitle}>{title}</Text>
-          <View style={localStyles.headerRight}>
-            {adminInfo?.photoURL ? (
-              <Image source={{ uri: adminInfo.photoURL }} style={localStyles.avatar} />
-            ) : (
-              <View style={localStyles.avatarPlaceholder}>
-                <Text style={localStyles.avatarText}>{adminInfo?.nome?.charAt(0) || 'A'}</Text>
-              </View>
-            )}
-          </View>
-        </View>
-      </SafeAreaView>
-    </View>
-  );
-};
+
 
 const InlineWorkoutDetailsInput = React.memo(({ placeholder, value, onChangeText, multiline = false, keyboardType = 'default', style, icon }) => {
   const IconComponent = icon === 'dumbbell' ? FontAwesome5 : Feather;
@@ -1126,13 +1102,16 @@ export default function CriarTreinosScreen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <SafeAreaView style={localStyles.safeArea}>
-          <AppHeader
-            title="Criar e Agendar Treino"
-            showBackButton={currentStep > 1}
-            onBackPress={handleGoBack}
-            adminInfo={adminInfo}
-          />
+         <View style={localStyles.safeArea}>
+ <AppHeader
+  title="Criar e Agendar Treino"
+  subtitle=""
+  showBackButton={currentStep > 1}
+  onBackPress={handleGoBack}
+  showMenu={false}
+  showBell={false}
+  statusBarStyle="light-content"
+/>
           {loadingExercises && (
             <View style={localStyles.loadingOverlay}>
               <ActivityIndicator size="large" color={Colors.primary} />
@@ -1458,7 +1437,7 @@ export default function CriarTreinosScreen() {
             </View>
           </Modal>
 
-        </SafeAreaView>
+        </View>
       </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
   );
@@ -1472,7 +1451,6 @@ const localStyles = StyleSheet.create({
   container: {
       flex: 1,
       backgroundColor: Colors.background,
-      paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
     },
   headerContainer: {
     backgroundColor: Colors.primary,
