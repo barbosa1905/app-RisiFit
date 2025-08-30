@@ -1,38 +1,21 @@
-// screens/exercicios.js
+// screens/Admin/ExerciseLibraryScreen.js
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  FlatList,
-  TextInput,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-  Modal,
-  ScrollView,
-  Platform,
-  StatusBar,
-  Dimensions,
+  View, Text, StyleSheet, SafeAreaView, FlatList, TextInput,
+  TouchableOpacity, ActivityIndicator, Alert, Modal, ScrollView,
+  StatusBar, Dimensions, Linking
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  collection,
-  onSnapshot,
-  query,
-  orderBy,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  doc,
-  getDocs,
+  collection, onSnapshot, query, orderBy, addDoc,
+  updateDoc, deleteDoc, doc, getDocs
 } from 'firebase/firestore';
-// ⚠️ Ajusta se o caminho for diferente
 import { db } from '../../services/firebaseConfig';
 import { useNavigation } from '@react-navigation/native';
 import { WebView } from 'react-native-webview';
+import YoutubePlayer from 'react-native-youtube-iframe';
 import AppHeader from '../../components/AppHeader';
+
 /* =================== Tema =================== */
 const Colors = {
   primary: '#2A3B47',
@@ -46,42 +29,152 @@ const Colors = {
   info: '#2196F3',
   divider: '#E6E8EB',
 };
-
 const RADIUS = 16;
 const GAP = 12;
 const { width, height } = Dimensions.get('window');
+const VIDEO_W = Math.min(width, 1024);
+const VIDEO_H = Math.min(height * 0.62, (VIDEO_W * 9) / 16);
 
-/* =================== Opções =================== */
+/* =================== Firestore =================== */
+const COLLECTION = 'Exercise';
+
+/* =================== Catálogos (PT-PT) =================== */
 const EXERCISE_CATEGORIES = [
-  'Força', 'Aeróbico', 'Alongamento', 'HIIT', 'Funcional',
-  'Peso Corporal', 'Máquina', 'Equipamento', 'Elástico', 'Outro',
+  
+  'Parte Superior', 'Parte Inferior', 'Corpo Inteiro'
 ];
-
 const TARGET_MUSCLES = [
-  'Peito','Costas','Ombros','Bíceps','Tríceps','Pernas','Glúteos',
-  'Quadríceps','Posterior de Coxa','Panturrilha','Core','Oblíquos','Lombar',
-  'Corpo inteiro','Adutores','Abdutores',
+  'Peitorais', 'Costas', 'Deltoides', 'Bíceps', 'Tríceps', 'Quadríceps',
+  'Isquiotibiais', 'Gémeos', 'Glúteos', 'Core', 'Reto Abdominal',
+  'Oblíquos', 'Zona Lombar', 'Grande Dorsal', 'Romboides', 'Trapézio',
+  'Antebraços', 'Adutores', 'Abdutores', 'Eretores da Coluna', 'Serrátil Anterior'
 ];
-
 const EQUIPMENT_OPTIONS = [
-  'Nenhum','Banco','Barra','Barra W','Barra Fixa','Paralelas','Halter',
-  'Kettlebell','Máquina','Polia','Corda','Elástico','Colchonete','Outro',
-];
-
-/* =================== Seed opcional =================== */
-const PREDEFINED_EXERCISES = [
-  { id:'agachamento', nome_pt:'Agachamento', nome_en:'Squat', descricao_breve:'Exercício fundamental para membros inferiores.', category:'Peso Corporal', musculos_alvo:['Quadríceps','Glúteos','Core'], equipamento:'Nenhum', animacao_url:'https://placehold.co/400x300/000/FFF?text=Animacao' },
-  { id:'flexao_braços', nome_pt:'Flexão de Braços', nome_en:'Push-up', descricao_breve:'Clássico para peito e tríceps.', category:'Peso Corporal', musculos_alvo:['Peito','Tríceps','Core'], equipamento:'Nenhum', animacao_url:'https://placehold.co/400x300/000/FFF?text=Animacao' },
+  'Nenhum', 'Barra', 'Halteres', 'Máquina', 'Polia', 'Elástico',
+  'Kettlebell', 'Barra EZ', 'Barra Hexagonal', 'Máquina Smith',
+  'Barra Fixa', 'Paralelas', 'Banco', 'TRX', 'Bola Medicinal', 'Corda'
 ];
 
 /* =================== Helpers =================== */
 const toArray = (val) => (Array.isArray(val) ? val : val ? [val] : []);
+const MUSCLE_SYNONYMS = new Map([
+  ['Panturrilha','Gémeos'], ['Panturrilhas','Gémeos'], ['Gemeos','Gémeos'], ['Gêmeos','Gémeos'],
+  ['Posterior de Coxa','Isquiotibiais'], ['Posteriores da Coxa','Isquiotibiais'],
+  ['Adutor','Adutores'], ['Abdutor','Abdutores'],
+  ['Abdominais','Reto Abdominal'], ['Reto do Abdómen','Reto Abdominal'], ['Reto abdominal','Reto Abdominal'],
+  ['Lower Back','Zona Lombar'], ['Eretores da Espinha','Eretores da Coluna'], ['Eretores Espinais','Eretores da Coluna'],
+  ['Lats','Grande Dorsal'], ['Dorsais','Grande Dorsal'], ['Latíssimo do Dorso','Grande Dorsal'], ['Latissimo do Dorso','Grande Dorsal'],
+  ['Romboide','Romboides'], ['Deltoídes','Deltoides'], ['Deltoide','Deltoides'],
+  ['Biceps','Bíceps'], ['Triceps','Tríceps'], ['Antebraço','Antebraços'],
+  ['Peito','Peitorais'], ['Peitoral','Peitorais'], ['Quadriceps','Quadríceps'],
+  ['Gluteo','Glúteos'], ['Gluteos','Glúteos'],
+  ['Obliquos','Oblíquos'], ['Serratil Anterior','Serrátil Anterior'],
+]);
+const canon = (m) => {
+  const t = String(m || '').trim();
+  return MUSCLE_SYNONYMS.get(t) || t;
+};
+
+/* ======= Vídeo: detetar e converter para embed ======= */
+const toYouTubeId = (url='') => {
+  const u = String(url).trim();
+  const patterns = [
+    /[?&]v=([A-Za-z0-9_-]{11})/,
+    /youtu\.be\/([A-Za-z0-9_-]{11})/,
+    /youtube\.com\/shorts\/([A-Za-z0-9_-]{11})/,
+    /youtube\.com\/embed\/([A-Za-z0-9_-]{11})/,
+  ];
+  for (const rx of patterns) {
+    const m = u.match(rx);
+    if (m?.[1]) return m[1];
+  }
+  return '';
+};
+const toYouTubeEmbed = (url='') => {
+  const id = toYouTubeId(url);
+  return id ? `https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1&modestbranding=1&rel=0&iv_load_policy=3` : '';
+};
+const toVimeoEmbed = (url='') => {
+  const m = String(url).trim().match(/vimeo\.com\/(\d+)/);
+  return m ? `https://player.vimeo.com/video/${m[1]}?autoplay=1` : '';
+};
+const toDrivePreview = (url='') => {
+  const m = String(url).trim().match(/drive\.google\.com\/file\/d\/([^/]+)/);
+  return m ? `https://drive.google.com/file/d/${m[1]}/preview` : '';
+};
+const toDropboxRaw = (url='') => {
+  try {
+    const u = new URL(String(url).trim());
+    if (u.hostname.endsWith('dropbox.com')) {
+      u.searchParams.set('raw','1');
+      u.searchParams.delete('dl');
+      return u.toString();
+    }
+  } catch {}
+  return '';
+};
+const detectMedia = (url='') => {
+  const u = String(url || '').trim();
+  const low = u.toLowerCase();
+  if (!u) return { type:'none', src:'' };
+
+  if (low.endsWith('.gif'))  return { type:'gif',  src:u };
+  if (low.endsWith('.mp4') || low.endsWith('.webm')) return { type:'mp4', src:u };
+
+  if (low.includes('youtube.com') || low.includes('youtu.be')) {
+    const id = toYouTubeId(u);
+    const src = toYouTubeEmbed(u);
+    return id ? { type:'youtube', src, youtubeId:id, raw:u } : { type:'ext', src:u };
+  }
+  if (low.includes('vimeo.com')) {
+    const src = toVimeoEmbed(u);
+    return src ? { type:'vimeo', src, raw:u } : { type:'ext', src:u };
+  }
+  if (low.includes('drive.google.com')) {
+    const src = toDrivePreview(u);
+    return src ? { type:'drive', src, raw:u } : { type:'ext', src:u };
+  }
+  if (low.includes('dropbox.com')) {
+    const src = toDropboxRaw(u);
+    return src ? { type:'mp4', src, raw:u } : { type:'ext', src:u };
+  }
+  return { type:'url', src:u };
+};
+const iframeHTML = (src) => `
+  <html><head><meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>html,body{margin:0;height:100%;background:#000}</style></head>
+  <body>
+    <iframe src="${src}" width="100%" height="100%" frameborder="0"
+      allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+      allowfullscreen style="display:block"></iframe>
+  </body></html>`;
+
+/* Documento Firestore → objeto UI */
+const normalizeDoc = (id, data) => {
+  const musc = toArray(data.musculos_alvo).map(canon).filter(Boolean);
+  const equipamento = data.equipamento ?? 'Nenhum';
+  const categoryNormalized = (data.categoria ?? data.category ?? '').trim();
+  return {
+    id,
+    nome_pt: data.nome_pt ?? '',
+    nome_en: data.nome_en ?? '',
+    descricao_breve: data.descricao_breve ?? '',
+    categoria: data.categoria,
+    category: data.category,
+    categoryNormalized,
+    musculos_alvo: musc,
+    equipamento: Array.isArray(equipamento) ? equipamento : String(equipamento),
+    animacao_url: data.animacao_url ?? '',
+    nameLower: (data.nome_pt ?? '').toLowerCase(),
+    createdAt: data.createdAt ?? null,
+    updatedAt: data.updatedAt ?? null,
+  };
+};
 
 /* =================== Componente =================== */
 export default function ExerciseLibraryScreen() {
   const navigation = useNavigation();
 
-  // dados
   const [exercises, setExercises] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -108,17 +201,19 @@ export default function ExerciseLibraryScreen() {
   // modal animação
   const [isAnimVisible, setIsAnimVisible] = useState(false);
   const [animUrl, setAnimUrl] = useState('');
+  const [useIframe, setUseIframe] = useState(false);
+  const [layer, setLayer] = useState('hardware'); // 'hardware' | 'software'
+  const [wvKey, setWvKey] = useState(0); // força re-render
 
   /* -------- Firestore em tempo real -------- */
   useEffect(() => {
     setLoading(true);
-    const colRef = collection(db, 'exercises');
-    const qy = query(colRef, orderBy('nome_pt', 'asc'));
-
+    const colRef = collection(db, COLLECTION);
+    const qy = query(colRef, orderBy('nome_en', 'asc'));
     const unsub = onSnapshot(
       qy,
       (snap) => {
-        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const list = snap.docs.map((d) => normalizeDoc(d.id, d.data()));
         setExercises(list);
         setLoading(false);
       },
@@ -128,18 +223,16 @@ export default function ExerciseLibraryScreen() {
         setLoading(false);
       }
     );
-
     return () => unsub();
   }, []);
 
   /* -------- Seed opcional -------- */
   const seedIfEmpty = useCallback(async () => {
     try {
-      const colRef = collection(db, 'exercises');
+      const colRef = collection(db, COLLECTION);
       const snap = await getDocs(colRef);
       if (snap.empty) {
-        await Promise.all(PREDEFINED_EXERCISES.map((ex) => addDoc(colRef, ex)));
-        Alert.alert('Ok', 'Exercícios predefinidos adicionados.');
+        Alert.alert('Info', 'Sem seed automático nesta versão.');
       } else {
         Alert.alert('Info', 'A coleção já tem exercícios.');
       }
@@ -149,20 +242,21 @@ export default function ExerciseLibraryScreen() {
     }
   }, []);
 
-  /* -------- Filtragem (qualquer dos selecionados) -------- */
+  /* -------- Filtragem -------- */
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
-
     return exercises.filter((ex) => {
       const matchesSearch =
         !s ||
         (ex.nome_pt && ex.nome_pt.toLowerCase().includes(s)) ||
         (ex.nome_en && ex.nome_en.toLowerCase().includes(s)) ||
-        (ex.descricao_breve && ex.descricao_breve.toLowerCase().includes(s));
+        (ex.descricao_breve && ex.descricao_breve.toLowerCase().includes(s)) ||
+        (ex.categoryNormalized && ex.categoryNormalized.toLowerCase().includes(s)) ||
+        (toArray(ex.musculos_alvo).join(' ').toLowerCase().includes(s));
 
       const matchesCategory =
         filterCategory === 'Todos' ||
-        (ex.category && String(ex.category).toLowerCase() === filterCategory.toLowerCase());
+        (ex.categoryNormalized && ex.categoryNormalized.toLowerCase() === filterCategory.toLowerCase());
 
       const muscles = toArray(ex.musculos_alvo).map(String);
       const equipment = toArray(ex.equipamento).map(String);
@@ -194,7 +288,7 @@ export default function ExerciseLibraryScreen() {
       nome_pt: ex.nome_pt || '',
       nome_en: ex.nome_en || '',
       descricao_breve: ex.descricao_breve || '',
-      category: ex.category || '',
+      category: ex.categoryNormalized || '',
       musculos_alvo: toArray(ex.musculos_alvo),
       equipamento: Array.isArray(ex.equipamento) ? ex.equipamento[0] || 'Nenhum' : ex.equipamento || 'Nenhum',
       animacao_url: ex.animacao_url || '',
@@ -203,7 +297,15 @@ export default function ExerciseLibraryScreen() {
   };
   const closeModal = () => setIsModalVisible(false);
 
-  const openAnimation = (url) => { setAnimUrl(url || ''); setIsAnimVisible(true); };
+  const openAnimation = (url) => {
+    const clean = (url || '').trim();
+    const media = detectMedia(clean);
+    setUseIframe(false);
+    setLayer('hardware');
+    setWvKey((k) => k + 1);
+    setAnimUrl(clean);
+    setIsAnimVisible(true);
+  };
   const closeAnimation = () => setIsAnimVisible(false);
 
   /* -------- Persistência -------- */
@@ -212,22 +314,22 @@ export default function ExerciseLibraryScreen() {
       nome_pt: form.nome_pt.trim(),
       nome_en: form.nome_en.trim(),
       descricao_breve: form.descricao_breve.trim(),
+      categoria: form.category,
       category: form.category,
-      musculos_alvo: toArray(form.musculos_alvo),
+      musculos_alvo: toArray(form.musculos_alvo).map(canon),
       equipamento: form.equipamento || 'Nenhum',
       animacao_url: form.animacao_url.trim(),
-      nameLower: form.nome_pt.trim().toLowerCase(),
+      nameLower: form.nome_en.trim().toLowerCase(),
       updatedAt: new Date(),
     };
     if (!payload.nome_pt) return Alert.alert('Erro', 'Indica o nome (PT).');
     if (!payload.category) return Alert.alert('Erro', 'Escolhe a categoria.');
-
     try {
       if (editingId) {
-        await updateDoc(doc(db, 'exercises', editingId), payload);
+        await updateDoc(doc(db, COLLECTION, editingId), payload);
         Alert.alert('Sucesso', 'Exercício atualizado.');
       } else {
-        await addDoc(collection(db, 'exercises'), { ...payload, createdAt: new Date() });
+        await addDoc(collection(db, COLLECTION), { ...payload, createdAt: new Date() });
         Alert.alert('Sucesso', 'Exercício criado.');
       }
       closeModal();
@@ -245,7 +347,7 @@ export default function ExerciseLibraryScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await deleteDoc(doc(db, 'exercises', id));
+            await deleteDoc(doc(db, COLLECTION, id));
             Alert.alert('Removido', 'Exercício removido.');
           } catch (e) {
             console.error(e);
@@ -268,7 +370,6 @@ export default function ExerciseLibraryScreen() {
       )}
     </TouchableOpacity>
   );
-
   const renderChip = (label, selected, onPress) => (
     <TouchableOpacity key={label} onPress={onPress} style={[styles.chip, selected && styles.chipSelected]}>
       <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{label}</Text>
@@ -278,7 +379,7 @@ export default function ExerciseLibraryScreen() {
   const ExerciseCard = ({ item }) => (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle} numberOfLines={1}>{item.nome_pt || 'Exercício'}</Text>
+        <Text style={styles.cardTitle} numberOfLines={1}>{item.nome_en || 'Exercício'}</Text>
         <View style={styles.cardActions}>
           {!!item.animacao_url && (
             <TouchableOpacity onPress={() => openAnimation(item.animacao_url)} style={styles.iconBtn}>
@@ -295,10 +396,10 @@ export default function ExerciseLibraryScreen() {
       </View>
 
       <View style={styles.metaRow}>
-        {item.category ? (
+        {item.categoryNormalized ? (
           <View style={[styles.pill, { backgroundColor: '#EAF3FF', borderColor: '#CFE3FF' }]}>
             <Ionicons name="pricetag-outline" size={14} color={Colors.info} />
-            <Text style={styles.pillText}>{item.category}</Text>
+            <Text style={styles.pillText}>{item.categoryNormalized}</Text>
           </View>
         ) : null}
 
@@ -338,17 +439,8 @@ export default function ExerciseLibraryScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-    <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
-
-    <AppHeader
-      title= 'Os teus Exercícios'
-      subtitle=""
-      showBackButton
-      onBackPress={() => navigation.goBack()}
-      showMenu={false}
-      showBell={false}
-      statusBarStyle="light-content"
-    />
+      <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
+      <AppHeader title='Os teus Exercícios' subtitle="" showBackButton onBackPress={() => navigation.goBack()} showMenu={false} showBell={false} statusBarStyle="light-content" />
 
       {/* Search */}
       <View style={styles.searchBar}>
@@ -367,25 +459,11 @@ export default function ExerciseLibraryScreen() {
         ) : null}
       </View>
 
-      {/* Filtros: botões abrem modais */}
+      {/* Filtros */}
       <View style={styles.filtersRow}>
-        <FilterButton
-          label={filterCategory === 'Todos' ? 'Categoria' : `Categoria: ${filterCategory}`}
-          count={filterCategory === 'Todos' ? 0 : 1}
-          onPress={() => setCategoryModal(true)}
-        />
-        <FilterButton
-          label="Músculos"
-          count={filterMuscles.length}
-          onPress={() => setMusclesModal(true)}
-        />
-        <FilterButton
-          label="Equipamento"
-          count={filterEquipment.length}
-          onPress={() => setEquipmentModal(true)}
-        />
-
-        {/* Seed (opcional) */}
+        <FilterButton label={filterCategory === 'Todos' ? 'Categoria' : `Categoria: ${filterCategory}`} count={filterCategory === 'Todos' ? 0 : 1} onPress={() => setCategoryModal(true)} />
+        <FilterButton label="Músculos" count={filterMuscles.length} onPress={() => setMusclesModal(true)} />
+        <FilterButton label="Equipamento" count={filterEquipment.length} onPress={() => setEquipmentModal(true)} />
         <TouchableOpacity onPress={seedIfEmpty} style={styles.seedBtn}>
           <Ionicons name="sparkles-outline" size={16} color={Colors.primary} />
           <Text style={styles.seedText}>Predefinidos</Text>
@@ -410,7 +488,7 @@ export default function ExerciseLibraryScreen() {
         />
       )}
 
-      {/* Modal Categoria (seleção única) */}
+      {/* Modal Categoria */}
       <Modal transparent animationType="fade" visible={categoryModal} onRequestClose={() => setCategoryModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.filterCard}>
@@ -422,18 +500,10 @@ export default function ExerciseLibraryScreen() {
             </View>
 
             <ScrollView style={{ maxHeight: height * 0.6 }}>
-              {renderChip(
-                'Todos',
-                filterCategory === 'Todos',
-                () => setFilterCategory('Todos')
-              )}
+              {renderChip('Todos', filterCategory === 'Todos', () => setFilterCategory('Todos'))}
               <View style={{ height: 8 }} />
               {EXERCISE_CATEGORIES.map((c) => (
-                <TouchableOpacity
-                  key={c}
-                  onPress={() => setFilterCategory(c)}
-                  style={[styles.selectRow, filterCategory === c && styles.selectRowSelected]}
-                >
+                <TouchableOpacity key={c} onPress={() => setFilterCategory(c)} style={[styles.selectRow, filterCategory === c && styles.selectRowSelected]}>
                   <Text style={[styles.selectRowText, filterCategory === c && styles.selectRowTextSelected]}>{c}</Text>
                   {filterCategory === c && <Ionicons name="checkmark-circle" size={20} color={Colors.success} />}
                 </TouchableOpacity>
@@ -441,18 +511,14 @@ export default function ExerciseLibraryScreen() {
             </ScrollView>
 
             <View style={styles.filterActions}>
-              <TouchableOpacity onPress={() => setFilterCategory('Todos')} style={styles.clearBtn}>
-                <Text style={styles.clearText}>Limpar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setCategoryModal(false)} style={styles.applyBtn}>
-                <Text style={styles.applyText}>Aplicar</Text>
-              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setFilterCategory('Todos')} style={styles.clearBtn}><Text style={styles.clearText}>Limpar</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setCategoryModal(false)} style={styles.applyBtn}><Text style={styles.applyText}>Aplicar</Text></TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* Modal Músculos (multi-seleção) */}
+      {/* Modal Músculos */}
       <Modal transparent animationType="fade" visible={musclesModal} onRequestClose={() => setMusclesModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.filterCard}>
@@ -467,31 +533,20 @@ export default function ExerciseLibraryScreen() {
               <View style={styles.wrapChips}>
                 {TARGET_MUSCLES.map((m) => {
                   const on = filterMuscles.includes(m);
-                  return renderChip(
-                    m,
-                    on,
-                    () =>
-                      setFilterMuscles((prev) =>
-                        on ? prev.filter((x) => x !== m) : [...prev, m]
-                      )
-                  );
+                  return renderChip(m, on, () => setFilterMuscles((prev) => on ? prev.filter((x) => x !== m) : [...prev, m]));
                 })}
               </View>
             </ScrollView>
 
             <View style={styles.filterActions}>
-              <TouchableOpacity onPress={() => setFilterMuscles([])} style={styles.clearBtn}>
-                <Text style={styles.clearText}>Limpar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setMusclesModal(false)} style={styles.applyBtn}>
-                <Text style={styles.applyText}>Aplicar</Text>
-              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setFilterMuscles([])} style={styles.clearBtn}><Text style={styles.clearText}>Limpar</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setMusclesModal(false)} style={styles.applyBtn}><Text style={styles.applyText}>Aplicar</Text></TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* Modal Equipamento (multi-seleção) */}
+      {/* Modal Equipamento */}
       <Modal transparent animationType="fade" visible={equipmentModal} onRequestClose={() => setEquipmentModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.filterCard}>
@@ -506,25 +561,14 @@ export default function ExerciseLibraryScreen() {
               <View style={styles.wrapChips}>
                 {EQUIPMENT_OPTIONS.map((e) => {
                   const on = filterEquipment.includes(e);
-                  return renderChip(
-                    e,
-                    on,
-                    () =>
-                      setFilterEquipment((prev) =>
-                        on ? prev.filter((x) => x !== e) : [...prev, e]
-                      )
-                  );
+                  return renderChip(e, on, () => setFilterEquipment((prev) => on ? prev.filter((x) => x !== e) : [...prev, e]));
                 })}
               </View>
             </ScrollView>
 
             <View style={styles.filterActions}>
-              <TouchableOpacity onPress={() => setFilterEquipment([])} style={styles.clearBtn}>
-                <Text style={styles.clearText}>Limpar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setEquipmentModal(false)} style={styles.applyBtn}>
-                <Text style={styles.applyText}>Aplicar</Text>
-              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setFilterEquipment([])} style={styles.clearBtn}><Text style={styles.clearText}>Limpar</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setEquipmentModal(false)} style={styles.applyBtn}><Text style={styles.applyText}>Aplicar</Text></TouchableOpacity>
             </View>
           </View>
         </View>
@@ -536,48 +580,23 @@ export default function ExerciseLibraryScreen() {
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{editingId ? 'Editar Exercício' : 'Novo Exercício'}</Text>
-              <TouchableOpacity onPress={closeModal}>
-                <Ionicons name="close-circle" size={26} color={Colors.danger} />
-              </TouchableOpacity>
+              <TouchableOpacity onPress={closeModal}><Ionicons name="close-circle" size={26} color={Colors.danger} /></TouchableOpacity>
             </View>
 
             <ScrollView style={{ maxHeight: height * 0.6 }}>
               <Text style={styles.label}>Nome (PT)</Text>
-              <TextInput
-                style={styles.input}
-                value={form.nome_pt}
-                onChangeText={(t) => setForm((p) => ({ ...p, nome_pt: t }))}
-                placeholder="Ex.: Agachamento"
-                placeholderTextColor={Colors.textSecondary}
-              />
+              <TextInput style={styles.input} value={form.nome_pt} onChangeText={(t) => setForm((p) => ({ ...p, nome_pt: t }))} placeholder="Ex.: Agachamento" placeholderTextColor={Colors.textSecondary} />
 
               <Text style={styles.label}>Nome (EN) — opcional</Text>
-              <TextInput
-                style={styles.input}
-                value={form.nome_en}
-                onChangeText={(t) => setForm((p) => ({ ...p, nome_en: t }))}
-                placeholder="Ex.: Squat"
-                placeholderTextColor={Colors.textSecondary}
-              />
+              <TextInput style={styles.input} value={form.nome_en} onChangeText={(t) => setForm((p) => ({ ...p, nome_en: t }))} placeholder="Ex.: Squat" placeholderTextColor={Colors.textSecondary} />
 
               <Text style={styles.label}>Descrição breve</Text>
-              <TextInput
-                style={[styles.input, { minHeight: 80, textAlignVertical: 'top' }]}
-                value={form.descricao_breve}
-                onChangeText={(t) => setForm((p) => ({ ...p, descricao_breve: t }))}
-                placeholder="Notas rápidas sobre o exercício…"
-                placeholderTextColor={Colors.textSecondary}
-                multiline
-              />
+              <TextInput style={[styles.input, { minHeight: 80, textAlignVertical: 'top' }]} value={form.descricao_breve} onChangeText={(t) => setForm((p) => ({ ...p, descricao_breve: t }))} placeholder="Notas rápidas sobre o exercício…" placeholderTextColor={Colors.textSecondary} multiline />
 
               <Text style={styles.label}>Categoria</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginBottom: 12 }}>
                 {EXERCISE_CATEGORIES.map((c) => (
-                  <TouchableOpacity
-                    key={c}
-                    onPress={() => setForm((p) => ({ ...p, category: c }))}
-                    style={[styles.chip, form.category === c && styles.chipSelected]}
-                  >
+                  <TouchableOpacity key={c} onPress={() => setForm((p) => ({ ...p, category: c }))} style={[styles.chip, form.category === c && styles.chipSelected]}>
                     <Text style={[styles.chipText, form.category === c && styles.chipTextSelected]}>{c}</Text>
                   </TouchableOpacity>
                 ))}
@@ -588,44 +607,15 @@ export default function ExerciseLibraryScreen() {
                 {TARGET_MUSCLES.map((m) => {
                   const on = form.musculos_alvo.includes(m);
                   return (
-                    <TouchableOpacity
-                      key={m}
-                      onPress={() =>
-                        setForm((p) => ({
-                          ...p,
-                          musculos_alvo: on ? p.musculos_alvo.filter((x) => x !== m) : [...p.musculos_alvo, m],
-                        }))
-                      }
-                      style={[styles.chip, on && styles.chipSelected]}
-                    >
+                    <TouchableOpacity key={m} onPress={() => setForm((p) => ({ ...p, musculos_alvo: on ? p.musculos_alvo.filter((x) => x !== m) : [...p.musculos_alvo, m] }))} style={[styles.chip, on && styles.chipSelected]}>
                       <Text style={[styles.chipText, on && styles.chipTextSelected]}>{m}</Text>
                     </TouchableOpacity>
                   );
                 })}
               </ScrollView>
 
-              <Text style={styles.label}>Equipamento principal</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginBottom: 12 }}>
-                {EQUIPMENT_OPTIONS.map((e) => (
-                  <TouchableOpacity
-                    key={e}
-                    onPress={() => setForm((p) => ({ ...p, equipamento: e }))}
-                    style={[styles.chip, form.equipamento === e && styles.chipSelected]}
-                  >
-                    <Text style={[styles.chipText, form.equipamento === e && styles.chipTextSelected]}>{e}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-
               <Text style={styles.label}>URL da Animação (gif/vídeo)</Text>
-              <TextInput
-                style={styles.input}
-                value={form.animacao_url}
-                onChangeText={(t) => setForm((p) => ({ ...p, animacao_url: t }))}
-                placeholder="https://…"
-                placeholderTextColor={Colors.textSecondary}
-                autoCapitalize="none"
-              />
+              <TextInput style={styles.input} value={form.animacao_url} onChangeText={(t) => setForm((p) => ({ ...p, animacao_url: t }))} placeholder="https://…" placeholderTextColor={Colors.textSecondary} autoCapitalize="none" />
             </ScrollView>
 
             <TouchableOpacity onPress={saveExercise} style={styles.saveBtn}>
@@ -635,34 +625,81 @@ export default function ExerciseLibraryScreen() {
         </View>
       </Modal>
 
-      {/* Modal animação */}
-      <Modal transparent animationType="fade" visible={isAnimVisible} onRequestClose={closeAnimation}>
+      {/* Modal animação — APENAS O VÍDEO */}
+      <Modal
+        transparent
+        animationType="fade"
+        visible={isAnimVisible}
+        onRequestClose={() => setIsAnimVisible(false)}
+        hardwareAccelerated
+      >
         <View style={styles.modalOverlay}>
-          <View style={styles.animCard}>
-            {animUrl ? (
-              <WebView
-                source={{
-                  html: `
-                  <html><head><meta name="viewport" content="width=device-width,initial-scale=1"/>
-                  <style>html,body{margin:0;height:100%;background:#000;display:flex;align-items:center;justify-content:center}
-                  img,video{max-width:100%;max-height:100%;object-fit:contain}</style></head>
-                  <body>
-                    ${animUrl.endsWith('.gif')
-                      ? `<img src="${animUrl}" />`
-                      : `<video src="${animUrl}" autoplay loop controls></video>`}
-                  </body></html>`,
-                }}
-                style={{ width: width * 0.9, height: height * 0.6 }}
-                allowsFullscreenVideo
-                javaScriptEnabled
-                domStorageEnabled
-              />
-            ) : (
-              <Text style={{ color: '#fff' }}>Sem animação disponível.</Text>
-            )}
-            <TouchableOpacity onPress={closeAnimation} style={styles.closeAnimBtn}>
-              <Text style={styles.closeAnimText}>Fechar</Text>
-            </TouchableOpacity>
+          <View style={styles.playerOnlyBox}>
+            {(() => {
+              const media = detectMedia(animUrl);
+              if (!animUrl) return <Text style={{ color: '#fff' }}>Sem animação disponível.</Text>;
+
+              // YouTube
+              if (media.type === 'youtube' && (media.youtubeId || media.src)) {
+                return (
+                  <YoutubePlayer
+                    height={VIDEO_H}
+                    width={VIDEO_W}
+                    play
+                    videoId={media.youtubeId}
+                    webViewStyle={{ opacity: 0.9999 }}
+                    initialPlayerParams={{
+                      controls: true,
+                      modestbranding: true,
+                      rel: false,
+                      fs: 1,
+                      playsinline: true,
+                      iv_load_policy: 3,
+                    }}
+                  />
+                );
+              }
+              // MP4
+              if (media.type === 'mp4' && media.src) {
+                return (
+                  <WebView
+                    style={{ width: VIDEO_W, height: VIDEO_H, backgroundColor: '#000' }}
+                    javaScriptEnabled
+                    domStorageEnabled
+                    allowsFullscreenVideo
+                    originWhitelist={['*']}
+                    source={{ html: `<video src="${media.src}" autoplay loop controls playsinline style="max-width:100%;max-height:100%;object-fit:contain;"></video>` }}
+                  />
+                );
+              }
+              // GIF
+              if (media.type === 'gif' && media.src) {
+                return (
+                  <WebView
+                    style={{ width: VIDEO_W, height: VIDEO_H, backgroundColor: '#000' }}
+                    javaScriptEnabled
+                    domStorageEnabled
+                    originWhitelist={['*']}
+                    source={{ html: `<img src="${media.src}" style="max-width:100%;max-height:100%;object-fit:contain;" />` }}
+                  />
+                );
+              }
+              // Vimeo/Drive/URL/EXT
+              if (['vimeo','drive','url','ext'].includes(media.type) && media.src) {
+                return (
+                  <WebView
+                    style={{ width: VIDEO_W, height: VIDEO_H, backgroundColor: '#000' }}
+                    javaScriptEnabled
+                    domStorageEnabled
+                    allowsFullscreenVideo
+                    originWhitelist={['*']}
+                    source={{ uri: media.src }}
+                  />
+                );
+              }
+
+              return <View />;
+            })()}
           </View>
         </View>
       </Modal>
@@ -672,19 +709,9 @@ export default function ExerciseLibraryScreen() {
 
 /* =================== Styles =================== */
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '',  },
+  container: { flex: 1, backgroundColor: Colors.background },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.background },
   loadingText: { marginTop: 10, color: Colors.textPrimary },
-
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: Colors.primary, paddingHorizontal: 16, paddingVertical: 14,
-    borderBottomLeftRadius: RADIUS, borderBottomRightRadius: RADIUS,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6, elevation: 5,
-  },
-  headerBtn: { padding: 6, borderRadius: 20 },
-  headerTitle: { color: '#fff', fontWeight: '700', fontSize: 18 },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 
   searchBar: {
     margin: 16, paddingHorizontal: 12, paddingVertical: 10,
@@ -715,6 +742,7 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   cardTitle: { fontSize: 16, fontWeight: '700', color: Colors.textPrimary, flex: 1, paddingRight: 10 },
   cardActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  iconBtn: { padding: 6, borderRadius: 8, backgroundColor: '#F7F8FA', borderWidth: 1, borderColor: Colors.divider },
 
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' },
   metaRowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
@@ -733,9 +761,8 @@ const styles = StyleSheet.create({
   emptyBox: { alignItems: 'center', justifyContent: 'center', padding: 24, margin: 16, backgroundColor: Colors.cardBackground, borderRadius: 12, borderWidth: 1, borderColor: Colors.divider },
   emptyText: { marginTop: 10, color: Colors.textSecondary },
 
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' },
+  modalOverlay: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
 
-  /* Modal filtros (categoria/músculos/equipamento) */
   filterCard: { width: '92%', backgroundColor: Colors.cardBackground, borderRadius: RADIUS, padding: 16 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   modalTitle: { fontSize: 18, fontWeight: '700', color: Colors.textPrimary },
@@ -745,18 +772,17 @@ const styles = StyleSheet.create({
   applyBtn: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: Colors.primary },
   applyText: { color: '#FFF', fontWeight: '700' },
 
-  wrapChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-
   selectRow: {
     paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12,
-    borderWidth: 1, borderColor: Colors.divider, backgroundColor: '#FFF', marginBottom: 8,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 1, borderColor: Colors.divider, backgroundColor: Colors.cardBackground,
+    marginBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'
   },
-  selectRowSelected: { borderColor: Colors.info, backgroundColor: '#EAF3FF' },
+  selectRowSelected: { backgroundColor: '#EAF3FF', borderColor: '#CFE3FF' },
   selectRowText: { color: Colors.textPrimary, fontWeight: '600' },
-  selectRowTextSelected: { color: Colors.primary },
+  selectRowTextSelected: { color: Colors.info, fontWeight: '700' },
 
-  /* Modal criar/editar */
+  wrapChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+
   modalCard: { width: '92%', backgroundColor: Colors.cardBackground, borderRadius: RADIUS, padding: 16 },
   label: { color: Colors.textPrimary, fontWeight: '600', marginTop: 10, marginBottom: 6 },
   input: {
@@ -774,7 +800,9 @@ const styles = StyleSheet.create({
   saveBtn: { marginTop: 12, backgroundColor: Colors.primary, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   saveBtnText: { color: '#fff', fontWeight: '700' },
 
-  animCard: { width: width * 0.92, backgroundColor: '#000', borderRadius: 16, padding: 10, alignItems: 'center' },
-  closeAnimBtn: { marginTop: 10, backgroundColor: Colors.secondary, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
-  closeAnimText: { color: Colors.primary, fontWeight: '700' },
+  /* Apenas vídeo no modal */
+  playerOnlyBox: { width: VIDEO_W, height: VIDEO_H, backgroundColor: '#000' },
+
+  /* (Estilos antigos do card/botões do modal ficaram sem uso,
+     podes remover se quiseres: animCard, closeAnimBtn, closeAnimText) */
 });

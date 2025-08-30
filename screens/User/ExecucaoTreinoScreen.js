@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   FlatList,
   Image,
-  Modal,
   SafeAreaView,
   StatusBar,
   Platform,
@@ -23,6 +22,7 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
+import YoutubePlayer from 'react-native-youtube-iframe';
 import ColorsImport from '../../constants/Colors';
 import { LinearGradient } from 'expo-linear-gradient';
 import { doc, getDoc } from 'firebase/firestore';
@@ -30,9 +30,9 @@ import { db } from '../../services/firebaseConfig';
 import { getUserIdLoggedIn } from '../../services/authService';
 import { salvarTreinoConcluido } from '../../services/userService';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
-// Paleta “tolerante” (usa defaults se faltarem no teu Colors.js)
+// Paleta com fallback
 const Palette = {
   primary: ColorsImport?.primary ?? '#2A3B47',
   primaryLight: ColorsImport?.primaryLight ?? '#3A506B',
@@ -51,7 +51,7 @@ const Palette = {
   onSecondary: ColorsImport?.onSecondary ?? '#1A1A1A',
 };
 
-// Mapas de séries compatíveis
+// Mapas de séries
 const SERIES_TYPES = {
   reps_and_load: ['reps', 'peso', 'descanso'],
   reps_load_time: ['reps', 'peso', 'tempo', 'descanso'],
@@ -75,7 +75,81 @@ const FIELD_LABELS = {
   cadencia: 'Cadência',
 };
 
-/** Normaliza qualquer formato de exercícios vindo do treino */
+// Extrai ID de YouTube
+const toYouTubeId = (url = '') => {
+  const rxs = [
+    /[?&]v=([A-Za-z0-9_-]{11})/,
+    /youtu\.be\/([A-Za-z0-9_-]{11})/,
+    /youtube\.com\/shorts\/([A-Za-z0-9_-]{11})/,
+    /youtube\.com\/embed\/([A-Za-z0-9_-]{11})/,
+  ];
+  for (const rx of rxs) {
+    const m = String(url).match(rx);
+    if (m?.[1]) return m[1];
+  }
+  return '';
+};
+
+// Player inline (YouTube / MP4 / GIF)
+const InlineMediaPlayer = ({ url, width, height }) => {
+  if (!url) return null;
+  const ytId = toYouTubeId(url);
+
+  if (ytId) {
+    return (
+      <YoutubePlayer
+        height={height}
+        width={width}
+        play={false} // mude para true se quiser autoplay
+        videoId={ytId}
+        initialPlayerParams={{
+          controls: true,
+          modestbranding: true,
+          rel: false,
+          fs: 1,
+          playsinline: true,
+          iv_load_policy: 3,
+        }}
+        webViewStyle={{ opacity: 0.9999 }}
+      />
+    );
+  }
+
+  // MP4 / GIF
+  return (
+    <WebView
+      style={{ width, height, backgroundColor: '#000' }}
+      javaScriptEnabled
+      domStorageEnabled
+      allowsFullscreenVideo
+      originWhitelist={['*']}
+      source={{
+        html: `
+          <html>
+            <head>
+              <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+              <style>
+                html,body{ margin:0; background:#000; }
+                .box{ width:100%; height:100vh; max-height:${height}px; display:flex; align-items:center; justify-content:center; }
+                img,video{ max-width:100%; max-height:100%; object-fit:contain; }
+                video{ width:100%; height:100%; }
+              </style>
+            </head>
+            <body>
+              <div class="box">
+                ${url.endsWith('.gif')
+                  ? `<img src="${url}" />`
+                  : `<video src="${url}" controls playsinline></video>`
+                }
+              </div>
+            </body>
+          </html>`
+      }}
+    />
+  );
+};
+
+/** Normaliza array de exercícios de várias estruturas */
 function normalizeExercises(treino) {
   const fromTemplates = Array.isArray(treino?.templateExercises) ? treino.templateExercises : [];
   const fromCustom = Array.isArray(treino?.customExercises) ? treino.customExercises : [];
@@ -91,23 +165,24 @@ function normalizeExercises(treino) {
     return [];
   };
 
-  return merged.map((ex, idx) => ({
-    key: String(idx),
-    id: ex?.exerciseId ?? null,
-    name: ex?.exerciseName || ex?.nome || ex?.name || 'Exercício',
-    description: ex?.description || ex?.descricao_breve || '',
-    category: ex?.category || ex?.categoria || '',
-    imageUrl: ex?.imageUrl || '',
-    animationUrl: ex?.animationUrl || '',
-    notes: ex?.notes || '',
-    sets: normalizeSets(ex),
-    // Estes enriquecimentos são opcionais, caso existam nas tuas docs de exercises:
-    targetMuscles: ex?.targetMuscles || [],
-    equipment: ex?.equipment || [],
-  }));
+  return merged.map((ex, idx) => (ctxHydrate(ex, idx, normalizeSets)));
 }
 
-/** Carrega detalhes de exercícios (nome/descrição/imagem) da coleção exercises quando houver exerciseId */
+const ctxHydrate = (ex, idx, normalizeSets) => ({
+  key: String(idx),
+  id: ex?.exerciseId ?? null,
+  name: ex?.exerciseName || ex?.nome || ex?.name || 'Exercício',
+  description: ex?.description || ex?.descricao_breve || '',
+  category: ex?.category || ex?.categoria || '',
+  imageUrl: ex?.imageUrl || '',
+  animationUrl: ex?.animationUrl || '',
+  notes: ex?.notes || '',
+  sets: normalizeSets(ex),
+  targetMuscles: ex?.targetMuscles || [],
+  equipment: ex?.equipment || [],
+});
+
+/** Enriquecimento com dados da coleção exercises (prioriza nome_en) */
 async function hydrateFromDB(exercises) {
   const withIds = exercises.filter(e => e.id);
   if (!withIds.length) return exercises;
@@ -120,20 +195,28 @@ async function hydrateFromDB(exercises) {
   return exercises.map(e => {
     if (!e.id) return e;
     const dbData = map.get(e.id) || {};
+    const equipmentRaw = dbData?.equipamento ?? dbData?.equipment;
+    const equipment = Array.isArray(equipmentRaw) ? equipmentRaw : (equipmentRaw ? [equipmentRaw] : []);
+    const targetMuscles =
+      e.targetMuscles?.length
+        ? e.targetMuscles
+        : (Array.isArray(dbData?.musculos_alvo)
+            ? dbData.musculos_alvo.map(m => (typeof m === 'string' ? m : (m?.name || m?.id))).filter(Boolean)
+            : []);
+
     return {
       ...e,
-      name: e.name || dbData?.nome_pt || 'Exercício',
+      name: e.name || dbData?.nome_en || dbData?.nome_pt || 'Exercício',
       description: e.description || dbData?.descricao_breve || '',
-      imageUrl: e.imageUrl || dbData?.imageUrl || '',
-      animationUrl: e.animationUrl || dbData?.animationUrl || '',
-      category: e.category || dbData?.category || '',
-      targetMuscles: e.targetMuscles?.length ? e.targetMuscles : (dbData?.musculos_alvo ? dbData.musculos_alvo.map(m => m.name || m.id).filter(Boolean) : []),
-      equipment: e.equipment?.length ? e.equipment : (dbData?.equipment || []),
+      imageUrl: e.imageUrl || dbData?.imageUrl || dbData?.imagem_url || '',
+      animationUrl: e.animationUrl || dbData?.animationUrl || dbData?.animacao_url || dbData?.videoUrl || '',
+      category: e.category || dbData?.category || dbData?.categoria || '',
+      targetMuscles,
+      equipment,
     };
   });
 }
 
-/** Formata uma série para texto “bonito” */
 function formatSeries(set) {
   const type = set?.type || set?.seriesType;
   const fields = SERIES_TYPES[type] || [];
@@ -156,28 +239,24 @@ export default function ExecucaoTreinoScreen() {
   const [exercises, setExercises] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
 
-  // Checklist de séries concluidas por exercício (boolean[])
-  const [checklist, setChecklist] = useState([]); // Array< Array<boolean> >
-  const [exerciseDone, setExerciseDone] = useState([]); // Array<boolean>
+  // Checklist
+  const [checklist, setChecklist] = useState([]);
+  const [exerciseDone, setExerciseDone] = useState([]);
 
   // Timer
   const [running, setRunning] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const timerRef = useRef(null);
 
-  // Animação de topo (barra fina de progresso)
+  // Progresso header
   const progressAnim = useRef(new Animated.Value(0)).current;
 
-  // Modal de vídeo/GIF
-  const [mediaOpen, setMediaOpen] = useState(false);
-  const [mediaUrl, setMediaUrl] = useState('');
-
-  // Modal de feedback final
+  // Feedback
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [rating, setRating] = useState(0);
   const [observation, setObservation] = useState('');
 
-  // Carregar/normalizar sessão
+  // Carregar/normalizar
   useEffect(() => {
     (async () => {
       try {
@@ -185,15 +264,14 @@ export default function ExecucaoTreinoScreen() {
         const hydrated = await hydrateFromDB(base);
         setExercises(hydrated);
 
-        // construir checklists
         const ck = hydrated.map(ex => (Array.isArray(ex.sets) && ex.sets.length)
           ? ex.sets.map(() => false)
-          : [] // sem sets
+          : []
         );
         setChecklist(ck);
         setExerciseDone(hydrated.map(() => false));
       } catch (e) {
-        console.error('Erro ao carregar detalhes do treino:', e);
+        console.error('Erro ao carregar exercícios:', e);
         Alert.alert('Erro', 'Não foi possível carregar os exercícios do treino.');
       } finally {
         setLoading(false);
@@ -201,7 +279,6 @@ export default function ExecucaoTreinoScreen() {
     })();
   }, [treino]);
 
-  // Timer loop
   useEffect(() => {
     if (running) {
       timerRef.current = setInterval(() => setSeconds(s => s + 1), 1000);
@@ -209,12 +286,9 @@ export default function ExecucaoTreinoScreen() {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [running]);
 
-  // Progresso animado (barra top) = % de exercícios concluídos
   useEffect(() => {
     const percent = exercises.length
       ? exerciseDone.filter(Boolean).length / exercises.length
@@ -235,6 +309,7 @@ export default function ExecucaoTreinoScreen() {
     return raw instanceof Date && !isNaN(raw) ? raw : null;
   }, [treino]);
 
+  const listRef = useRef(null);
   const goPrev = () => {
     const idx = Math.max(currentIndex - 1, 0);
     setCurrentIndex(idx);
@@ -245,8 +320,6 @@ export default function ExecucaoTreinoScreen() {
     setCurrentIndex(idx);
     listRef.current?.scrollToIndex({ index: idx, animated: true });
   };
-
-  const listRef = useRef(null);
   const onMomentumEnd = (e) => {
     const x = e.nativeEvent.contentOffset.x;
     const i = Math.round(x / width);
@@ -271,18 +344,13 @@ export default function ExecucaoTreinoScreen() {
     Vibration?.vibrate?.(15);
   };
 
-  // Sempre que o checklist muda, ver se o exercício está concluído
   useEffect(() => {
     setExerciseDone(prev => {
       if (!checklist.length) return prev;
       const next = exercises.map((ex, i) => {
         const ck = checklist[i];
-        if (!ck?.length) {
-          // Sem sets: considera concluído quando o utilizador marcar manualmente (botão)
-          return prev[i] || false;
-        }
-        const all = ck.every(Boolean);
-        return all;
+        if (!ck?.length) return prev[i] || false;
+        return ck.every(Boolean);
       });
       return next;
     });
@@ -295,16 +363,6 @@ export default function ExecucaoTreinoScreen() {
       return next;
     });
     Vibration?.vibrate?.(20);
-  };
-
-  const openMedia = (url) => {
-    setMediaUrl(url);
-    setMediaOpen(true);
-  };
-
-  const closeMedia = () => {
-    setMediaOpen(false);
-    setMediaUrl('');
   };
 
   const finishWorkout = () => {
@@ -328,8 +386,6 @@ export default function ExecucaoTreinoScreen() {
         Alert.alert('Erro', 'Utilizador não autenticado.');
         return;
       }
-
-      // Persistência local de concluído (como já tinhas)
       if (treino?.id) {
         const key = `treinosConcluidos_${userId}`;
         const json = await AsyncStorage.getItem(key);
@@ -337,10 +393,7 @@ export default function ExecucaoTreinoScreen() {
         map[treino.id] = { completed: true, duration: seconds };
         await AsyncStorage.setItem(key, JSON.stringify(map));
       }
-
-      // Firestore (service existente)
       await salvarTreinoConcluido(userId, treino, seconds, rating, observation);
-
       Alert.alert('Sucesso', 'Treino concluído e feedback registado!');
       setFeedbackOpen(false);
       navigation.goBack();
@@ -350,17 +403,10 @@ export default function ExecucaoTreinoScreen() {
     }
   };
 
-  // UI helpers
-  const totalSets = useMemo(() => {
-    return exercises.reduce((acc, ex) => acc + (ex.sets?.length || 0), 0);
-  }, [exercises]);
-  const doneSets = useMemo(() => {
-    if (!checklist.length) return 0;
-    return checklist.reduce((acc, arr) => acc + (arr?.filter(Boolean).length || 0), 0);
-  }, [checklist]);
+  const totalSets = useMemo(() => exercises.reduce((acc, ex) => acc + (ex.sets?.length || 0), 0), [exercises]);
+  const doneSets = useMemo(() => checklist.reduce((acc, arr) => acc + (arr?.filter(Boolean).length || 0), 0), [checklist]);
   const overallPercent = totalSets ? Math.round((doneSets / totalSets) * 100) : 0;
 
-  // header progress width
   const headerProgressWidth = progressAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0%', '100%'],
@@ -379,20 +425,40 @@ export default function ExecucaoTreinoScreen() {
             </Text>
             {!!item.category && <Text style={styles.exerciseCategory}>{item.category}</Text>}
           </View>
-
-          {item.animationUrl ? (
-            <TouchableOpacity onPress={() => openMedia(item.animationUrl)} style={styles.mediaBtn}>
-              <Ionicons name="play-circle-outline" size={28} color={Palette.onPrimary} />
-              <Text style={styles.mediaBtnText}>Ver animação</Text>
-            </TouchableOpacity>
-          ) : null}
+          {/* (Sem botão de animação — o vídeo está inline em baixo) */}
         </View>
 
-        {item.imageUrl ? (
+        {/* Player inline (na caixa onde antes era a imagem/ícone de halteres) */}
+        {item.animationUrl ? (
+          <View style={styles.mediaInlineBox}>
+            <InlineMediaPlayer url={item.animationUrl} width={'100%'} height={190} />
+          </View>
+        ) : item.imageUrl ? (
           <Image source={{ uri: item.imageUrl }} style={styles.exerciseImage} resizeMode="cover" />
         ) : (
           <View style={styles.imagePlaceholder}>
             <MaterialCommunityIcons name="dumbbell" size={38} color={Palette.primary} />
+          </View>
+        )}
+
+        {!!(item.targetMuscles?.length || item.equipment?.length) && (
+          <View style={styles.metaRow}>
+            {!!item.targetMuscles?.length && (
+              <View style={styles.metaChip}>
+                <Ionicons name="fitness-outline" size={14} color={Palette.onSecondary} />
+                <Text style={styles.metaChipText} numberOfLines={1}>
+                  {item.targetMuscles.join(', ')}
+                </Text>
+              </View>
+            )}
+            {!!item.equipment?.length && (
+              <View style={styles.metaChip}>
+                <Ionicons name="hammer-outline" size={14} color={Palette.onSecondary} />
+                <Text style={styles.metaChipText} numberOfLines={1}>
+                  {item.equipment.join(', ')}
+                </Text>
+              </View>
+            )}
           </View>
         )}
 
@@ -496,23 +562,35 @@ export default function ExecucaoTreinoScreen() {
             {treino?.nome || treino?.name || 'Sessão de Treino'}
           </Text>
           <Text style={styles.headerSubtitle} numberOfLines={1}>
-            {(treino?.categoria || treino?.category || '—')} • {dataObj ? dataObj.toLocaleDateString() : 'Sem data'}
+            {(treino?.categoria || treino?.category || '—')} • {(() => {
+              const d =
+                treino?.data?.toDate?.() ??
+                (treino?.data ? new Date(treino.data) : undefined) ??
+                (treino?.dataAgendada ? new Date(treino.dataAgendada) : undefined);
+              return d instanceof Date && !isNaN(d) ? d.toLocaleDateString() : 'Sem data';
+            })()}
           </Text>
         </View>
 
         {/* Timer pill */}
         <View style={styles.timerPill}>
           <Ionicons name="time-outline" size={16} color={Palette.onSecondary} />
-          <Text style={styles.timerText}>{formatTime(seconds)}</Text>
+          <Text style={styles.timerText}>{(() => {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            const pad = (n) => String(n).padStart(2, '0');
+            return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+          })()}</Text>
         </View>
       </LinearGradient>
 
-      {/* Thin progress (exercícios concluídos) */}
+      {/* Barra superior de progresso (exercícios) */}
       <View style={styles.topProgressBar}>
         <Animated.View style={[styles.topProgressFill, { width: headerProgressWidth }]} />
       </View>
 
-      {/* Barra de KPI */}
+      {/* KPI */}
       <View style={styles.kpisRow}>
         <View style={styles.kpiCard}>
           <Text style={styles.kpiValue}>{exercises.length}</Text>
@@ -557,47 +635,8 @@ export default function ExecucaoTreinoScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Modal Animação */}
-      <Modal visible={mediaOpen} transparent animationType="fade" onRequestClose={closeMedia}>
-        <View style={styles.mediaModalOverlay}>
-          <View style={styles.mediaModalContent}>
-            {mediaUrl ? (
-              <WebView
-                source={{
-                  html: `
-                  <html>
-                    <head>
-                      <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-                      <style>
-                        body { margin:0; display:flex; align-items:center; justify-content:center; height:100vh; background:#000; }
-                        img, video { max-width:100%; max-height:100%; object-fit:contain; }
-                      </style>
-                    </head>
-                    <body>
-                      ${mediaUrl.endsWith('.gif')
-                        ? `<img src="${mediaUrl}" />`
-                        : `<video src="${mediaUrl}" autoplay loop controls></video>`
-                      }
-                    </body>
-                  </html>`
-                }}
-                style={{ width: '100%', height: '85%' }}
-                allowsFullscreenVideo
-                javaScriptEnabled
-                domStorageEnabled
-              />
-            ) : (
-              <Text style={{ color: Palette.onPrimary }}>Sem media disponível.</Text>
-            )}
-            <TouchableOpacity onPress={closeMedia} style={styles.mediaCloseBtn}>
-              <Text style={styles.mediaCloseText}>Fechar</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
       {/* Modal Feedback */}
-      <Modal visible={feedbackOpen} transparent animationType="slide" onRequestClose={() => setFeedbackOpen(false)}>
+      {feedbackOpen && (
         <View style={styles.feedbackOverlay}>
           <View style={styles.feedbackCard}>
             <Text style={styles.feedbackTitle}>Avalie o Treino</Text>
@@ -634,7 +673,7 @@ export default function ExecucaoTreinoScreen() {
             </View>
           </View>
         </View>
-      </Modal>
+      )}
     </SafeAreaView>
   );
 }
@@ -724,22 +763,30 @@ const styles = StyleSheet.create({
   slideHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   exerciseName: { fontSize: 18, fontWeight: '800', color: Palette.primary },
   exerciseCategory: { color: Palette.textSecondary, marginTop: 2 },
-  mediaBtn: {
-    backgroundColor: Palette.secondary,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  mediaBtnText: { color: Palette.onSecondary, fontWeight: '800' },
 
-  exerciseImage: { width: '100%', height: 190, borderRadius: 12, backgroundColor: Palette.background },
+  // Caixa do media inline (vídeo embutido)
+  mediaInlineBox: {
+    width: '100%',
+    height: 190,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+  },
+
+  exerciseImage: { width: '100%', height: 190, borderRadius: 12, backgroundColor: Palette.background, marginTop: 0 },
   imagePlaceholder: {
     width: '100%', height: 190, borderRadius: 12, backgroundColor: Palette.background,
     alignItems: 'center', justifyContent: 'center',
   },
+
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  metaChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#FFF7E0', borderColor: Palette.secondary, borderWidth: 1,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16,
+    maxWidth: '100%',
+  },
+  metaChipText: { color: Palette.onSecondary, fontWeight: '700', maxWidth: width - 120 },
 
   descriptionBox: { backgroundColor: Palette.surface, padding: 10, borderRadius: 10, marginTop: 10, borderWidth: 1, borderColor: Palette.divider },
   descriptionText: { color: Palette.textSecondary },
@@ -819,14 +866,8 @@ const styles = StyleSheet.create({
   dockFinish: { backgroundColor: Palette.secondary },
   dockBtnText: { color: Palette.onPrimary, fontWeight: '800', fontSize: 16 },
 
-  /* Media Modal */
-  mediaModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center', padding: 16 },
-  mediaModalContent: { backgroundColor: '#000', borderRadius: 14, width: '100%', maxWidth: 700, height: '70%', padding: 10 },
-  mediaCloseBtn: { marginTop: 10, alignSelf: 'center', backgroundColor: Palette.secondary, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10 },
-  mediaCloseText: { color: Palette.onSecondary, fontWeight: '800' },
-
-  /* Feedback Modal */
-  feedbackOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  /* Feedback Modal style */
+  feedbackOverlay: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 16 },
   feedbackCard: { backgroundColor: Palette.surface, width: '100%', maxWidth: 680, borderRadius: 16, padding: 16 },
   feedbackTitle: { fontSize: 20, fontWeight: '800', color: Palette.primary, textAlign: 'center' },
   starsRow: { flexDirection: 'row', alignSelf: 'center', marginTop: 10 },
