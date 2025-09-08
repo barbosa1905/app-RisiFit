@@ -1,9 +1,9 @@
-// CriarTreinosScreen.js
+// screens/Admin/CriarTreinosScreen.js
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, StyleSheet, Platform, Modal, Alert,
-  KeyboardAvoidingView, ActivityIndicator, Switch, FlatList, TouchableWithoutFeedback,
-  Keyboard, Dimensions, Pressable, ScrollView
+  KeyboardAvoidingView, ActivityIndicator, Switch, FlatList,
+  Dimensions, Pressable, ScrollView, TouchableWithoutFeedback
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import { buscarClientes, criarTreinoParaCliente, buscarTodosTreinosComNomes } from '../../services/adminService';
@@ -20,6 +20,171 @@ import AppHeader from '../../components/AppHeader';
 import { WebView } from 'react-native-webview';
 import YoutubePlayer from 'react-native-youtube-iframe';
 
+/* ================= AI local determinística ================= */
+const mulberry32 = (seed = 123456) => {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6D2B79F5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+};
+const pickN = (arr, n) => arr.slice(0, Math.max(0, n));
+
+const PRESETS = {
+  Hipertrofia: { seriesType:'reps_and_load', reps:'8-12', sets:3, descanso:'60-90s' },
+  Força:       { seriesType:'reps_and_load', reps:'3-6',  sets:4, descanso:'120-180s' },
+  Emagrecimento:{seriesType:'reps_and_time', reps:'12-15',sets:3, descanso:'30-60s' },
+  Mobilidade:  { seriesType:'reps_and_time', reps:'10-12',sets:2, descanso:'20-40s' },
+};
+const VOLUME_FACTOR = { Iniciante:0.85, 'Intermédio':1, 'Avançado':1.2 };
+const CONTRA = [
+  { tag:'joelho',  avoid: [/agach/i, /jump/i, /plyo/i, /lunge/i] },
+  { tag:'ombro',   avoid: [/overhead/i, /military/i, /press/i, /snatch/i] },
+  { tag:'lombar',  avoid: [/deadlift/i, /good ?morning/i, /hip hinge/i] },
+  { tag:'cotovelo',avoid: [/skull/i, /french/i] },
+];
+const hitsRestricao = (exName = '', restr = '') => {
+  const lower = (restr || '').toLowerCase();
+  if (!lower) return null;
+  for (const r of CONTRA) {
+    if (lower.includes(r.tag) && r.avoid.some(rx => rx.test(exName))) return r.tag;
+  }
+  return null;
+};
+const scoreExercise = (ex, ctx) => {
+  const reasons = [];
+  let s = 0;
+  if (ctx.focoSet.size) {
+    const tm = new Set(ex.targetMuscles || []);
+    const ok = [...ctx.focoSet].some(m => tm.has(m));
+    if (ok){ s += 3; reasons.push('alinha com foco muscular'); }
+    else   { s -= 1; reasons.push('fora do foco muscular'); }
+  }
+  if (ctx.cat && ex.category === ctx.cat){ s += 1.5; reasons.push('categoria correspondente'); }
+  if (ctx.equipSet.size) {
+    const eq = new Set(ex.equipment || []);
+    const ok = [...ctx.equipSet].some(e => eq.has(e));
+    if (ok){ s += 1.2; reasons.push('usa equipamento disponível'); }
+    else   { s -= 0.5; reasons.push('exige outro equipamento'); }
+  }
+  if (ex.animationUrl){ s += 1.5; reasons.push('tem vídeo'); }
+  const restrTag = hitsRestricao(ex.name || ex.exerciseName || '', ctx.restr);
+  if (restrTag){ s -= 5; reasons.push(`evitar por restrição: ${restrTag}`); }
+  return { score:s, reasons };
+};
+const muscleKey = (ex) => (ex.targetMuscles && ex.targetMuscles[0]) || 'geral';
+const validatePlan = (plan, ctx) => {
+  const issues = [];
+  plan.forEach((ex,i)=>{ if (!ex.setDetails?.length) issues.push(`Exercício ${i+1} sem séries`); });
+  if (ctx.focoSet.size) {
+    const cobertos = new Set();
+    plan.forEach(ex => (ex.targetMuscles||[]).forEach(m => ctx.focoSet.has(m) && cobertos.add(m)));
+    const faltam = [...ctx.focoSet].filter(m=>!cobertos.has(m));
+    if (faltam.length) issues.push(`Cobertura insuficiente de: ${faltam.join(', ')}`);
+  }
+  const proibidos = plan.filter(ex => hitsRestricao(ex.name||'', ctx.restr));
+  if (proibidos.length) issues.push(`Potenciais contra-indicações: ${proibidos.map(e=>e.name).join(', ')}`);
+  return issues;
+};
+const generateWorkout = ({
+  objetivo, nivel, exerciciosPorSessao, focoMuscular, equipamento, incluirCardio,
+  categoriaTreino, restricoes, listaExercicios, seed = 42
+}) => {
+  const rnd = mulberry32(seed);
+  const focoSet = new Set(focoMuscular || []);
+  const equipSet = new Set(equipamento || []);
+  const ctx = { focoSet, equipSet, cat: categoriaTreino, restr: restricoes };
+
+  let cand = (listaExercicios||[]).filter(ex => {
+    if (categoriaTreino && categoriaTreino!=='Outro' && ex.category && ex.category!==categoriaTreino) return false;
+    if (equipSet.size) {
+      const eq = new Set(ex.equipment||[]);
+      if (![...equipSet].some(e=>eq.has(e))) return false;
+    }
+    if (focoSet.size) {
+      const tm = new Set(ex.targetMuscles||[]);
+      if (![...focoSet].some(m=>tm.has(m))) return false;
+    }
+    return true;
+  });
+  if (!cand.length) cand = [...(listaExercicios||[])];
+
+  const scored = cand.map(ex=>{
+    const { score, reasons } = scoreExercise(ex, ctx);
+    return { ex, score, reasons, tiebreak: rnd() };
+  }).sort((a,b)=> (b.score - a.score) || (a.tiebreak - b.tiebreak));
+
+  const buckets = new Map();
+  scored.forEach(s=>{
+    const k = muscleKey(s.ex);
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(s);
+  });
+  const roundRobin = [];
+  const keys = [...buckets.keys()];
+  let idx = 0;
+  while (roundRobin.length < Math.min(exerciciosPorSessao, scored.length)) {
+    const k = keys[idx % keys.length];
+    const arr = buckets.get(k);
+    if (arr?.length) roundRobin.push(arr.shift());
+    idx++;
+    if (idx > 5000) break;
+  }
+  let picked = roundRobin.map(s=>s);
+  if (picked.length < exerciciosPorSessao) {
+    const leftovers = scored.filter(s=>!picked.includes(s));
+    picked = picked.concat(pickN(leftovers, exerciciosPorSessao - picked.length));
+  }
+  picked = picked.slice(0, exerciciosPorSessao);
+
+  const preset = PRESETS[objetivo] || PRESETS.Hipertrofia;
+  const vol = Math.max(2, Math.round(preset.sets * (VOLUME_FACTOR[nivel] || 1)));
+
+  const plan = picked.map(({ ex, reasons }) => ({
+    id: ex.id,
+    name: ex.name,
+    description: ex.description,
+    category: ex.category,
+    targetMuscles: ex.targetMuscles,
+    equipment: ex.equipment,
+    animationUrl: ex.animationUrl,
+    imageUrl: ex.imageUrl,
+    notes: '',
+    customExerciseId: String(Date.now()) + Math.random().toString(36).slice(2,7),
+    isExpanded: true,
+    explicacaoAI: reasons,
+    confidence: Math.max(0, Math.min(100, Math.round(reasons.length * 12 + (ex.animationUrl ? 16 : 0)))),
+    setDetails: Array.from({ length: vol }).map(() => ({
+      id: String(Date.now()) + Math.random().toString(36).slice(2,7),
+      seriesType: preset.seriesType,
+      reps: preset.seriesType.includes('reps') ? preset.reps : '',
+      tempo: preset.seriesType.includes('time') ? '30-45s' : '',
+      peso: preset.seriesType === 'reps_and_load' ? '' : '',
+      inclinacao: '', distancia: '', ritmo: (objetivo==='Emagrecimento') ? 'RPE7-8' : '',
+      descanso: preset.descanso, notas: '', cadencia: '',
+    })),
+  }));
+
+  if (incluirCardio) {
+    const cardio = (listaExercicios||[]).find(e => (e.category||'').toLowerCase().includes('cardio'));
+    if (cardio) {
+      plan.push({
+        id: cardio.id, name: cardio.name, description: cardio.description, category: cardio.category,
+        targetMuscles: cardio.targetMuscles, equipment: cardio.equipment, animationUrl: cardio.animationUrl, imageUrl: cardio.imageUrl,
+        notes: '', customExerciseId: String(Date.now()) + Math.random().toString(36).slice(2,7), isExpanded: true,
+        explicacaoAI: ['bloco de cardio solicitado'], confidence: 70,
+        setDetails: [{ id: String(Date.now()) + Math.random().toString(36).slice(2,7), seriesType:'time_and_incline', tempo:'10-15m', inclinacao:'leve', ritmo:'confortável', descanso:'—', reps:'', peso:'', distancia:'', notas:'', cadencia:'' }],
+      });
+    }
+  }
+
+  const issues = validatePlan(plan, ctx);
+  return { plan, issues, seedUsed: seed };
+};
+/* ===================== FIM AI local ===================== */
+
 /* ---------- Cores ---------- */
 const Colors = {
   primary: '#2A3B47', secondary: '#FFB800', background: '#F4F6F8', cardBackground: '#FFFFFF',
@@ -31,8 +196,8 @@ const Colors = {
 const BotaoPilula = ({ title, onPress, icon = 'plus-circle', variant = 'primary', size = 'md', style }) => {
   const isPrimary = variant === 'primary';
   const isOutline = variant === 'outline';
-  const height = size === 'sm' ? 32 : 44;
-  const paddingH = size === 'sm' ? 10 : 16;
+  const height = size === 'sm' ? 32 : 48;
+  const paddingH = size === 'sm' ? 12 : 18;
   return (
     <Pressable
       onPress={onPress}
@@ -48,8 +213,8 @@ const BotaoPilula = ({ title, onPress, icon = 'plus-circle', variant = 'primary'
         }, style,
       ]}
     >
-      {!!icon && <Feather name={icon} size={size === 'sm' ? 14 : 16} color={isPrimary ? '#fff' : Colors.textPrimary} style={{ marginRight: title ? 8 : 0 }} />}
-      {!!title && <Text style={{ color: isPrimary ? '#fff' : Colors.textPrimary, fontWeight: '700', fontSize: size === 'sm' ? 12 : 15 }}>{title}</Text>}
+      {!!icon && <Feather name={icon} size={size === 'sm' ? 16 : 18} color={isPrimary ? '#fff' : Colors.textPrimary} style={{ marginRight: title ? 10 : 0 }} />}
+      {!!title && <Text style={{ color: isPrimary ? '#fff' : Colors.textPrimary, fontWeight: '800', fontSize: size === 'sm' ? 13 : 16 }}>{title}</Text>}
     </Pressable>
   );
 };
@@ -59,13 +224,12 @@ const Chip = ({ label, selected, onToggle, style, icon }) => (
     onPress={onToggle}
     style={({ pressed }) => [
       {
-        flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 34,
+        flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 36,
         borderRadius: 999, marginRight: 8, marginBottom: 8,
         backgroundColor: selected ? Colors.primary : '#F8FAFC',
         borderWidth: 1, borderColor: selected ? Colors.primary : Colors.border, opacity: pressed ? 0.9 : 1,
       }, style,
-    ]}
-  >
+    ]}>
     {icon ? <Feather name={icon} size={14} color={selected ? '#fff' : Colors.textPrimary} style={{ marginRight: 6 }} /> : null}
     <Text style={{ color: selected ? '#fff' : Colors.textPrimary, fontWeight: '600', fontSize: 12 }}>{label}</Text>
   </Pressable>
@@ -105,6 +269,10 @@ const InlineWorkoutDetailsInput = React.memo(({ placeholder, value, onChangeText
   );
 });
 
+/* ---------- helpers texto ---------- */
+const toSlug = (s='') => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');
+const splitList = (txt='') => txt.split(',').map(t=>t.trim()).filter(Boolean);
+
 /* ---------- TimePicker ---------- */
 const renderTimePicker = ({ showPicker, value, onChange, onConfirm, minDateTime }) => {
   if (Platform.OS === 'ios') {
@@ -127,8 +295,8 @@ const renderTimePicker = ({ showPicker, value, onChange, onConfirm, minDateTime 
 /* ---------- Header Steps ---------- */
 const MemoizedListHeader = React.memo((props) => {
   const {
-    currentStep, setCurrentStep, handleGoBack,
-    clienteSelecionado, setModalClientesVisible, obterNomeCliente,
+    currentStep, setCurrentStep,
+    clienteSelecionado, setModalClientesVisible,
     dataSelecionada, setDataSelecionada, markedDatesForCalendar,
     mostrarPickerHora, setMostrarPickerHora, horaSelecionada, onChangeHora,
     isCreatingFromScratch, setIsCreatingFromScratch, setSelectedWorkoutTemplate, setIsTemplateSelectionModalVisible,
@@ -140,21 +308,32 @@ const MemoizedListHeader = React.memo((props) => {
 
   return (
     <View style={localStyles.listHeaderContainer}>
+      {/* STEP 1: Selecionar Cliente (apenas seleção) */}
       {currentStep === 1 && (
-        <View style={localStyles.card}>
-          <Text style={localStyles.sectionTitle}>1. Selecione o Cliente</Text>
-          <View style={localStyles.clientSelectionContainer}>
-            <Text style={localStyles.selectedClientText}>{clienteSelecionado ? obterNomeCliente(clienteSelecionado) : 'Nenhum cliente selecionado'}</Text>
-            <BotaoPilula title="Selecionar Cliente" icon="user-check" onPress={() => setModalClientesVisible(true)} />
+        <View style={[localStyles.card, localStyles.heroCard]}>
+          <View style={localStyles.heroLeft}>
+            <View style={localStyles.avatarCircle}>
+              <Feather name="users" size={28} color={Colors.primary} />
+            </View>
+            <View style={{ flex:1 }}>
+              <Text style={localStyles.heroTitle}>Selecionar cliente</Text>
+              <Text style={localStyles.heroSubtitle}>Escolhe o cliente para quem vais criar o treino.</Text>
+            </View>
           </View>
-          {clienteSelecionado && <BotaoPilula title="Próximo" icon="arrow-right-circle" onPress={() => setCurrentStep(2)} style={{ marginTop: 16 }} />}
+          <BotaoPilula
+            title="Escolher cliente"
+            icon="user-check"
+            onPress={() => setModalClientesVisible(true)}
+            style={{ marginTop: 14 }}
+          />
         </View>
       )}
 
+      {/* STEP 2: Agendamento */}
       {currentStep === 2 && clienteSelecionado && (
         <View style={localStyles.card}>
           <Text style={localStyles.sectionTitle}>2. Agendamento</Text>
-          <Text style={localStyles.selectedClientText}>Cliente: {obterNomeCliente(clienteSelecionado)}</Text>
+
           <Calendar
             onDayPress={(day) => setDataSelecionada(day.dateString)}
             minDate={minDate}
@@ -170,28 +349,45 @@ const MemoizedListHeader = React.memo((props) => {
             }}
             style={localStyles.calendar}
           />
+
           <Pressable onPress={() => setMostrarPickerHora(true)} style={({ pressed }) => [localStyles.timeInput, pressed && { opacity: 0.95 }]}>
             <Feather name="clock" size={20} color={Colors.placeholder} />
             <Text style={{ color: horaSelecionada ? Colors.textPrimary : Colors.placeholder, fontSize: 16 }}>
               {horaSelecionada ? horaSelecionada.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Selecionar Hora'}
             </Text>
           </Pressable>
-          {renderTimePicker({ showPicker: mostrarPickerHora, value: horaSelecionada, onChange: onChangeHora, onConfirm: () => setMostrarPickerHora(false), minDateTime })}
-          {dataSelecionada && horaSelecionada && <BotaoPilula title="Próximo" icon="arrow-right-circle" onPress={() => setCurrentStep(3)} style={{ marginTop: 16 }} />}
+
+          {renderTimePicker({
+            showPicker: mostrarPickerHora,
+            value: horaSelecionada,
+            onChange: onChangeHora,
+            onConfirm: () => setMostrarPickerHora(false),
+            minDateTime
+          })}
+
+          {dataSelecionada && horaSelecionada && (
+            <BotaoPilula title="Próximo" icon="arrow-right-circle" onPress={() => setCurrentStep(3)} style={{ marginTop: 16 }} />
+          )}
         </View>
       )}
 
+      {/* STEP 3: Tipo de Treino */}
       {currentStep === 3 && clienteSelecionado && (
         <View style={localStyles.card}>
           <Text style={localStyles.sectionTitle}>3. Tipo de Treino</Text>
-          <View style={{ gap: 10 }}>
-            <BotaoPilula title="Criar um Treino do Zero" icon="plus-circle" onPress={() => { setIsCreatingFromScratch(true); setSelectedWorkoutTemplate(null); setCurrentStep(4); }} />
+          <View style={{ gap: 12 }}>
+            <BotaoPilula title="Criar do Zero" icon="plus-circle" onPress={() => { setIsCreatingFromScratch(true); setSelectedWorkoutTemplate(null); setCurrentStep(4); }} />
             <BotaoPilula title="Usar Modelo Existente" icon="layers" variant="outline" onPress={() => setIsTemplateSelectionModalVisible(true)} />
-            <BotaoPilula title="Gerar com AI (beta)" icon="sparkles" variant="outline" onPress={() => setAIModalVisible(true)} />
+            <View style={localStyles.aiCTA}>
+              <Text style={localStyles.aiCTATitle}>Gerar com AI (beta)</Text>
+              <Text style={localStyles.aiCTASubtitle}>Cria rapidamente um plano baseado no objetivo, nível e equipamentos.</Text>
+              <BotaoPilula title="Configurar & Gerar" icon="sparkles" variant="primary" onPress={() => setAIModalVisible(true)} />
+            </View>
           </View>
         </View>
       )}
 
+      {/* STEP 4: Detalhes do Treino */}
       {currentStep === 4 && clienteSelecionado && dataSelecionada && horaSelecionada && (isCreatingFromScratch || selectedWorkoutTemplate) && (
         <View style={localStyles.card}>
           <Text style={localStyles.sectionTitle}>4. Detalhes do Treino</Text>
@@ -199,9 +395,16 @@ const MemoizedListHeader = React.memo((props) => {
             <Feather name="tag" size={20} color={Colors.placeholder} style={localStyles.inputIconLeft} />
             <TextInput style={localStyles.input} placeholder="Nome do Treino" placeholderTextColor={Colors.placeholder} value={nome} onChangeText={setNome} />
           </View>
-          <View style={localStyles.inputContainer}>
+          <View style={[localStyles.inputContainer, { minHeight: 120 }]}>
             <Feather name="align-left" size={20} color={Colors.placeholder} style={localStyles.inputIconLeft} />
-            <TextInput style={[localStyles.input, localStyles.multilineInput]} placeholder="Descrição (opcional)" placeholderTextColor={Colors.placeholder} value={descricao} onChangeText={setDescricao} multiline />
+            <TextInput
+              style={[localStyles.input, localStyles.multilineInput]}
+              placeholder="Descrição / notas para a AI (objetivos, limitações, preferências...)"
+              placeholderTextColor={Colors.placeholder}
+              value={descricao}
+              onChangeText={setDescricao}
+              multiline
+            />
           </View>
           <Text style={localStyles.inputLabel}>Categoria:</Text>
           <Pressable onPress={() => setIsCategoryModalVisible(true)} style={localStyles.pickerButton}>
@@ -212,6 +415,7 @@ const MemoizedListHeader = React.memo((props) => {
         </View>
       )}
 
+      {/* STEP 5: Exercícios */}
       {currentStep === 5 && clienteSelecionado && (isCreatingFromScratch || selectedWorkoutTemplate) && (
         <View style={localStyles.card}>
           <Text style={localStyles.sectionTitle}>5. Exercícios do Treino</Text>
@@ -233,7 +437,6 @@ const MemoizedListHeader = React.memo((props) => {
     </View>
   );
 });
-
 /* ---------- Componente principal ---------- */
 export default function CriarTreinosScreen() {
   const [clientes, setClientes] = useState([]);
@@ -277,9 +480,6 @@ export default function CriarTreinosScreen() {
   const [novoExModal, setNovoExModal] = useState(false);
   const [novoEx, setNovoEx] = useState({ nome_en:'', nome_pt:'', categoria:'Outro', descricao_breve:'', animacao_url:'', imageUrl:'', equipamentoTxt:'', musculosTxt:'' });
 
-  const toSlug = (s='') => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');
-  const splitList = (txt='') => txt.split(',').map(t=>t.trim()).filter(Boolean);
-
   const today = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   /* ------- Admin ------- */
@@ -296,7 +496,7 @@ export default function CriarTreinosScreen() {
     setAdminInfo({ name:'Visitante', email:'', nome:'Visitante', uid:'unknown' }); return () => {};
   }, []);
 
-  /* ------- Exercícios (nome_en) ------- */
+  /* ------- Exercícios ------- */
   const fetchExercisesFromFirestore = useCallback(() => {
     setLoadingExercises(true);
     const qCol = query(collection(db, 'exercises'), orderBy('nome_en', 'asc'));
@@ -342,7 +542,7 @@ export default function CriarTreinosScreen() {
     return () => { u1&&u1(); u2&&u2(); u3&&u3(); };
   }, [fetchAdminInfo, fetchExercisesFromFirestore, fetchWorkoutTemplates, carregarClientesETreinos]);
 
-  /* ------- Helpers form/agenda ------- */
+  /* ------- Helpers ------- */
   const resetFormStates = useCallback(() => {
     setNome(''); setDescricao(''); setHoraSelecionada(null); setCategoria(''); setClienteSelecionado(null);
     setExercicios([]); setFiltroExercicios(''); setSelectedWorkoutTemplate(null); setIsCreatingFromScratch(false);
@@ -389,24 +589,58 @@ export default function CriarTreinosScreen() {
     return JSON.stringify(norm(arr1))===JSON.stringify(norm(arr2));
   }, []);
 
+  const [lastSeed, setLastSeed] = useState(() => Math.floor(Math.random() * 1e9));
+  const [aiDiagnostics, setAiDiagnostics] = useState({ seed: null, issues: [] });
+
+  const proceedCreate = useCallback(async ({
+    treinoDataToSave, tipoAgendamento, dataSelecionadaParam, horaSelecionadaParam
+  }) => {
+    const [y,m,d] = dataSelecionadaParam.split('-').map(Number);
+    const dataHora = new Date(y, m-1, d, horaSelecionadaParam.getHours(), horaSelecionadaParam.getMinutes());
+
+    await criarTreinoParaCliente({
+      userId: clienteSelecionado.id, ...treinoDataToSave,
+      data: Timestamp.fromDate(dataHora), criadoEm: Timestamp.now(),
+      criadoPor: adminInfo?.nome || adminInfo?.name || 'Admin', status: 'agendado'
+    });
+
+    const agendaRef = doc(db, 'agenda', dataSelecionadaParam);
+    const snap = await getDoc(agendaRef); let arr = [];
+    if (snap.exists()) arr = (snap.data().treinos||[]).filter(Boolean);
+    const mapped = (treinoDataToSave.templateExercises || treinoDataToSave.customExercises || []);
+    const novo = {
+      id: gerarIDUnico(), clienteId: clienteSelecionado.id, clienteNome: clienteSelecionado.name || clienteSelecionado.nome || 'Cliente',
+      nomeTreino: treinoDataToSave.nome, categoria: treinoDataToSave.categoria, descricao: treinoDataToSave.descricao,
+      dataAgendada: dataSelecionadaParam, hora: horaSelecionadaParam.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
+      tipoAgendamento, ...(tipoAgendamento==='modeloTreino'
+        ? { templateId:treinoDataToSave.templateId, templateName:treinoDataToSave.templateName, templateDescription:treinoDataToSave.templateDescription, templateExercises:mapped }
+        : { customExercises:mapped })
+    };
+    await setDoc(agendaRef, { treinos:[...arr, novo] }, { merge:true });
+
+    Alert.alert('Sucesso','✅ Treino agendado com sucesso!');
+    const listaTreinosAtualizada = await buscarTodosTreinosComNomes(); setTreinos(listaTreinosAtualizada);
+    limparFormulario(); setDataSelecionada('');
+  }, [clienteSelecionado, adminInfo, limparFormulario]);
+
   const handleCriarTreino = useCallback(async () => {
     if (!clienteSelecionado || !dataSelecionada || !horaSelecionada) return Alert.alert('Campos Obrigatórios', 'Selecione cliente, data e hora.');
     if (!nome.trim()) return Alert.alert('Campos Obrigatórios', 'Dê um nome ao agendamento.');
     if (!categoria.trim()) return Alert.alert('Campos Obrigatórios', 'Selecione a categoria.');
     if (!exercicios.length) return Alert.alert('Campos Obrigatórios', 'Adicione pelo menos um exercício.');
     for (const ex of exercicios) {
-      if (!ex.name.trim()) return Alert.alert('Campo Obrigatório', 'Todos os exercícios precisam de nome.');
-      if (!ex.setDetails.length) return Alert.alert('Campo Obrigatório', `O exercício "${ex.name}" precisa de pelo menos uma série.`);
+      if (!ex.name?.trim()) return Alert.alert('Campo Obrigatório', 'Todos os exercícios precisam de nome.');
+      if (!ex.setDetails?.length) return Alert.alert('Campo Obrigatório', `O exercício "${ex.name}" precisa de pelo menos uma série.`);
     }
 
     const mapped = exercicios.map(ex=>({
       exerciseId:ex.id||null, exerciseName:ex.name,
-      sets: ex.setDetails.map(s=>({ type:s.seriesType||'custom', reps:s.reps||'', tempo:s.tempo||'', peso:s.peso||'', inclinacao:s.inclinacao||'', distancia:s.distancia||'', ritmo:s.ritmo||'', descanso:s.descanso||'', notas:s.notas||'', cadencia:s.cadencia||'', })),
+      sets: (ex.setDetails||[]).map(s=>({ type:s.seriesType||'custom', reps:s.reps||'', tempo:s.tempo||'', peso:s.peso||'', inclinacao:s.inclinacao||'', distancia:s.distancia||'', ritmo:s.ritmo||'', descanso:s.descanso||'', notas:s.notas||'', cadencia:s.cadencia||'', })),
       notes: ex.notes||'', description:ex.description||'', category:ex.category||'',
       targetMuscles:ex.targetMuscles||[], equipment:ex.equipment||[], animationUrl:ex.animationUrl||'', imageUrl:ex.imageUrl||'',
     }));
 
-    const isExactTemplate = selectedWorkoutTemplate && areExercisesIdentical(exercicios, selectedWorkoutTemplate.exercises||[]);
+    const isExactTemplate = selectedWorkoutTemplate && areExercisesIdentical(exercicios, (selectedWorkoutTemplate.exercises||[]));
     const treinoDataToSave = isExactTemplate ? {
       nome:nome.trim(), descricao:descricao.trim(), categoria,
       templateId:selectedWorkoutTemplate.id, templateName:selectedWorkoutTemplate.name, templateDescription:selectedWorkoutTemplate.description, templateExercises:mapped,
@@ -415,41 +649,53 @@ export default function CriarTreinosScreen() {
     };
     const tipoAgendamento = isExactTemplate ? 'modeloTreino' : 'treinoCompleto';
 
-    const [y,m,d] = dataSelecionada.split('-').map(Number);
-    const dataHora = new Date(y, m-1, d, horaSelecionada.getHours(), horaSelecionada.getMinutes());
+    if (aiDiagnostics.issues?.length) {
+      return Alert.alert(
+        'Validação do plano',
+        `Foram detetadas ${aiDiagnostics.issues.length} questão(ões):\n• ${aiDiagnostics.issues.join('\n• ')}\n\nRevê o plano ou continua mesmo assim.`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Continuar mesmo assim', style: 'destructive', onPress: async () => {
+              try {
+                await proceedCreate({ treinoDataToSave, tipoAgendamento, dataSelecionadaParam: dataSelecionada, horaSelecionadaParam: horaSelecionada });
+              } catch (e) { console.error(e); Alert.alert('Erro','Falha ao criar/agendar treino.'); }
+            }
+          }
+        ]
+      );
+    }
 
     try {
-      await criarTreinoParaCliente({ userId:clienteSelecionado.id, ...treinoDataToSave, data:Timestamp.fromDate(dataHora), criadoEm:Timestamp.now(), criadoPor:adminInfo?.nome || adminInfo?.name || 'Admin', status:'agendado' });
-
-      const agendaRef = doc(db, 'agenda', dataSelecionada);
-      const snap = await getDoc(agendaRef); let arr = [];
-      if (snap.exists()) arr = (snap.data().treinos||[]).filter(Boolean);
-      const novo = {
-        id:gerarIDUnico(), clienteId:clienteSelecionado.id, clienteNome:clienteSelecionado.name || clienteSelecionado.nome || 'Cliente',
-        nomeTreino:treinoDataToSave.nome, categoria:treinoDataToSave.categoria, descricao:treinoDataToSave.descricao,
-        dataAgendada:dataSelecionada, hora:horaSelecionada.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), tipoAgendamento,
-        ...(tipoAgendamento==='modeloTreino'?{ templateId:treinoDataToSave.templateId, templateName:treinoDataToSave.templateName, templateDescription:treinoDataToSave.templateDescription, templateExercises:mapped }:{ customExercises:mapped }),
-      };
-      await setDoc(agendaRef, { treinos:[...arr, novo] }, { merge:true });
-
-      Alert.alert('Sucesso','✅ Treino agendado com sucesso!');
-      const listaTreinosAtualizada = await buscarTodosTreinosComNomes(); setTreinos(listaTreinosAtualizada);
-      limparFormulario(); setDataSelecionada('');
+      await proceedCreate({ treinoDataToSave, tipoAgendamento, dataSelecionadaParam: dataSelecionada, horaSelecionadaParam: horaSelecionada });
     } catch (e) { console.error(e); Alert.alert('Erro','Falha ao criar/agendar treino.'); }
-  }, [clienteSelecionado, dataSelecionada, horaSelecionada, nome, descricao, categoria, exercicios, selectedWorkoutTemplate, adminInfo, areExercisesIdentical, limparFormulario]);
+  }, [clienteSelecionado, dataSelecionada, horaSelecionada, nome, descricao, categoria, exercicios, selectedWorkoutTemplate, areExercisesIdentical, aiDiagnostics, proceedCreate]);
 
-  const onChangeHora = useCallback((_, selectedTime) => {
-    setMostrarPickerHora(Platform.OS==='ios');
+  // ✅ não reabrir o picker depois de escolher
+  const onChangeHora = useCallback((event, selectedTime) => {
+    if (Platform.OS === 'android') {
+      if (event?.type !== 'set') { setMostrarPickerHora(false); return; }
+      setMostrarPickerHora(false);
+    }
     if (selectedTime) {
-      const isToday = dataSelecionada===today; const now = new Date();
-      if (isToday && selectedTime < now) { Alert.alert('Hora inválida','Não pode agendar no passado.'); setHoraSelecionada(null); }
-      else setHoraSelecionada(selectedTime);
-    } else if (Platform.OS==='android') setMostrarPickerHora(false);
+      const isToday = dataSelecionada === today;
+      const now = new Date();
+      if (isToday && selectedTime < now) {
+        Alert.alert('Hora inválida', 'Não pode agendar no passado.');
+        setHoraSelecionada(null);
+      } else {
+        setHoraSelecionada(selectedTime);
+      }
+    }
   }, [dataSelecionada, today]);
 
-  const selecionarCliente = useCallback((c)=>{ setClienteSelecionado(c); setModalClientesVisible(false); setCurrentStep(2); }, []);
-  const abrirModalSelecionarExercicio = useCallback((i)=>{ setExercicioSelecionadoIndex(i); setModalListaExerciciosVisible(true); setFiltroExercicios(''); }, []);
-  const selecionarExercicioDaLista = useCallback((ex)=>{ if(exercicioSelecionadoIndex===null) return;
+  const selecionarCliente = useCallback((c)=>{
+    setClienteSelecionado(c);
+    setModalClientesVisible(false);
+    setCurrentStep(2);
+  }, []);
+
+  const selecionarExercicioDaLista = useCallback((ex)=>{
+    if(exercicioSelecionadoIndex===null) return;
     setExercicios(prev=>{ const x=[...prev]; x[exercicioSelecionadoIndex]={...ex, setDetails:[], notes:'', customExerciseId:x[exercicioSelecionadoIndex]?.customExerciseId||gerarIDUnico(), id:ex.id||'', isExpanded:true}; return x; });
     setModalListaExerciciosVisible(false); setExercicioSelecionadoIndex(null); setFiltroExercicios('');
   }, [exercicioSelecionadoIndex]);
@@ -511,20 +757,19 @@ export default function CriarTreinosScreen() {
       if (eqArr.length) { const es = new Set(ex.equipment||[]); if (!eqArr.some(e => es.has(e))) return false; }
       return true;
     });
-    res.sort((a,b)=> sortBy==='name' ? (a.name||'').localeCompare(b.name||'') : (a.category||'').localeCompare(b.category||''));
-    return res;
+    res.sort((a,b)=> sortBy==='name' ? (a.name||'').localeCompare(b.name||'') : (a.category||'').localeCompare(b.category||'')); return res;
   }, [listaExerciciosEstado, filtroExercicios, hasVideoOnly, catSel, musSel, eqSel, sortBy]);
 
   /* ======================= AI (local) ======================= */
   const [aiModalVisible, setAIModalVisible] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiParams, setAiParams] = useState({
-    objetivo: 'Hipertrofia',   // Hipertrofia | Força | Emagrecimento | Mobilidade
-    nivel: 'Intermédio',       // Iniciante | Intermédio | Avançado
+    objetivo: 'Hipertrofia',
+    nivel: 'Intermédio',
     sessoesSemana: 3,
     exerciciosPorSessao: 6,
-    focoMuscular: new Set(),   // de uniqueMuscles
-    equipamento: new Set(),    // de uniqueEquipment
+    focoMuscular: new Set(),
+    equipamento: new Set(),
     restricoes: '',
     categoriaTreino: 'Força',
     duracaoMin: 60,
@@ -533,312 +778,299 @@ export default function CriarTreinosScreen() {
   const updateAi = (k, v) => setAiParams(prev => ({ ...prev, [k]: v }));
   const toggleSetAi = (key, value) => setAiParams(prev => { const s = new Set(prev[key]); s.has(value) ? s.delete(value) : s.add(value); return { ...prev, [key]: s }; });
 
-  const presetsByGoal = {
-    Hipertrofia: { seriesType: 'reps_and_load', reps: '8-12', sets: 3, descanso: '60-90s' },
-    Força: { seriesType: 'reps_and_load', reps: '3-6', sets: 4, descanso: '120-180s' },
-    Emagrecimento: { seriesType: 'reps_and_time', reps: '12-15', sets: 3, descanso: '30-60s' },
-    Mobilidade: { seriesType: 'reps_and_time', reps: '10-12', sets: 2, descanso: '20-40s' },
-  };
-  const volumeByLevel = { Iniciante: 0.85, 'Intermédio': 1, 'Avançado': 1.2 };
-
-  const shuffle = (arr) => [...arr].sort(() => Math.random() - 0.5);
-  const pickN = (arr, n) => arr.slice(0, Math.max(0, n));
-
+  const [exerciciosStateVersion, setExerciciosStateVersion] = useState(0);
   const gerarTreinoComAI = useCallback(() => {
     setAiLoading(true);
     try {
-      const { objetivo, nivel, exerciciosPorSessao, focoMuscular, equipamento, incluirCardio, categoriaTreino } = aiParams;
-      const targetMuscles = [...focoMuscular];
-      const allowedEquip = equipamento.size ? new Set([...equipamento]) : null;
+      const seed = lastSeed;
+      const { objetivo, nivel, exerciciosPorSessao, focoMuscular, equipamento, incluirCardio, categoriaTreino, restricoes } = aiParams;
 
-      // 1) Filtrar candidatos da biblioteca
-      let candidatos = listaExerciciosEstado.filter(ex => {
-        if (categoriaTreino && ex.category && categoriaTreino !== 'Outro' && ex.category !== categoriaTreino) return false;
-        if (allowedEquip) {
-          const exEq = new Set(ex.equipment || []);
-          if (![...allowedEquip].some(eq => exEq.has(eq))) return false;
-        }
-        if (targetMuscles.length) {
-          const ms = new Set(ex.targetMuscles || []);
-          if (![...targetMuscles].some(m => ms.has(m))) return false;
-        }
-        return true;
+      const { plan, issues, seedUsed } = generateWorkout({
+        objetivo, nivel, exerciciosPorSessao,
+        focoMuscular:[...focoMuscular], equipamento:[...equipamento],
+        incluirCardio, categoriaTreino, restricoes,
+        listaExercicios: listaExerciciosEstado,
+        seed
       });
-
-      if (!candidatos.length) candidatos = [...listaExerciciosEstado]; // fallback
-
-      // 2) Preferir exercícios com vídeo
-      const comVideo = candidatos.filter(e => !!e.animationUrl);
-      const base = comVideo.length ? comVideo : candidatos;
-
-      // 3) Diversidade por músculo alvo
-      let agrupados = {};
-      base.forEach(ex => {
-        const key = (ex.targetMuscles && ex.targetMuscles[0]) || 'geral';
-        if (!agrupados[key]) agrupados[key] = [];
-        agrupados[key].push(ex);
-      });
-
-      let pool = [];
-      Object.values(agrupados).forEach(arr => pool.push(...pickN(shuffle(arr), Math.ceil(exerciciosPorSessao / Object.keys(agrupados).length))));
-      if (pool.length < exerciciosPorSessao) pool = pool.concat(pickN(shuffle(base), exerciciosPorSessao - pool.length));
-      pool = pickN(shuffle(pool), exerciciosPorSessao);
-
-      // 4) Aplicar presets de séries
-      const preset = presetsByGoal[objetivo] || presetsByGoal.Hipertrofia;
-      const volFactor = volumeByLevel[nivel] || 1;
-
-      const gerados = pool.map(ex => ({
-        id: ex.id,
-        name: ex.name,
-        description: ex.description,
-        category: ex.category,
-        targetMuscles: ex.targetMuscles,
-        equipment: ex.equipment,
-        animationUrl: ex.animationUrl,
-        imageUrl: ex.imageUrl,
-        notes: '',
-        customExerciseId: gerarIDUnico(),
-        isExpanded: true,
-        setDetails: Array.from({ length: Math.max(2, Math.round(preset.sets * volFactor)) }).map(() => ({
-          id: gerarIDUnico(),
-          seriesType: preset.seriesType,
-          reps: preset.seriesType.includes('reps') ? preset.reps : '',
-          tempo: preset.seriesType.includes('time') ? '30-45s' : '',
-          peso: preset.seriesType === 'reps_and_load' ? '' : '',
-          inclinacao: '',
-          distancia: '',
-          ritmo: objetivo === 'Emagrecimento' ? 'RPE7-8' : '',
-          descanso: preset.descanso,
-          notas: '',
-          cadencia: '',
-        })),
-      }));
-
-      // Cardio opcional
-      if (incluirCardio) {
-        const cardioCands = listaExerciciosEstado.filter(e => (e.category || '').toLowerCase().includes('cardio'));
-        if (cardioCands.length) {
-          const c = cardioCands[0];
-          gerados.push({
-            id: c.id, name: c.name, description: c.description, category: c.category,
-            targetMuscles: c.targetMuscles, equipment: c.equipment, animationUrl: c.animationUrl, imageUrl: c.imageUrl,
-            notes: '', customExerciseId: gerarIDUnico(), isExpanded: true,
-            setDetails: [{ id: gerarIDUnico(), seriesType: 'time_and_incline', reps: '', tempo: '10-15m', peso: '', inclinacao: 'leve', distancia: '', ritmo: 'confortável', descanso: '—', notas: '', cadencia: '' }],
-          });
-        }
-      }
 
       setIsCreatingFromScratch(true);
       setSelectedWorkoutTemplate(null);
-      setCategoria(aiParams.categoriaTreino || 'Força');
-      setNome(prev => prev || `Treino ${objetivo}`);
-      setDescricao(prev => prev || `Gerado com AI: objetivo ${objetivo}, nível ${nivel}.`);
-      setCurrentStep(4);
-      // vai já para o passo 5 com os exercícios criados
-      setExercicios(gerados);
+      setCategoria(categoriaTreino || 'Força');
+      setNome((prev) => prev || `Treino ${objetivo}`);
+      setDescricao((prev) => prev || `Gerado com AI: objetivo ${objetivo}, nível ${nivel}.`);
+      setExercicios(plan);
+      setExerciciosStateVersion(v=>v+1);
       setCurrentStep(5);
       setAIModalVisible(false);
+
+      setAiDiagnostics({ seed: seedUsed, issues });
     } catch (e) {
       console.error(e);
       Alert.alert('Erro', 'Não consegui gerar o treino automaticamente.');
     } finally {
       setAiLoading(false);
     }
-  }, [aiParams, listaExerciciosEstado]);
+  }, [aiParams, listaExerciciosEstado, lastSeed]);
 
   /* ---------- UI ---------- */
   return (
-    <KeyboardAvoidingView style={localStyles.container} behavior={Platform.OS==='ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS==='ios' ? 0 : 20}>
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <View style={localStyles.safeArea}>
-          <AppHeader title="Criar e Agendar Treino" subtitle="" showBackButton={currentStep>1} onBackPress={handleGoBack} showMenu={false} showBell={false} statusBarStyle="light-content" />
+    <KeyboardAvoidingView
+      style={localStyles.container}
+      behavior={Platform.OS==='ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS==='ios' ? 0 : 20}
+    >
+      <View style={localStyles.safeArea}>
+        <AppHeader title="Criar e Agendar Treino" subtitle="" showBackButton={currentStep>1} onBackPress={handleGoBack} showMenu={false} showBell={false} statusBarStyle="light-content" />
 
-          {loadingExercises && (
-            <View style={localStyles.loadingOverlay}>
-              <ActivityIndicator size="large" color={Colors.primary} />
-              <Text style={localStyles.loadingText}>A carregar dados...</Text>
-            </View>
-          )}
+        {loadingExercises && (
+          <View style={localStyles.loadingOverlay}>
+            <ActivityIndicator size="large" color={Colors.primary} />
+            <Text style={localStyles.loadingText}>A carregar dados...</Text>
+          </View>
+        )}
 
-          <FlatList
-            data={exercicios}
-            renderItem={({ item, index }) => (
-              <View style={localStyles.exercicioCard}>
-                <View style={localStyles.exercicioHeader}>
-                  <Pressable onPress={()=>toggleExpandExercicio(index)} style={{ flexDirection:'row', alignItems:'center', flex:1 }}>
-                    <Feather name={item.isExpanded ? 'chevron-up' : 'chevron-down'} size={22} color={Colors.primary} />
-                    <Text style={localStyles.exercicioNome}>{item.name || 'Novo Exercício'}</Text>
-                  </Pressable>
-                  <BotaoPilula title="" icon="x" variant="outline" size="sm" onPress={()=>removerExercicio(index)} />
-                </View>
-
-                {item.isExpanded && (
-                  <View style={localStyles.exercicioDetails}>
-                    <BotaoPilula title={item.name ? 'Trocar exercício' : 'Selecionar Exercício da Biblioteca'} icon="search" onPress={()=>{ setExercicioSelecionadoIndex(index); setModalListaExerciciosVisible(true); setFiltroExercicios(''); }} style={{ marginBottom:12, alignSelf:'flex-start' }} />
-
-                    {!!item.description && (<View style={localStyles.detailRow}><Feather name="info" size={16} color={Colors.textSecondary} /><Text style={localStyles.detailText}>{item.description}</Text></View>)}
-                    {!!(item.targetMuscles||[]).length && (<View style={localStyles.detailRow}><FontAwesome5 name="dumbbell" size={16} color={Colors.textSecondary} /><Text style={localStyles.detailText}>Músculos-alvo: {item.targetMuscles.join(', ')}</Text></View>)}
-                    {!!(item.equipment||[]).length && (<View style={localStyles.detailRow}><Feather name="tool" size={16} color={Colors.textSecondary} /><Text style={localStyles.detailText}>Equipamento: {item.equipment.join(', ')}</Text></View>)}
-
-                    <InlineWorkoutDetailsInput placeholder="Observações do Exercício (opcional)" value={item.notes} onChangeText={(t)=>atualizarExercicio(index,'notes',t)} multiline icon="message-square" style={localStyles.inlineNotesInput} />
-
-                    <View style={localStyles.seriesContainer}>
-                      {(item.setDetails||[]).map((set, setIndex) => {
-                        const currentType = set?.seriesType || 'reps_and_load';
-                        const fields = seriesTypes[currentType]?.fields || [];
-                        const icons = seriesTypes[currentType]?.icons || [];
-                        return (
-                          <View key={set?.id || setIndex} style={localStyles.setCard}>
-                            <View style={localStyles.setCardHeader}>
-                              <Text style={localStyles.setCardTitle}>Série {setIndex+1}</Text>
-                              <BotaoPilula title="" icon="minus-circle" variant="outline" size="sm" onPress={()=>removerSet(index,setIndex)} />
-                            </View>
-                            <View style={localStyles.pickerContainerSet}>
-                              <Picker selectedValue={currentType} onValueChange={(v)=>atualizarSet(index,setIndex,'seriesType',v)} style={localStyles.pickerSet} dropdownIconColor={Colors.textPrimary}>
-                                {Object.keys(seriesTypes).map(t=><Picker.Item key={t} label={seriesTypes[t].label} value={t} />)}
-                              </Picker>
-                            </View>
-                            <View style={localStyles.setDetailsGrid}>
-                              {fields.map((f,i)=>(
-                                <View key={f} style={localStyles.setDetailField}>
-                                  {(icons[i]==='dumbbell'?<FontAwesome5 name="dumbbell" size={16} color={Colors.placeholder} />:<Feather name={icons[i]} size={16} color={Colors.placeholder} />)}
-                                  <TextInput style={localStyles.setDetailInput} placeholder={f[0].toUpperCase()+f.slice(1)} placeholderTextColor={Colors.placeholder} value={String(set[f]||'')} onChangeText={(v)=>atualizarSet(index,setIndex,f,v)} keyboardType={['reps','peso','inclinacao','distancia','cadencia'].includes(f)?'numeric':'default'} />
-                                </View>
-                              ))}
-                            </View>
-                          </View>
-                        );
-                      })}
-                      <BotaoPilula title="Adicionar Série" icon="plus" variant="outline" onPress={()=>adicionarNovaSerie(index,'reps_and_load')} style={{ alignSelf:'flex-start', marginTop:4 }} />
-                    </View>
-                  </View>
-                )}
-              </View>
+        {/* [AI] Banner seed/validacao + regeneração */}
+        {currentStep===5 && (
+          <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
+            {!!aiDiagnostics.seed && (
+              <Text style={{ textAlign:'center', color:Colors.textSecondary, marginBottom:8 }}>
+                Seed AI: {aiDiagnostics.seed}
+              </Text>
             )}
-            keyExtractor={(item) => item.customExerciseId || item.id}
-            contentContainerStyle={localStyles.flatListContent}
-            ListHeaderComponent={
-              <MemoizedListHeader
-                currentStep={currentStep} setCurrentStep={setCurrentStep} handleGoBack={handleGoBack}
-                clienteSelecionado={clienteSelecionado} setModalClientesVisible={setModalClientesVisible} obterNomeCliente={obterNomeCliente}
-                dataSelecionada={dataSelecionada} setDataSelecionada={setDataSelecionada} markedDatesForCalendar={markedDatesForCalendar}
-                mostrarPickerHora={mostrarPickerHora} setMostrarPickerHora={setMostrarPickerHora} horaSelecionada={horaSelecionada} onChangeHora={onChangeHora}
-                isCreatingFromScratch={isCreatingFromScratch} setIsCreatingFromScratch={setIsCreatingFromScratch} setSelectedWorkoutTemplate={setSelectedWorkoutTemplate} setIsTemplateSelectionModalVisible={setIsTemplateSelectionModalVisible}
-                nome={nome} setNome={setNome} descricao={descricao} setDescricao={setDescricao} categoria={categoria} setCategoria={setCategoria}
-                saveAsTemplate={saveAsTemplate} setSaveAsTemplate={setSaveAsTemplate} newTemplateName={newTemplateName} setNewTemplateName={setNewTemplateName} newTemplateDescription={newTemplateDescription} setNewTemplateDescription={setNewTemplateDescription}
-                adicionarExercicio={adicionarExercicio} selectedWorkoutTemplate={selectedWorkoutTemplate} isCategoryModalVisible={isCategoryModalVisible} setIsCategoryModalVisible={setIsCategoryModalVisible}
-                minDate={today} minDateTime={minDateTime} handleGoToStep5={handleGoToStep5} setAIModalVisible={setAIModalVisible}
-              />
-            }
-            keyboardShouldPersistTaps="handled"
-          />
-
-          {currentStep===5 && exercicios.length>0 && clienteSelecionado && (isCreatingFromScratch || selectedWorkoutTemplate) && (
-            <View style={localStyles.bottomBar}>
-              <BotaoPilula title="Criar e Agendar Treino" icon="check-circle" onPress={handleCriarTreino} style={{ width:'100%' }} />
-            </View>
-          )}
-
-          {/* ---------- Modal Selecionar Cliente ---------- */}
-          <Modal animationType="slide" transparent visible={modalClientesVisible} onRequestClose={()=>setModalClientesVisible(false)}>
-            <View style={localStyles.centeredView}>
-              <View style={localStyles.modalView}>
-                <View style={localStyles.modalHeader}><Text style={localStyles.modalTitle}>Selecionar Cliente</Text><Pressable onPress={()=>setModalClientesVisible(false)}><Feather name="x" size={22} color={Colors.textPrimary} /></Pressable></View>
-                <FlatList data={clientes} keyExtractor={i=>i.id} renderItem={({item})=>(
-                  <Pressable style={localStyles.modalItem} onPress={()=>{ setClienteSelecionado(item); setModalClientesVisible(false); setCurrentStep(2); }}>
-                    <Text style={localStyles.modalItemText}>{obterNomeCliente(item)}</Text>
-                  </Pressable>
-                )} ListEmptyComponent={()=> <Text style={localStyles.noItemsText}>Nenhum cliente encontrado.</Text>} />
-                <BotaoPilula title="Fechar" icon="x" variant="outline" onPress={()=>setModalClientesVisible(false)} style={{ marginTop:10 }} />
+            {aiDiagnostics.issues?.length>0 ? (
+              <View style={{ backgroundColor:'#FEF2F2', borderColor:'#FECACA', borderWidth:1, borderRadius:12, padding:10, marginBottom:8 }}>
+                <Text style={{ color:'#991B1B', fontWeight:'700', marginBottom:4 }}>Avisos de validação</Text>
+                {aiDiagnostics.issues.map((i,idx)=><Text key={idx} style={{ color:'#991B1B' }}>• {i}</Text>)}
               </View>
+            ) : (exercicios.length>0 && (
+              <View style={{ alignItems:'center', marginBottom:8 }}>
+                <Text style={{ color:Colors.success, fontWeight:'800' }}>Plano verificado ✓</Text>
+              </View>
+            ))}
+            <View style={{ flexDirection:'row', gap:8, justifyContent:'center' }}>
+              <BotaoPilula title="Regenerar (mesma seed)" icon="refresh-ccw" variant="outline" onPress={()=>gerarTreinoComAI()} />
+              <BotaoPilula title="Regenerar (nova seed)" icon="shuffle" variant="outline" onPress={()=>{ setLastSeed(Math.floor(Math.random()*1e9)); gerarTreinoComAI(); }} />
             </View>
-          </Modal>
+          </View>
+        )}
+        <FlatList
+          data={exercicios}
+          renderItem={({ item, index }) => (
+            <View style={localStyles.exercicioCard}>
+              <View style={localStyles.exercicioHeader}>
+                <Pressable onPress={()=>toggleExpandExercicio(index)} style={{ flexDirection:'row', alignItems:'center', flex:1 }}>
+                  <Feather name={item.isExpanded ? 'chevron-up' : 'chevron-down'} size={22} color={Colors.primary} />
+                  <Text style={localStyles.exercicioNome}>{item.name || 'Novo Exercício'}</Text>
+                </Pressable>
+                <BotaoPilula title="" icon="x" variant="outline" size="sm" onPress={()=>removerExercicio(index)} />
+              </View>
 
-          {/* ---------- Modal Biblioteca de Exercícios (com filtros compactáveis) ---------- */}
-          <Modal animationType="slide" transparent visible={modalListaExerciciosVisible} onRequestClose={()=>setModalListaExerciciosVisible(false)}>
-            <View style={localStyles.centeredView}>
-              <View style={localStyles.modalView}>
-                <View style={localStyles.modalHeader}><Text style={localStyles.modalTitle}>Biblioteca de Exercícios</Text><Pressable onPress={()=>setModalListaExerciciosVisible(false)}><Feather name="x" size={22} color={Colors.textPrimary} /></Pressable></View>
+              {item.isExpanded && (
+                <View style={localStyles.exercicioDetails}>
+                  <BotaoPilula title={item.name ? 'Trocar exercício' : 'Selecionar Exercício da Biblioteca'} icon="search" onPress={()=>{ setExercicioSelecionadoIndex(index); setModalListaExerciciosVisible(true); setFiltroExercicios(''); }} style={{ marginBottom:12, alignSelf:'flex-start' }} />
 
-                <TextInput style={localStyles.searchBar} placeholder="Pesquisar (nome em inglês)..." placeholderTextColor={Colors.placeholder} value={filtroExercicios} onChangeText={setFiltroExercicios} />
+                  {!!item.description && (<View style={localStyles.detailRow}><Feather name="info" size={16} color={Colors.textSecondary} /><Text style={localStyles.detailText}>{item.description}</Text></View>)}
+                  {!!(item.targetMuscles||[]).length && (<View style={localStyles.detailRow}><FontAwesome5 name="dumbbell" size={16} color={Colors.textSecondary} /><Text style={localStyles.detailText}>Músculos-alvo: {item.targetMuscles.join(', ')}</Text></View>)}
+                  {!!(item.equipment||[]).length && (<View style={localStyles.detailRow}><Feather name="tool" size={16} color={Colors.textSecondary} /><Text style={localStyles.detailText}>Equipamento: {item.equipment.join(', ')}</Text></View>)}
 
-                {/* Barra compacta */}
-                <View style={localStyles.compactBar}>
-                  <Pressable onPress={()=>setFiltersOpen(v=>!v)} style={({pressed})=>[{ flexDirection:'row', alignItems:'center' }, pressed && { opacity:0.9 }]}>
-                    <Feather name="filter" size={16} color={Colors.textPrimary} />
-                    <Text style={{ marginLeft:6, fontWeight:'700', color:Colors.textPrimary }}>Filtros</Text>
-                    {activeCount>0 && <View style={localStyles.badge}><Text style={localStyles.badgeText}>{activeCount}</Text></View>}
-                  </Pressable>
-                  <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
-                    <View style={[localStyles.border,{ height:34, width: 150, overflow:'hidden', backgroundColor:'#F8FAFC' }]}>
-                      <Picker selectedValue={sortBy} onValueChange={setSortBy} style={{ height:34 }}>
-                        <Picker.Item label="Nome (A-Z)" value="name" />
-                        <Picker.Item label="Categoria" value="category" />
-                      </Picker>
+                  {!!item.explicacaoAI?.length && (
+                    <View style={[localStyles.detailRow, { flexWrap:'wrap' }]}>
+                      <Feather name="shield" size={16} color={Colors.textSecondary} />
+                      <Text style={[localStyles.detailText, { fontStyle:'italic' }]}>
+                        {`Motivos: ${item.explicacaoAI.join(' · ')}`}
+                      </Text>
                     </View>
-                    <BotaoPilula title="Limpar" icon="rotate-ccw" variant="outline" size="sm" onPress={clearFilters} />
+                  )}
+                  {typeof item.confidence === 'number' && (
+                    <View style={localStyles.detailRow}>
+                      <Feather name="check-circle" size={16} color={Colors.textSecondary} />
+                      <Text style={localStyles.detailText}>Confiança: {item.confidence}%</Text>
+                    </View>
+                  )}
+
+                  <InlineWorkoutDetailsInput placeholder="Observações do Exercício (opcional)" value={item.notes} onChangeText={(t)=>atualizarExercicio(index,'notes',t)} multiline icon="message-square" style={localStyles.inlineNotesInput} />
+
+                  <View style={localStyles.seriesContainer}>
+                    {(item.setDetails||[]).map((set, setIndex) => {
+                      const currentType = set?.seriesType || 'reps_and_load';
+                      const fields = seriesTypes[currentType]?.fields || [];
+                      const icons = seriesTypes[currentType]?.icons || [];
+                      return (
+                        <View key={set?.id || setIndex} style={localStyles.setCard}>
+                          <View style={localStyles.setCardHeader}>
+                            <Text style={localStyles.setCardTitle}>Série {setIndex+1}</Text>
+                            <BotaoPilula title="" icon="minus-circle" variant="outline" size="sm" onPress={()=>removerSet(index,setIndex)} />
+                          </View>
+                          <View style={localStyles.pickerContainerSet}>
+                            <Picker selectedValue={currentType} onValueChange={(v)=>atualizarSet(index,setIndex,'seriesType',v)} style={localStyles.pickerSet} dropdownIconColor={Colors.textPrimary}>
+                              {Object.keys(seriesTypes).map(t=><Picker.Item key={t} label={seriesTypes[t].label} value={t} />)}
+                            </Picker>
+                          </View>
+                          <View style={localStyles.setDetailsGrid}>
+                            {fields.map((f,i)=>(
+                              <View key={f} style={localStyles.setDetailField}>
+                                {(icons[i]==='dumbbell'?<FontAwesome5 name="dumbbell" size={16} color={Colors.placeholder} />:<Feather name={icons[i]} size={16} color={Colors.placeholder} />)}
+                                <TextInput style={localStyles.setDetailInput} placeholder={f[0].toUpperCase()+f.slice(1)} placeholderTextColor={Colors.placeholder} value={String(set[f]||'')} onChangeText={(v)=>atualizarSet(index,setIndex,f,v)} keyboardType={['reps','peso','inclinacao','distancia','cadencia'].includes(f)?'numeric':'default'} />
+                              </View>
+                            ))}
+                          </View>
+                        </View>
+                      );
+                    })}
+                    <BotaoPilula title="Adicionar Série" icon="plus" variant="outline" onPress={()=>adicionarNovaSerie(index,'reps_and_load')} style={{ alignSelf:'flex-start', marginTop:4 }} />
                   </View>
                 </View>
+              )}
+            </View>
+          )}
+          keyExtractor={(item) => item.customExerciseId || item.id}
+          contentContainerStyle={localStyles.flatListContent}
+          ListHeaderComponent={
+            <MemoizedListHeader
+              currentStep={currentStep} setCurrentStep={setCurrentStep}
+              clienteSelecionado={clienteSelecionado} setModalClientesVisible={setModalClientesVisible}
+              dataSelecionada={dataSelecionada} setDataSelecionada={setDataSelecionada} markedDatesForCalendar={markedDatesForCalendar}
+              mostrarPickerHora={mostrarPickerHora} setMostrarPickerHora={setMostrarPickerHora} horaSelecionada={horaSelecionada} onChangeHora={onChangeHora}
+              isCreatingFromScratch={isCreatingFromScratch} setIsCreatingFromScratch={setIsCreatingFromScratch} setSelectedWorkoutTemplate={setSelectedWorkoutTemplate} setIsTemplateSelectionModalVisible={setIsTemplateSelectionModalVisible}
+              nome={nome} setNome={setNome} descricao={descricao} setDescricao={setDescricao} categoria={categoria} setCategoria={setCategoria}
+              saveAsTemplate={saveAsTemplate} setSaveAsTemplate={setSaveAsTemplate} newTemplateName={newTemplateName} setNewTemplateName={setNewTemplateName} newTemplateDescription={newTemplateDescription} setNewTemplateDescription={setNewTemplateDescription}
+              adicionarExercicio={adicionarExercicio} selectedWorkoutTemplate={selectedWorkoutTemplate} isCategoryModalVisible={isCategoryModalVisible} setIsCategoryModalVisible={setIsCategoryModalVisible}
+              minDate={today} minDateTime={minDateTime} handleGoToStep5={handleGoToStep5} setAIModalVisible={setAIModalVisible}
+            />
+          }
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator
+        />
 
-                {/* Seleções ativas */}
-                {(activeCount>0) && (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical:4 }}>
-                    {[...catSel].map(c=>(
-                      <View key={`c-${c}`} style={localStyles.smallTag}><Feather name="hash" size={12} color={Colors.textSecondary} /><Text style={localStyles.smallTagText}>{c}</Text><Pressable onPress={()=>setCatSel(prev=>{const s=new Set(prev); s.delete(c); return s;})}><Feather name="x" size={12} color={Colors.textSecondary} /></Pressable></View>
-                    ))}
-                    {[...musSel].map(m=>(
-                      <View key={`m-${m}`} style={localStyles.smallTag}><Feather name="activity" size={12} color={Colors.textSecondary} /><Text style={localStyles.smallTagText}>{m}</Text><Pressable onPress={()=>setMusSel(prev=>{const s=new Set(prev); s.delete(m); return s;})}><Feather name="x" size={12} color={Colors.textSecondary} /></Pressable></View>
-                    ))}
-                    {[...eqSel].map(e=>(
-                      <View key={`e-${e}`} style={localStyles.smallTag}><Feather name="tool" size={12} color={Colors.textSecondary} /><Text style={localStyles.smallTagText}>{e}</Text><Pressable onPress={()=>setEqSel(prev=>{const s=new Set(prev); s.delete(e); return s;})}><Feather name="x" size={12} color={Colors.textSecondary} /></Pressable></View>
-                    ))}
-                    {hasVideoOnly && (<View style={localStyles.smallTag}><Feather name="play-circle" size={12} color={Colors.textSecondary} /><Text style={localStyles.smallTagText}>Vídeo</Text><Pressable onPress={()=>setHasVideoOnly(false)}><Feather name="x" size={12} color={Colors.textSecondary} /></Pressable></View>)}
-                  </ScrollView>
-                )}
+        {currentStep===5 && exercicios.length>0 && clienteSelecionado && (isCreatingFromScratch || selectedWorkoutTemplate) && (
+          <View style={localStyles.bottomBar}>
+            <BotaoPilula title="Criar e Agendar Treino" icon="check-circle" onPress={handleCriarTreino} style={{ width:'100%' }} />
+          </View>
+        )}
 
-                {filtersOpen && (
-                  <View style={{ marginBottom: 8 }}>
-                    {!!uniqueCategories.length && (
-                      <View style={{ marginBottom: 6 }}>
-                        <Text style={localStyles.filterLabel}>Categorias</Text>
-                        <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
-                          {uniqueCategories.map(c=>(
-                            <Chip key={c} label={c} selected={catSel.has(c)} onToggle={()=>toggleFromSet(setCatSel)(c)} icon="hash" />
-                          ))}
-                        </View>
-                      </View>
-                    )}
-                    {!!uniqueMuscles.length && (
-                      <View style={{ marginBottom: 6 }}>
-                        <Text style={localStyles.filterLabel}>Músculos-alvo</Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 6 }}>
-                          {uniqueMuscles.map(m=>(
-                            <Chip key={m} label={m} selected={musSel.has(m)} onToggle={()=>toggleFromSet(setMusSel)(m)} icon="activity" />
-                          ))}
-                        </ScrollView>
-                      </View>
-                    )}
-                    {!!uniqueEquipment.length && (
-                      <View style={{ marginBottom: 6 }}>
-                        <Text style={localStyles.filterLabel}>Equipamento</Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 6 }}>
-                          {uniqueEquipment.map(e=>(
-                            <Chip key={e} label={e} selected={eqSel.has(e)} onToggle={()=>toggleFromSet(setEqSel)(e)} icon="tool" />
-                          ))}
-                        </ScrollView>
-                      </View>
-                    )}
-                    <Pressable onPress={()=>setHasVideoOnly(v=>!v)} style={({pressed})=>[{ flexDirection:'row', alignItems:'center', marginTop: 6 }, pressed && { opacity:0.9 }]}>
-                      <Feather name={hasVideoOnly?'check-square':'square'} size={18} color={Colors.textPrimary} />
-                      <Text style={{ marginLeft:8, color:Colors.textPrimary, fontWeight:'600' }}>Apenas com vídeo</Text>
-                    </Pressable>
-                  </View>
-                )}
+        {/* ---------- Modal Selecionar Cliente (apenas nomes) ---------- */}
+        <Modal animationType="slide" transparent visible={modalClientesVisible} onRequestClose={()=>setModalClientesVisible(false)}>
+          <View style={localStyles.centeredView}>
+            <View style={localStyles.modalView}>
+              <View style={localStyles.modalHeader}>
+                <Text style={localStyles.modalTitle}>Selecionar Cliente</Text>
+                <Pressable onPress={()=>setModalClientesVisible(false)}><Feather name="x" size={22} color={Colors.textPrimary} /></Pressable>
+              </View>
 
-                {/* Lista */}
+              <View style={{ flex: 1, minHeight: 140 }}>
                 <FlatList
-                  style={{ marginTop: 10 }}
+                  style={{ flex: 1 }}
+                  contentContainerStyle={{ paddingBottom: 12 }}
+                  data={clientes}
+                  keyExtractor={i=>i.id}
+                  renderItem={({item})=>(
+                    <Pressable style={localStyles.clientRow} onPress={()=>selecionarCliente(item)}>
+                      <View style={localStyles.clientAvatar}>
+                        <Feather name="user" size={16} color="#fff" />
+                      </View>
+                      <Text style={localStyles.clientName} numberOfLines={1}>{obterNomeCliente(item)}</Text>
+                      <Feather name="chevron-right" size={18} color={Colors.textSecondary} />
+                    </Pressable>
+                  )}
+                  ListEmptyComponent={()=> <Text style={localStyles.noItemsText}>Nenhum cliente encontrado.</Text>}
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode="on-drag"
+                  showsVerticalScrollIndicator
+                />
+              </View>
+
+              <BotaoPilula title="Fechar" icon="x" variant="outline" onPress={()=>setModalClientesVisible(false)} style={{ marginTop:10 }} />
+            </View>
+          </View>
+        </Modal>
+
+        {/* ---------- Modal Biblioteca de Exercícios ---------- */}
+        <Modal animationType="slide" transparent visible={modalListaExerciciosVisible} onRequestClose={()=>setModalListaExerciciosVisible(false)}>
+          <View style={localStyles.centeredView}>
+            <View style={localStyles.modalView}>
+              <View style={localStyles.modalHeader}><Text style={localStyles.modalTitle}>Biblioteca de Exercícios</Text><Pressable onPress={()=>setModalListaExerciciosVisible(false)}><Feather name="x" size={22} color={Colors.textPrimary} /></Pressable></View>
+
+              <TextInput style={localStyles.searchBar} placeholder="Pesquisar (nome em inglês)..." placeholderTextColor={Colors.placeholder} value={filtroExercicios} onChangeText={setFiltroExercicios} />
+
+              {/* Barra compacta */}
+              <View style={localStyles.compactBar}>
+                <Pressable onPress={()=>setFiltersOpen(v=>!v)} style={({pressed})=>[{ flexDirection:'row', alignItems:'center' }, pressed && { opacity:0.9 }]}>
+                  <Feather name="filter" size={16} color={Colors.textPrimary} />
+                  <Text style={{ marginLeft:6, fontWeight:'700', color:Colors.textPrimary }}>Filtros</Text>
+                  {activeCount>0 && <View style={localStyles.badge}><Text style={localStyles.badgeText}>{activeCount}</Text></View>}
+                </Pressable>
+                <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+                  <View style={[localStyles.border,{ height:36, width: 160, overflow:'hidden', backgroundColor:'#F8FAFC' }]}>
+                    <Picker selectedValue={sortBy} onValueChange={setSortBy} style={{ height:36 }}>
+                      <Picker.Item label="Nome (A-Z)" value="name" />
+                      <Picker.Item label="Categoria" value="category" />
+                    </Picker>
+                  </View>
+                  <BotaoPilula title="Limpar" icon="rotate-ccw" variant="outline" size="sm" onPress={clearFilters} />
+                </View>
+              </View>
+
+              {/* Seleções ativas */}
+              {(activeCount>0) && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical:4 }}>
+                  {[...catSel].map(c=>(
+                    <View key={`c-${c}`} style={localStyles.smallTag}><Feather name="hash" size={12} color={Colors.textSecondary} /><Text style={localStyles.smallTagText}>{c}</Text><Pressable onPress={()=>setCatSel(prev=>{const s=new Set(prev); s.delete(c); return s;})}><Feather name="x" size={12} color={Colors.textSecondary} /></Pressable></View>
+                  ))}
+                  {[...musSel].map(m=>(
+                    <View key={`m-${m}`} style={localStyles.smallTag}><Feather name="activity" size={12} color={Colors.textSecondary} /><Text style={localStyles.smallTagText}>{m}</Text><Pressable onPress={()=>setMusSel(prev=>{const s=new Set(prev); s.delete(m); return s;})}><Feather name="x" size={12} color={Colors.textSecondary} /></Pressable></View>
+                  ))}
+                  {[...eqSel].map(e=>(
+                    <View key={`e-${e}`} style={localStyles.smallTag}><Feather name="tool" size={12} color={Colors.textSecondary} /><Text style={localStyles.smallTagText}>{e}</Text><Pressable onPress={()=>setEqSel(prev=>{const s=new Set(prev); s.delete(e); return s;})}><Feather name="x" size={12} color={Colors.textSecondary} /></Pressable></View>
+                  ))}
+                  {hasVideoOnly && (<View style={localStyles.smallTag}><Feather name="play-circle" size={12} color={Colors.textSecondary} /><Text style={localStyles.smallTagText}>Vídeo</Text><Pressable onPress={()=>setHasVideoOnly(false)}><Feather name="x" size={12} color={Colors.textSecondary} /></Pressable></View>)}
+                </ScrollView>
+              )}
+
+              {filtersOpen && (
+                <View style={{ marginBottom: 8 }}>
+                  {!!uniqueCategories.length && (
+                    <View style={{ marginBottom: 6 }}>
+                      <Text style={localStyles.filterLabel}>Categorias</Text>
+                      <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
+                        {uniqueCategories.map(c=>(
+                          <Chip key={c} label={c} selected={catSel.has(c)} onToggle={()=>toggleFromSet(setCatSel)(c)} icon="hash" />
+                        ))}
+                      </View>
+                    </View>
+                  )}
+                  {!!uniqueMuscles.length && (
+                    <View style={{ marginBottom: 6 }}>
+                      <Text style={localStyles.filterLabel}>Músculos-alvo</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 6 }}>
+                        {uniqueMuscles.map(m=>(
+                          <Chip key={m} label={m} selected={musSel.has(m)} onToggle={()=>toggleFromSet(setMusSel)(m)} icon="activity" />
+                        ))}
+                      </ScrollView>
+                    </View>
+                  )}
+                  {!!uniqueEquipment.length && (
+                    <View style={{ marginBottom: 6 }}>
+                      <Text style={localStyles.filterLabel}>Equipamento</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 6 }}>
+                        {uniqueEquipment.map(e=>(
+                          <Chip key={e} label={e} selected={eqSel.has(e)} onToggle={()=>toggleFromSet(setEqSel)(e)} icon="tool" />
+                        ))}
+                      </ScrollView>
+                    </View>
+                  )}
+                  <Pressable onPress={()=>setHasVideoOnly(v=>!v)} style={({pressed})=>[{ flexDirection:'row', alignItems:'center', marginTop: 6 }, pressed && { opacity:0.9 }]}>
+                    <Feather name={hasVideoOnly?'check-square':'square'} size={18} color={Colors.textPrimary} />
+                    <Text style={{ marginLeft:8, color:Colors.textPrimary, fontWeight:'600' }}>Apenas com vídeo</Text>
+                  </Pressable>
+                </View>
+              )}
+
+              {/* Lista (com flex para rolar) */}
+              <View style={{ flex: 1, minHeight: 120 }}>
+                <FlatList
+                  style={{ flex: 1, marginTop: 10 }}
+                  contentContainerStyle={{ paddingBottom: 12 }}
                   data={filteredExercises}
                   keyExtractor={item=>item.id}
                   renderItem={({ item }) => {
@@ -860,163 +1092,177 @@ export default function CriarTreinosScreen() {
                     );
                   }}
                   ListEmptyComponent={()=> <Text style={localStyles.noItemsText}>Nenhum exercício encontrado.</Text>}
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode="on-drag"
+                  showsVerticalScrollIndicator
                 />
+              </View>
 
-                <View style={{ flexDirection:'row', justifyContent:'space-between', marginTop: 10 }}>
-                  <BotaoPilula title="Novo exercício" icon="plus" onPress={()=>setNovoExModal(true)} />
-                  <BotaoPilula title="Fechar" icon="x" variant="outline" onPress={()=>setModalListaExerciciosVisible(false)} />
-                </View>
+              <View style={{ flexDirection:'row', justifyContent:'space-between', marginTop: 10 }}>
+                <BotaoPilula title="Novo exercício" icon="plus" onPress={()=>setNovoExModal(true)} />
+                <BotaoPilula title="Fechar" icon="x" variant="outline" onPress={()=>setModalListaExerciciosVisible(false)} />
               </View>
             </View>
-          </Modal>
+          </View>
+        </Modal>
 
-          {/* ---------- Modal: Novo Exercício ---------- */}
-          <Modal animationType="slide" transparent visible={novoExModal} onRequestClose={()=>setNovoExModal(false)}>
-            <View style={localStyles.centeredView}>
-              <View style={localStyles.modalView}>
-                <View style={localStyles.modalHeader}><Text style={localStyles.modalTitle}>Novo Exercício</Text><Pressable onPress={()=>setNovoExModal(false)}><Feather name="x" size={22} color={Colors.textPrimary} /></Pressable></View>
-                <TextInput style={localStyles.searchBar} placeholder="Nome (inglês) *" placeholderTextColor={Colors.placeholder} value={novoEx.nome_en} onChangeText={v=>setNovoEx(p=>({...p,nome_en:v}))} />
-                <TextInput style={localStyles.searchBar} placeholder="Nome (português)" placeholderTextColor={Colors.placeholder} value={novoEx.nome_pt} onChangeText={v=>setNovoEx(p=>({...p,nome_pt:v}))} />
-                <View style={[localStyles.pickerButton,{ marginTop:10, marginBottom:10 }]}>
-                  <Text style={localStyles.pickerButtonText}>{novoEx.categoria||'Categoria'}</Text>
-                  <Picker selectedValue={novoEx.categoria} onValueChange={v=>setNovoEx(p=>({...p,categoria:v}))} style={{ position:'absolute', right:0, left:0, opacity:0 }}>
-                    {categorias.map(c=><Picker.Item key={c} label={c} value={c} />)}
-                  </Picker>
-                </View>
-                <TextInput style={[localStyles.searchBar,{ height:90, textAlignVertical:'top' }]} placeholder="Descrição breve" placeholderTextColor={Colors.placeholder} value={novoEx.descricao_breve} onChangeText={v=>setNovoEx(p=>({...p,descricao_breve:v}))} multiline />
-                <TextInput style={localStyles.searchBar} placeholder="URL do vídeo (YouTube/MP4)" placeholderTextColor={Colors.placeholder} value={novoEx.animacao_url} onChangeText={v=>setNovoEx(p=>({...p,animacao_url:v}))} />
-                <TextInput style={localStyles.searchBar} placeholder="Imagem (opcional)" placeholderTextColor={Colors.placeholder} value={novoEx.imageUrl} onChangeText={v=>setNovoEx(p=>({...p,imageUrl:v}))} />
-                <TextInput style={localStyles.searchBar} placeholder="Equipamento (separa por vírgulas)" placeholderTextColor={Colors.placeholder} value={novoEx.equipamentoTxt} onChangeText={v=>setNovoEx(p=>({...p,equipamentoTxt:v}))} />
-                <TextInput style={localStyles.searchBar} placeholder="Músculos-alvo (separa por vírgulas)" placeholderTextColor={Colors.placeholder} value={novoEx.musculosTxt} onChangeText={v=>setNovoEx(p=>({...p,musculosTxt:v}))} />
-                <BotaoPilula title="Guardar" icon="check" onPress={adicionarNovoExercicioESelecionar} style={{ marginTop:6 }} />
-                <BotaoPilula title="Cancelar" icon="x" variant="outline" onPress={()=>setNovoExModal(false)} style={{ marginTop:10 }} />
+        {/* ---------- Modal: Novo Exercício ---------- */}
+        <Modal animationType="slide" transparent visible={novoExModal} onRequestClose={()=>setNovoExModal(false)}>
+          <View style={localStyles.centeredView}>
+            <View style={localStyles.modalView}>
+              <View style={localStyles.modalHeader}><Text style={localStyles.modalTitle}>Novo Exercício</Text><Pressable onPress={()=>setNovoExModal(false)}><Feather name="x" size={22} color={Colors.textPrimary} /></Pressable></View>
+              <TextInput style={localStyles.searchBar} placeholder="Nome (inglês) *" placeholderTextColor={Colors.placeholder} value={novoEx.nome_en} onChangeText={v=>setNovoEx(p=>({...p,nome_en:v}))} />
+              <TextInput style={localStyles.searchBar} placeholder="Nome (português)" placeholderTextColor={Colors.placeholder} value={novoEx.nome_pt} onChangeText={v=>setNovoEx(p=>({...p,nome_pt:v}))} />
+              <View style={[localStyles.pickerButton,{ marginTop:10, marginBottom:10 }]}>
+                <Text style={localStyles.pickerButtonText}>{novoEx.categoria||'Categoria'}</Text>
+                <Picker selectedValue={novoEx.categoria} onValueChange={v=>setNovoEx(p=>({...p,categoria:v}))} style={{ position:'absolute', right:0, left:0, opacity:0 }}>
+                  {categorias.map(c=><Picker.Item key={c} label={c} value={c} />)}
+                </Picker>
+              </View>
+              <TextInput style={[localStyles.searchBar,{ height:90, textAlignVertical:'top' }]} placeholder="Descrição breve" placeholderTextColor={Colors.placeholder} value={novoEx.descricao_breve} onChangeText={v=>setNovoEx(p=>({...p,descricao_breve:v}))} multiline />
+              <TextInput style={localStyles.searchBar} placeholder="URL do vídeo (YouTube/MP4)" placeholderTextColor={Colors.placeholder} value={novoEx.animacao_url} onChangeText={v=>setNovoEx(p=>({...p,animacao_url:v}))} />
+              <TextInput style={localStyles.searchBar} placeholder="Imagem (opcional)" placeholderTextColor={Colors.placeholder} value={novoEx.imageUrl} onChangeText={v=>setNovoEx(p=>({...p,imageUrl:v}))} />
+              <TextInput style={localStyles.searchBar} placeholder="Equipamento (separa por vírgulas)" placeholderTextColor={Colors.placeholder} value={novoEx.equipamentoTxt} onChangeText={v=>setNovoEx(p=>({...p,equipamentoTxt:v}))} />
+              <TextInput style={localStyles.searchBar} placeholder="Músculos-alvo (separa por vírgulas)" placeholderTextColor={Colors.placeholder} value={novoEx.musculosTxt} onChangeText={v=>setNovoEx(p=>({...p,musculosTxt:v}))} />
+              <BotaoPilula title="Guardar" icon="check" onPress={adicionarNovoExercicioESelecionar} style={{ marginTop:6 }} />
+              <BotaoPilula title="Cancelar" icon="x" variant="outline" onPress={()=>setNovoExModal(false)} style={{ marginTop:10 }} />
+            </View>
+          </View>
+        </Modal>
+
+        {/* ---------- Modal do Vídeo ---------- */}
+        <Modal transparent animationType="fade" visible={videoModalVisible} onRequestClose={()=>setVideoModalVisible(false)}>
+          <View style={localStyles.videoOverlay}>
+            <View style={[localStyles.playerOnlyBox, { width:VIDEO_W, height:VIDEO_H }]}>
+              {(() => {
+                if (!videoUrlPreview) return <View />;
+                const ytId = toYouTubeId(videoUrlPreview);
+                if (ytId) {
+                  return <YoutubePlayer height={VIDEO_H} width={VIDEO_W} play videoId={ytId} webViewStyle={{ opacity:0.9999 }} initialPlayerParams={{ controls:true, modestbranding:true, rel:false, fs:1, playsinline:true, iv_load_policy:3 }} />;
+                }
+                return (
+                  <WebView style={{ width:VIDEO_W, height:VIDEO_H, backgroundColor:'#000' }} javaScriptEnabled domStorageEnabled allowsFullscreenVideo originWhitelist={['*']}
+                    source={{ html:`<html><head><meta name="viewport" content="width=device-width, initial-scale=1"/><style>html,body{margin:0;height:100%;background:#000}</style></head><body><video src="${videoUrlPreview}" autoplay controls playsinline style="width:100%;height:100%;object-fit:contain;"></video></body></html>` }} />
+                );
+              })()}
+            </View>
+          </View>
+        </Modal>
+
+        {/* ---------- Modal Modelos ---------- */}
+        <Modal animationType="slide" transparent visible={isTemplateSelectionModalVisible} onRequestClose={()=>setIsTemplateSelectionModalVisible(false)}>
+          <View style={localStyles.centeredView}>
+            <View style={localStyles.modalView}>
+              <View style={localStyles.modalHeader}><Text style={localStyles.modalTitle}>Modelos de Treino</Text><Pressable onPress={()=>setIsTemplateSelectionModalVisible(false)}><Feather name="x" size={22} color={Colors.textPrimary} /></Pressable></View>
+              <View style={{ flex: 1, minHeight: 120 }}>
+                <FlatList
+                  style={{ flex: 1 }}
+                  contentContainerStyle={{ paddingBottom: 12 }}
+                  data={workoutTemplates}
+                  keyExtractor={i=>i.id}
+                  renderItem={({item})=>(
+                    <Pressable style={localStyles.modalItem} onPress={()=>handleTemplateSelect(item)}><Text style={localStyles.modalItemText}>{item.name}</Text></Pressable>
+                  )}
+                  ListEmptyComponent={()=> <Text style={localStyles.noItemsText}>Nenhum modelo de treino encontrado.</Text>}
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode="on-drag"
+                  showsVerticalScrollIndicator
+                />
               </View>
             </View>
-          </Modal>
+          </View>
+        </Modal>
 
-          {/* ---------- Modal do Vídeo ---------- */}
-          <Modal transparent animationType="fade" visible={videoModalVisible} onRequestClose={()=>setVideoModalVisible(false)}>
-            <View style={localStyles.videoOverlay}>
-              <View style={[localStyles.playerOnlyBox, { width:VIDEO_W, height:VIDEO_H }]}>
-                {(() => {
-                  if (!videoUrlPreview) return <View />;
-                  const ytId = toYouTubeId(videoUrlPreview);
-                  if (ytId) {
-                    return <YoutubePlayer height={VIDEO_H} width={VIDEO_W} play videoId={ytId} webViewStyle={{ opacity:0.9999 }} initialPlayerParams={{ controls:true, modestbranding:true, rel:false, fs:1, playsinline:true, iv_load_policy:3 }} />;
-                  }
-                  return (
-                    <WebView style={{ width:VIDEO_W, height:VIDEO_H, backgroundColor:'#000' }} javaScriptEnabled domStorageEnabled allowsFullscreenVideo originWhitelist={['*']}
-                      source={{ html:`<html><head><meta name="viewport" content="width=device-width, initial-scale=1"/><style>html,body{margin:0;height:100%;background:#000}</style></head><body><video src="${videoUrlPreview}" autoplay controls playsinline style="width:100%;height:100%;object-fit:contain;"></video></body></html>` }} />
-                  );
-                })()}
-              </View>
+        {/* ---------- Modal Categorias ---------- */}
+        <Modal animationType="slide" transparent visible={isCategoryModalVisible} onRequestClose={()=>setIsCategoryModalVisible(false)}>
+          <View style={localStyles.centeredView}>
+            <View style={localStyles.modalView}>
+              <View style={localStyles.modalHeader}><Text style={localStyles.modalTitle}>Selecionar Categoria</Text><Pressable onPress={()=>setIsCategoryModalVisible(false)}><Feather name="x" size={22} color={Colors.textPrimary} /></Pressable></View>
+              {categorias.map(cat=>(
+                <Pressable key={cat} style={localStyles.modalItem} onPress={()=>{ setCategoria(cat); setIsCategoryModalVisible(false); }}>
+                  <Text style={localStyles.modalItemText}>{cat}</Text>
+                </Pressable>
+              ))}
             </View>
-          </Modal>
+          </View>
+        </Modal>
 
-          {/* ---------- Modal Modelos ---------- */}
-          <Modal animationType="slide" transparent visible={isTemplateSelectionModalVisible} onRequestClose={()=>setIsTemplateSelectionModalVisible(false)}>
-            <View style={localStyles.centeredView}>
-              <View style={localStyles.modalView}>
-                <View style={localStyles.modalHeader}><Text style={localStyles.modalTitle}>Modelos de Treino</Text><Pressable onPress={()=>setIsTemplateSelectionModalVisible(false)}><Feather name="x" size={22} color={Colors.textPrimary} /></Pressable></View>
-                <FlatList data={workoutTemplates} keyExtractor={i=>i.id} renderItem={({item})=>(
-                  <Pressable style={localStyles.modalItem} onPress={()=>handleTemplateSelect(item)}><Text style={localStyles.modalItemText}>{item.name}</Text></Pressable>
-                )} ListEmptyComponent={()=> <Text style={localStyles.noItemsText}>Nenhum modelo de treino encontrado.</Text>} />
+        {/* ---------- Modal AI Params ---------- */}
+        <Modal animationType="slide" transparent visible={aiModalVisible} onRequestClose={()=>setAIModalVisible(false)}>
+          <View style={localStyles.centeredView}>
+            <View style={localStyles.modalView}>
+              <View style={localStyles.modalHeader}>
+                <Text style={localStyles.modalTitle}>Gerar com AI (beta)</Text>
+                <Pressable onPress={()=>setAIModalVisible(false)}><Feather name="x" size={22} color={Colors.textPrimary} /></Pressable>
               </View>
-            </View>
-          </Modal>
 
-          {/* ---------- Modal Categorias ---------- */}
-          <Modal animationType="slide" transparent visible={isCategoryModalVisible} onRequestClose={()=>setIsCategoryModalVisible(false)}>
-            <View style={localStyles.centeredView}>
-              <View style={localStyles.modalView}>
-                <View style={localStyles.modalHeader}><Text style={localStyles.modalTitle}>Selecionar Categoria</Text><Pressable onPress={()=>setIsCategoryModalVisible(false)}><Feather name="x" size={22} color={Colors.textPrimary} /></Pressable></View>
-                {categorias.map(cat=>(
-                  <Pressable key={cat} style={localStyles.modalItem} onPress={()=>{ setCategoria(cat); setIsCategoryModalVisible(false); }}>
-                    <Text style={localStyles.modalItemText}>{cat}</Text>
-                  </Pressable>
+              <Text style={localStyles.filterLabel}>Objetivo</Text>
+              <View style={{ flexDirection:'row', flexWrap:'wrap', marginBottom:8 }}>
+                {['Hipertrofia','Força','Emagrecimento','Mobilidade'].map(opt=>(
+                  <Chip key={opt} label={opt} selected={aiParams.objetivo===opt} onToggle={()=>updateAi('objetivo', opt)} icon="target" />
                 ))}
               </View>
-            </View>
-          </Modal>
 
-          {/* ---------- Modal AI Params ---------- */}
-          <Modal animationType="slide" transparent visible={aiModalVisible} onRequestClose={()=>setAIModalVisible(false)}>
-            <View style={localStyles.centeredView}>
-              <View style={localStyles.modalView}>
-                <View style={localStyles.modalHeader}>
-                  <Text style={localStyles.modalTitle}>Gerar com AI (beta)</Text>
-                  <Pressable onPress={()=>setAIModalVisible(false)}><Feather name="x" size={22} color={Colors.textPrimary} /></Pressable>
-                </View>
-
-                <Text style={localStyles.filterLabel}>Objetivo</Text>
-                <View style={{ flexDirection:'row', flexWrap:'wrap', marginBottom:8 }}>
-                  {['Hipertrofia','Força','Emagrecimento','Mobilidade'].map(opt=>(
-                    <Chip key={opt} label={opt} selected={aiParams.objetivo===opt} onToggle={()=>updateAi('objetivo', opt)} icon="target" />
-                  ))}
-                </View>
-
-                <Text style={localStyles.filterLabel}>Nível</Text>
-                <View style={{ flexDirection:'row', flexWrap:'wrap', marginBottom:8 }}>
-                  {['Iniciante','Intermédio','Avançado'].map(opt=>(
-                    <Chip key={opt} label={opt} selected={aiParams.nivel===opt} onToggle={()=>updateAi('nivel', opt)} icon="trending-up" />
-                  ))}
-                </View>
-
-                <View style={{ flexDirection:'row', gap:8 }}>
-                  <View style={[localStyles.inputContainer,{ flex:1 }]}>
-                    <Feather name="calendar" size={18} color={Colors.placeholder} style={localStyles.inputIconLeft} />
-                    <TextInput keyboardType="numeric" value={String(aiParams.sessoesSemana)} onChangeText={v=>updateAi('sessoesSemana', Math.max(1, parseInt(v||'1')))} placeholder="Sessões/semana" placeholderTextColor={Colors.placeholder} style={localStyles.input} />
-                  </View>
-                  <View style={[localStyles.inputContainer,{ flex:1 }]}>
-                    <Feather name="list" size={18} color={Colors.placeholder} style={localStyles.inputIconLeft} />
-                    <TextInput keyboardType="numeric" value={String(aiParams.exerciciosPorSessao)} onChangeText={v=>updateAi('exerciciosPorSessao', Math.max(3, parseInt(v||'6')))} placeholder="Exercícios/sessão" placeholderTextColor={Colors.placeholder} style={localStyles.input} />
-                  </View>
-                </View>
-
-                <Text style={[localStyles.filterLabel,{ marginTop:8 }]}>Categoria do treino</Text>
-                <View style={[localStyles.pickerButton,{ marginBottom:10 }]}>
-                  <Text style={localStyles.pickerButtonText}>{aiParams.categoriaTreino}</Text>
-                  <Picker selectedValue={aiParams.categoriaTreino} onValueChange={v=>updateAi('categoriaTreino', v)} style={{ position:'absolute', right:0, left:0, opacity:0 }}>
-                    {categorias.map(c=><Picker.Item key={c} label={c} value={c} />)}
-                  </Picker>
-                </View>
-
-                {!!uniqueMuscles.length && (
-                  <>
-                    <Text style={localStyles.filterLabel}>Foco muscular</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 6, marginBottom:8 }}>
-                      {uniqueMuscles.map(m=>(
-                        <Chip key={m} label={m} selected={aiParams.focoMuscular.has(m)} onToggle={()=>toggleSetAi('focoMuscular', m)} icon="activity" />
-                      ))}
-                    </ScrollView>
-                  </>
-                )}
-
-                {!!uniqueEquipment.length && (
-                  <>
-                    <Text style={localStyles.filterLabel}>Equipamento disponível</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 6, marginBottom:8 }}>
-                      {uniqueEquipment.map(e=>(
-                        <Chip key={e} label={e} selected={aiParams.equipamento.has(e)} onToggle={()=>toggleSetAi('equipamento', e)} icon="tool" />
-                      ))}
-                    </ScrollView>
-                  </>
-                )}
-
-                <Pressable onPress={()=>updateAi('incluirCardio', !aiParams.incluirCardio)} style={({pressed})=>[{ flexDirection:'row', alignItems:'center', marginBottom:8 }, pressed && { opacity:0.9 }]}>
-                  <Feather name={aiParams.incluirCardio?'check-square':'square'} size={18} color={Colors.textPrimary} />
-                  <Text style={{ marginLeft:8, color:Colors.textPrimary, fontWeight:'600' }}>Incluir bloco de cardio</Text>
-                </Pressable>
-
-                <TextInput style={[localStyles.searchBar,{ height:70, textAlignVertical:'top' }]} placeholder="Restrições/observações (ex.: evitar impacto no joelho)" placeholderTextColor={Colors.placeholder} value={aiParams.restricoes} onChangeText={v=>updateAi('restricoes', v)} multiline />
-
-                <BotaoPilula title={aiLoading?'A gerar...':'Gerar treino'} icon="sparkles" onPress={aiLoading?undefined:gerarTreinoComAI} />
+              <Text style={localStyles.filterLabel}>Nível</Text>
+              <View style={{ flexDirection:'row', flexWrap:'wrap', marginBottom:8 }}>
+                {['Iniciante','Intermédio','Avançado'].map(opt=>(
+                  <Chip key={opt} label={opt} selected={aiParams.nivel===opt} onToggle={()=>updateAi('nivel', opt)} icon="trending-up" />
+                ))}
               </View>
-            </View>
-          </Modal>
 
-        </View>
-      </TouchableWithoutFeedback>
+              <View style={{ flexDirection:'row', gap:8 }}>
+                <View style={[localStyles.inputContainer,{ flex:1 }]}>
+                  <Feather name="calendar" size={18} color={Colors.placeholder} style={localStyles.inputIconLeft} />
+                  <TextInput keyboardType="numeric" value={String(aiParams.sessoesSemana)} onChangeText={v=>updateAi('sessoesSemana', Math.max(1, parseInt(v||'1')))} placeholder="Sessões/semana" placeholderTextColor={Colors.placeholder} style={localStyles.input} />
+                </View>
+                <View style={[localStyles.inputContainer,{ flex:1 }]}>
+                  <Feather name="list" size={18} color={Colors.placeholder} style={localStyles.inputIconLeft} />
+                  <TextInput keyboardType="numeric" value={String(aiParams.exerciciosPorSessao)} onChangeText={v=>updateAi('exerciciosPorSessao', Math.max(3, parseInt(v||'6')))} placeholder="Exercícios/sessão" placeholderTextColor={Colors.placeholder} style={localStyles.input} />
+                </View>
+              </View>
+
+              <Text style={[localStyles.filterLabel,{ marginTop:8 }]}>Categoria do treino</Text>
+              <View style={[localStyles.pickerButton,{ marginBottom:10 }]}>
+                <Text style={localStyles.pickerButtonText}>{aiParams.categoriaTreino}</Text>
+                <Picker selectedValue={aiParams.categoriaTreino} onValueChange={v=>updateAi('categoriaTreino', v)} style={{ position:'absolute', right:0, left:0, opacity:0 }}>
+                  {categorias.map(c=><Picker.Item key={c} label={c} value={c} />)}
+                </Picker>
+              </View>
+
+              {!!uniqueMuscles.length && (
+                <>
+                  <Text style={localStyles.filterLabel}>Foco muscular</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 6, marginBottom:8 }}>
+                    {uniqueMuscles.map(m=>(
+                      <Chip key={m} label={m} selected={aiParams.focoMuscular.has(m)} onToggle={()=>toggleSetAi('focoMuscular', m)} icon="activity" />
+                    ))}
+                  </ScrollView>
+                </>
+              )}
+
+              {!!uniqueEquipment.length && (
+                <>
+                  <Text style={localStyles.filterLabel}>Equipamento disponível</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 6, marginBottom:8 }}>
+                    {uniqueEquipment.map(e=>(
+                      <Chip key={e} label={e} selected={aiParams.equipamento.has(e)} onToggle={()=>toggleSetAi('equipamento', e)} icon="tool" />
+                    ))}
+                  </ScrollView>
+                </>
+              )}
+
+              <Pressable onPress={()=>updateAi('incluirCardio', !aiParams.incluirCardio)} style={({pressed})=>[{ flexDirection:'row', alignItems:'center', marginBottom:8 }, pressed && { opacity:0.9 }]}>
+                <Feather name={aiParams.incluirCardio?'check-square':'square'} size={18} color={Colors.textPrimary} />
+                <Text style={{ marginLeft:8, color:Colors.textPrimary, fontWeight:'600' }}>Incluir bloco de cardio</Text>
+              </Pressable>
+
+              <TextInput style={[localStyles.searchBar,{ height:70, textAlignVertical:'top' }]} placeholder="Restrições/observações (ex.: evitar impacto no joelho)" placeholderTextColor={Colors.placeholder} value={aiParams.restricoes} onChangeText={v=>updateAi('restricoes', v)} multiline />
+
+              <BotaoPilula title={aiLoading?'A gerar...':'Gerar treino'} icon="sparkles" onPress={aiLoading?undefined:gerarTreinoComAI} />
+            </View>
+          </View>
+        </Modal>
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -1031,7 +1277,27 @@ const localStyles = StyleSheet.create({
   listHeaderContainer:{ marginBottom:20 },
   card:{ backgroundColor:Colors.cardBackground, borderRadius:16, padding:20, marginBottom:20, shadowColor:Colors.shadow, shadowOffset:{ width:0, height:8 }, shadowOpacity:0.08, shadowRadius:12, elevation:3 },
   sectionTitle:{ fontSize:18, fontWeight:'800', color:Colors.textPrimary, marginBottom:14 },
-  clientSelectionContainer:{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', backgroundColor:'#F8FAFC', padding:12, borderRadius:12, borderWidth:1, borderColor:Colors.border },
+
+  // --- CLIENTE (novo visual) ---
+  clientCardWrap:{ backgroundColor:'#F8FAFC', borderRadius:14, borderWidth:1, borderColor:Colors.border, padding:14 },
+  clientHeader:{ flexDirection:'row', alignItems:'center', marginBottom:12 },
+  clientAvatar:{ width:48, height:48, borderRadius:999, backgroundColor:'#E5E7EB', alignItems:'center', justifyContent:'center', marginRight:12, borderWidth:1, borderColor:'#D1D5DB' },
+  clientAvatarText:{ color:'#111827', fontWeight:'800' },
+  clientName:{ fontSize:16, fontWeight:'900', color:Colors.textPrimary },
+  clientMetaRow:{ flexDirection:'row', alignItems:'center', marginTop:2 },
+  clientMetaText:{ marginLeft:6, fontSize:12, color:Colors.textSecondary },
+
+  clientStatsRow:{ flexDirection:'row', gap:10 },
+  clientStatBox:{ flex:1, flexDirection:'row', alignItems:'center', backgroundColor:'#FFFFFF', borderRadius:12, padding:10, borderWidth:1, borderColor:Colors.border },
+  clientStatLabel:{ fontSize:11, color:Colors.textSecondary, textTransform:'uppercase', letterSpacing:0.6 },
+  clientStatValue:{ fontSize:16, fontWeight:'800', color:Colors.textPrimary },
+  clientStatValueSmall:{ fontSize:12, fontWeight:'700', color:Colors.textPrimary },
+
+  clientEmpty:{ alignItems:'center', justifyContent:'center', paddingVertical:16, borderRadius:14, borderWidth:1, borderColor:Colors.border, backgroundColor:'#F9FAFB' },
+  clientEmptyIcon:{ width:44, height:44, borderRadius:999, backgroundColor:'#EEF2FF', alignItems:'center', justifyContent:'center', marginBottom:8, borderWidth:1, borderColor:'#E0E7FF' },
+  clientEmptyTitle:{ fontSize:16, fontWeight:'900', color:Colors.textPrimary },
+  clientEmptyText:{ fontSize:13, color:Colors.textSecondary, marginTop:4 },
+
   selectedClientText:{ fontSize:16, color:Colors.textPrimary, flex:1 },
   calendar:{ borderRadius:12, marginTop:10, borderWidth:1, borderColor:Colors.border },
   timeInput:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', backgroundColor:'#F8FAFC', padding:14, borderRadius:12, marginTop:12, borderWidth:1, borderColor:Colors.border },
@@ -1040,68 +1306,86 @@ const localStyles = StyleSheet.create({
   pickerModalContent:{ backgroundColor:'white', padding:20, borderTopLeftRadius:20, borderTopRightRadius:20 },
   pickerConfirmButton:{ marginTop:15, backgroundColor:Colors.primary, padding:15, borderRadius:12, alignItems:'center' },
   pickerConfirmButtonText:{ color:Colors.cardBackground, fontWeight:'800' },
+
   inputContainer:{ flexDirection:'row', alignItems:'flex-start', backgroundColor:'#F8FAFC', borderRadius:12, paddingHorizontal:14, paddingVertical:10, marginBottom:10, borderWidth:1, borderColor:Colors.border },
   inputIconLeft:{ marginRight:10, marginTop:3 },
   input:{ flex:1, fontSize:16, color:Colors.textPrimary, padding:0 },
   multilineInput:{ minHeight:80, textAlignVertical:'top' },
   inlineNotesInput:{ minHeight:50, textAlignVertical:'top', paddingTop:10, paddingBottom:10 },
   inputLabel:{ fontSize:16, fontWeight:'800', color:Colors.textPrimary, marginTop:10, marginBottom:5 },
-  pickerButton:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', backgroundColor:'#F8FAFC', padding:15, borderRadius:12, borderWidth:1, borderColor:Colors.border },
-  pickerButtonText:{ color:Colors.textPrimary },
+  pickerButton:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', backgroundColor:'#F8FAFC', padding:15, borderRadius:12, borderWidth:1},
+   pickerButtonText:{ color:Colors.textPrimary, fontWeight:'600' },
+  bottomBar:{ position:'absolute', bottom:0, left:0, right:0, padding:12, backgroundColor:Colors.cardBackground, borderTopWidth:1, borderTopColor:Colors.border },
 
-  saveAsTemplateContainer:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginTop:14, marginBottom:6, padding:12, backgroundColor:'#F8FAFC', borderRadius:12, borderWidth:1, borderColor:Colors.border },
-  saveAsTemplateText:{ fontSize:16, color:Colors.textPrimary, fontWeight:'700' },
+  // Exercícios
+  exercicioCard:{ backgroundColor:Colors.cardBackground, marginHorizontal:12, marginTop:10, borderRadius:12, borderWidth:1, borderColor:Colors.border },
+  exercicioHeader:{ paddingHorizontal:12, paddingVertical:12, borderBottomWidth:1, borderBottomColor:Colors.border, flexDirection:'row', alignItems:'center', justifyContent:'space-between' },
+  exercicioNome:{ marginLeft:8, fontWeight:'700', color:Colors.textPrimary, flexShrink:1 },
+  exercicioContent:{ paddingHorizontal:12, paddingVertical:10 },
+  exercicioDescricao:{ color:Colors.textSecondary, marginBottom:6 },
+  exercicioMeta:{ color:Colors.textSecondary, marginTop:2 },
 
-  bottomBar:{ position:'absolute', bottom:0, left:0, right:0, backgroundColor:Colors.cardBackground, paddingHorizontal:16, paddingTop:8, paddingBottom:Platform.OS==='ios'?28:10, borderTopWidth:1, borderTopColor:Colors.border, shadowColor:Colors.shadow, shadowOffset:{ width:0, height:-6 }, shadowOpacity:0.08, shadowRadius:10, elevation:10 },
+  setsTitle:{ fontWeight:'800', color:Colors.textPrimary, marginBottom:6 },
+  setRow:{ backgroundColor:'#F9FAFB', borderWidth:1, borderColor:Colors.border, borderRadius:10, padding:8, marginBottom:8 },
+  setBadge:{ backgroundColor:'#E5E7EB', color:'#111827', fontWeight:'800', paddingHorizontal:8, paddingVertical:2, borderRadius:999, alignSelf:'flex-start', marginBottom:6 },
+  setDetailField:{ flexDirection:'row', alignItems:'center', gap:6, backgroundColor:'#fff', borderWidth:1, borderColor:Colors.border, borderRadius:8, paddingHorizontal:8, height:40 },
+  setDetailInput:{ minWidth:70, paddingVertical:0, color:Colors.textPrimary },
 
-  exercicioCard:{ backgroundColor:Colors.cardBackground, borderRadius:16, padding:14, marginBottom:14, shadowColor:Colors.shadow, shadowOffset:{ width:0, height:4 }, shadowOpacity:0.07, shadowRadius:12, elevation:2, borderWidth:1, borderColor:Colors.border },
-  exercicioHeader:{ flexDirection:'row', justifyContent:'space-between', alignItems:'center' },
-  exercicioNome:{ fontSize:16, fontWeight:'800', color:Colors.textPrimary, flex:1, marginLeft:8 },
-  exercicioDetails:{ marginTop:12, paddingTop:12, borderTopWidth:1, borderTopColor:Colors.border },
-  detailRow:{ flexDirection:'row', alignItems:'center', marginBottom:6 },
-  detailText:{ marginLeft:8, fontSize:14, color:Colors.textSecondary, flex:1 },
-
-  seriesContainer:{ marginTop:8 },
-  setCard:{ backgroundColor:'#F9FAFB', borderRadius:12, padding:12, marginBottom:10, borderWidth:1, borderColor:Colors.border },
-  setCardHeader:{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:10 },
-  setCardTitle:{ fontSize:15, fontWeight:'800', color:Colors.textPrimary },
-  pickerContainerSet:{ backgroundColor:Colors.cardBackground, borderRadius:12, borderWidth:1, borderColor:Colors.border, marginBottom:10, height:44, justifyContent:'center', overflow:'hidden' },
-  pickerSet:{ color:Colors.textPrimary },
-  setDetailsGrid:{ flexDirection:'row', flexWrap:'wrap', justifyContent:'space-between' },
-  setDetailField:{ flexDirection:'row', alignItems:'center', backgroundColor:Colors.cardBackground, borderRadius:12, paddingHorizontal:10, paddingVertical:6, borderWidth:1, borderColor:Colors.border, width:'48%', marginBottom:8 },
-  setDetailInput:{ flex:1, fontSize:14, color:Colors.textPrimary, marginLeft:6, paddingVertical:0 },
-
-  centeredView:{ flex:1, justifyContent:'center', alignItems:'center', backgroundColor:'rgba(15, 23, 42, 0.45)' },
-  modalView:{ width:'92%', backgroundColor:Colors.cardBackground, borderRadius:20, padding:18, maxHeight:'86%', shadowColor:'#000', shadowOffset:{ width:0, height:6 }, shadowOpacity:0.2, shadowRadius:20, elevation:8, borderWidth:1, borderColor:Colors.border },
-  modalHeader:{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:10 },
-  modalTitle:{ fontSize:20, fontWeight:'800', color:Colors.textPrimary },
-  modalItem:{ padding:14, borderBottomWidth:1, borderBottomColor:Colors.border },
-  modalItemText:{ fontSize:16, color:Colors.textPrimary },
+  // Modais
+  centeredView:{ flex:1, backgroundColor:'rgba(0,0,0,0.2)', justifyContent:'center', padding:16 },
+  modalView:{ backgroundColor:'#fff', borderRadius:16, padding:16, maxHeight:'90%' },
+  modalHeader:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:10 },
+  modalTitle:{ fontWeight:'800', fontSize:16, color:Colors.textPrimary },
+  modalItem:{ paddingVertical:10, borderBottomWidth:1, borderBottomColor:Colors.border },
+  modalItemText:{ color:Colors.textPrimary, fontWeight:'600' },
   noItemsText:{ textAlign:'center', color:Colors.textSecondary, marginTop:20 },
 
-  searchBar:{ backgroundColor:'#F8FAFC', borderRadius:12, padding:12, marginBottom:10, fontSize:16, color:Colors.textPrimary, borderWidth:1, borderColor:Colors.border },
+  // Biblioteca
+  searchBar:{ height:44, backgroundColor:'#fff', borderWidth:1, borderColor:Colors.border, borderRadius:10, paddingHorizontal:12, color:Colors.textPrimary },
+  exercicioBibliotecaCard:{ backgroundColor:'#fff', borderWidth:1, borderColor:Colors.border, borderRadius:10, padding:10, flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:10 },
+  exercicioBibliotecaInfo:{ flex:1, paddingRight:10 },
+  exercicioBibliotecaNome:{ fontWeight:'700', color:Colors.textPrimary },
+  exercicioBibliotecaCategoriaContainer:{ flexDirection:'row', alignItems:'center', gap:6, marginTop:2 },
+  exercicioBibliotecaCategoria:{ color:Colors.textSecondary },
+  exercicioBibliotecaDetailRow:{ flexDirection:'row', alignItems:'center', gap:6, marginTop:2 },
+  exercicioBibliotecaDetailText:{ color:Colors.textSecondary },
+  exercicioBibliotecaDescricao:{ color:Colors.textSecondary, marginTop:4 },
 
-  exercicioBibliotecaCard:{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', backgroundColor:'#F9FAFB', borderRadius:12, padding:14, marginBottom:10, borderWidth:1, borderColor:Colors.border },
-  exercicioBibliotecaInfo:{ flex:1, marginRight:10 },
-  exercicioBibliotecaNome:{ fontSize:16, fontWeight:'800', color:Colors.textPrimary },
-  exercicioBibliotecaCategoriaContainer:{ flexDirection:'row', alignItems:'center', marginTop:4 },
-  exercicioBibliotecaCategoria:{ marginLeft:5, fontSize:12, color:Colors.textSecondary, fontStyle:'italic' },
-  exercicioBibliotecaDescricao:{ fontSize:14, color:Colors.textSecondary, marginTop:5 },
-  exercicioBibliotecaDetailRow:{ flexDirection:'row', alignItems:'center', marginTop:5 },
-  exercicioBibliotecaDetailText:{ marginLeft:5, fontSize:12, color:Colors.textSecondary },
+  // Time picker modal (iOS)
+  pickerModalOverlay:{ flex:1, backgroundColor:'rgba(0,0,0,0.4)', alignItems:'center', justifyContent:'center' },
+  pickerModalContent:{ backgroundColor:'#fff', padding:16, borderRadius:16, width:'90%', maxWidth:400 },
+  dateTimePicker:{ width:'100%' },
+  pickerConfirmButton:{ backgroundColor:Colors.primary, borderRadius:8, marginTop:10, paddingVertical:10, alignItems:'center' },
+  pickerConfirmButtonText:{ color:'#fff', fontWeight:'800' },
 
-  filterLabel:{ fontSize:12, fontWeight:'700', color:Colors.textSecondary, marginBottom:6, textTransform:'uppercase', letterSpacing:0.5 },
+  aiCTA:{ marginTop:12, padding:14, borderWidth:1, borderColor:Colors.border, borderRadius:12, backgroundColor:'#F8FAFC' },
+  aiCTATitle:{ fontWeight:'800', color:Colors.textPrimary, marginBottom:4 },
+  aiCTASubtitle:{ color:Colors.textSecondary, marginBottom:10 },
 
-  // Compact bar / badges
-  compactBar:{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', paddingVertical:6 },
-  smallTag:{ flexDirection:'row', alignItems:'center', backgroundColor:'#EFF6FF', borderWidth:1, borderColor:'#DBEAFE', borderRadius:999, paddingHorizontal:8, paddingVertical:4, marginRight:6 },
-  smallTagText:{ marginHorizontal:6, fontSize:12, color:Colors.textSecondary, maxWidth:160 },
-  badge:{ backgroundColor:Colors.secondary, borderRadius:999, paddingHorizontal:6, paddingVertical:2, marginLeft:6 },
-  badgeText:{ color:'#111827', fontWeight:'800', fontSize:10 },
+  heroCard:{ backgroundColor:'#F8FAFC' },
+  heroLeft:{ flexDirection:'row', alignItems:'center', gap:12, marginBottom:10 },
+  avatarCircle:{ width:44, height:44, borderRadius:22, backgroundColor:'#E5E7EB', alignItems:'center', justifyContent:'center', borderWidth:1, borderColor:'#D1D5DB' },
+  heroTitle:{ fontSize:16, fontWeight:'900', color:Colors.textPrimary },
+  heroSubtitle:{ color:Colors.textSecondary, marginTop:2 },
 
-  // Player
-  videoOverlay:{ flex:1, backgroundColor:'#000', alignItems:'center', justifyContent:'center' },
+  seriesContainer:{ marginTop:4 },
+  setCard:{ backgroundColor:'#F9FAFB', borderWidth:1, borderColor:Colors.border, borderRadius:12, padding:10, marginBottom:10 },
+  setCardHeader:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:8 },
+  setCardTitle:{ fontWeight:'800', color:Colors.textPrimary },
+  pickerContainerSet:{ borderWidth:1, borderColor:Colors.border, borderRadius:10, overflow:'hidden', marginBottom:8 },
+  pickerSet:{ height:42, width:'100%' },
+  setDetailsGrid:{ flexDirection:'row', flexWrap:'wrap', gap:8 },
+
+  compactBar:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginTop:10 },
+  badge:{ marginLeft:8, backgroundColor:'#E5E7EB', borderRadius:999, paddingHorizontal:8, paddingVertical:2 },
+  badgeText:{ fontSize:12, fontWeight:'800', color:'#111827' },
+  border:{ borderWidth:1, borderColor:Colors.border, borderRadius:10 },
+
+  smallTag:{ flexDirection:'row', alignItems:'center', gap:6, paddingHorizontal:8, paddingVertical:4, borderRadius:999, backgroundColor:'#F3F4F6', borderWidth:1, borderColor:Colors.border, marginRight:6 },
+  smallTagText:{ color:Colors.textSecondary },
+
+  videoOverlay:{ flex:1, backgroundColor:'rgba(0,0,0,0.6)', alignItems:'center', justifyContent:'center' },
   playerOnlyBox:{ backgroundColor:'#000', borderRadius:12, overflow:'hidden' },
 
-  border:{ borderWidth:1, borderColor:Colors.border, borderRadius:12 },
+  clientRow:{ flexDirection:'row', alignItems:'center', gap:10, paddingVertical:10, borderBottomWidth:1, borderBottomColor:Colors.border },
 });
